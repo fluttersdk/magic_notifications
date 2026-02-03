@@ -129,24 +129,89 @@ ONESIGNAL_APP_ID=your-onesignal-app-id-here
 
 ##### iOS Setup
 
-**1. Enable Push Notifications Capability**
+iOS push notifications require three parts: Xcode project configuration, APNs key from Apple, and OneSignal dashboard setup.
 
-Open `ios/Runner.xcworkspace` in Xcode:
-1. Select your project → Runner target
-2. Go to "Signing & Capabilities"
-3. Click "+ Capability" and add "Push Notifications"
-4. Add "Background Modes" capability
-5. Check "Remote notifications"
+**1. Install CocoaPods Dependencies**
 
-**2. Configure Info.plist**
+```bash
+cd ios && pod install --repo-update && cd ..
+```
 
-Add to `ios/Runner/Info.plist`:
+This installs the OneSignal iOS SDK (`OneSignalXCFramework`).
+
+**2. Configure Xcode Project**
+
+Open the workspace (**not** the `.xcodeproj`):
+
+```bash
+open ios/Runner.xcworkspace
+```
+
+In Xcode:
+
+1. **Select Runner project** → Click on **Runner** target
+2. Go to **Signing & Capabilities** tab
+3. Select your **Team** (Apple Developer account)
+4. Ensure **"Automatically manage signing"** is checked
+5. Click **"+ Capability"** → Add **"Push Notifications"**
+6. Click **"+ Capability"** → Add **"Background Modes"**
+7. Under Background Modes, check **☑️ Remote notifications**
+
+> 💡 Xcode will automatically register the App ID with Push Notifications capability in Apple Developer Portal when you build.
+
+**3. Create APNs Key in Apple Developer Portal**
+
+Go to [Apple Developer Portal - Keys](https://developer.apple.com/account/resources/authkeys/list):
+
+1. Click **"+"** to create a new key
+2. Enter a name (e.g., `YourApp Push Key`)
+3. Check **☑️ Apple Push Notifications service (APNs)**
+4. Click **Continue** → **Register**
+5. **Download the .p8 file** (you can only download it once!)
+6. Note the **Key ID** shown on the confirmation page
+
+**4. Find Your Team ID**
+
+Go to [Apple Developer Account - Membership](https://developer.apple.com/account#MembershipDetailsCard):
+
+- Your **Team ID** is displayed on this page (10-character alphanumeric)
+
+**5. Configure OneSignal Dashboard**
+
+Go to [OneSignal Dashboard](https://onesignal.com):
+
+1. Select your app → **Settings** → **Platforms**
+2. Click **Apple iOS (APNs)**
+3. Select **".p8 Authentication Token"** method
+4. Fill in:
+   - **Team ID**: From Apple Developer Membership page
+   - **Key ID**: Shown when you created the APNs key
+   - **Bundle ID**: Your app's bundle identifier (e.g., `com.yourcompany.app`)
+   - **p8 file**: Upload the `.p8` file you downloaded
+5. Click **Save**
+
+**6. Info.plist (Optional)**
+
+The Background Modes capability in Xcode automatically adds this, but you can verify it exists in `ios/Runner/Info.plist`:
 
 ```xml
 <key>UIBackgroundModes</key>
 <array>
     <string>remote-notification</string>
 </array>
+```
+
+**7. Test on Physical Device**
+
+⚠️ **Important**: Push notifications do NOT work on iOS Simulator. You must test on a real device.
+
+```bash
+flutter run -d <your-iphone-device-id>
+```
+
+To find your device ID:
+```bash
+flutter devices
 ```
 
 ##### Android Setup
