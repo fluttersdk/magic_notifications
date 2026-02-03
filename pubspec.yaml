@@ -1,0 +1,24 @@
+name: fluttersdk_magic_notifications
+description: Multi-channel notification system for Magic Framework. Supports database (in-app), push (OneSignal), and mail channels.
+version: 0.0.1
+homepage: https://magic.fluttersdk.com
+publish_to: none
+
+environment:
+  sdk: ">=3.6.0 <4.0.0"
+  flutter: ">=3.27.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  fluttersdk_magic:
+    path: ../fluttersdk_magic
+  fluttersdk_magic_cli:
+    path: ../fluttersdk_magic/plugins/fluttersdk_magic_cli
+  onesignal_flutter: ^5.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  test: ^1.25.0
+  flutter_lints: ^6.0.0
