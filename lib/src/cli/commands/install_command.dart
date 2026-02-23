@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:fluttersdk_magic_notifications/src/cli/cli.dart';
+import 'package:magic_notifications/src/cli/cli.dart';
 
 /// Project type detection
 enum ProjectType {

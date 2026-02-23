@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:fluttersdk_magic/fluttersdk_magic.dart';
+import 'package:magic/magic.dart';
 
 import 'contracts/channel.dart';
 import 'contracts/notifiable.dart';
@@ -8,6 +8,7 @@ import 'contracts/notification.dart';
 import 'drivers/push/push_driver.dart';
 import 'exceptions/notification_exception.dart';
 import 'models/database_notification.dart';
+import 'models/paginated_notifications.dart';
 import 'notification_poller.dart';
 
 /// Safe logging that doesn't throw when Log service isn't available.
@@ -145,6 +146,28 @@ class NotificationManager {
       _safeLogError('Failed to fetch notifications: $e');
       // Don't throw - just keep current state
     }
+  }
+
+  /// Fetch paginated notifications from backend.
+  ///
+  /// Returns a [PaginatedNotifications] wrapper with meta info
+  /// (current_page, last_page, per_page, total) for server-side pagination.
+  Future<PaginatedNotifications> fetchPaginatedNotifications({
+    int page = 1,
+    int perPage = 15,
+  }) async {
+    try {
+      final response = await Http.get('/notifications', query: {
+        'page': page.toString(),
+        'perPage': perPage.toString(),
+      });
+      if (response.successful) {
+        return PaginatedNotifications.fromMap(response.data);
+      }
+    } catch (e) {
+      _safeLogError('Failed to fetch paginated notifications: $e');
+    }
+    return PaginatedNotifications.empty();
   }
 
   /// Alias for fetchNotifications() for convenience.

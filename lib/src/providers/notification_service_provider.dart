@@ -1,4 +1,4 @@
-import 'package:fluttersdk_magic/fluttersdk_magic.dart';
+import 'package:magic/magic.dart';
 
 import '../drivers/push_web/onesignal_factory.dart';
 import '../notification_manager.dart';

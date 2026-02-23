@@ -1,4 +1,4 @@
-import 'package:fluttersdk_magic_cli/fluttersdk_magic_cli.dart';
+import 'package:magic_cli/magic_cli.dart';
 
 /// Notification-specific configuration helpers
 class NotificationConfigHelper {
