@@ -1,6 +1,7 @@
 import '../contracts/notifiable.dart';
 import '../contracts/notification.dart';
 import '../models/database_notification.dart';
+import '../models/paginated_notifications.dart';
 import '../notification_manager.dart';
 
 /// Notification facade.
@@ -55,6 +56,26 @@ class Notify {
   /// Updates the notification stream with fresh data from the API.
   static Future<void> fetchNotifications() async {
     await manager.fetchNotifications();
+  }
+
+  /// Fetch paginated notifications from backend.
+  ///
+  /// Returns [PaginatedNotifications] with data and pagination metadata.
+  /// Useful for full-page notification lists with server-side pagination.
+  ///
+  /// Example:
+  /// ```dart
+  /// final result = await Notify.fetchPaginatedNotifications(page: 1, perPage: 15);
+  /// print('Page ${result.currentPage} of ${result.lastPage}');
+  /// ```
+  static Future<PaginatedNotifications> fetchPaginatedNotifications({
+    int page = 1,
+    int perPage = 15,
+  }) async {
+    return await manager.fetchPaginatedNotifications(
+      page: page,
+      perPage: perPage,
+    );
   }
 
   /// Alias for fetchNotifications() for convenience.
