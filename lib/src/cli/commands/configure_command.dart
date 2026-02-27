@@ -2,10 +2,43 @@ import 'dart:io';
 import 'package:magic_notifications/src/cli/cli.dart';
 
 /// Configuration command for updating Magic Notifications settings
-class ConfigureCommand {
+class ConfigureCommand extends Command {
+  @override
+  final String name = 'configure';
+
+  @override
+  final String description = 'Update Magic Notifications settings';
+
   final String projectRoot;
 
   ConfigureCommand({required this.projectRoot});
+
+  @override
+  void configure(ArgParser parser) {
+    parser
+      ..addFlag(
+        'show',
+        negatable: false,
+        help: 'Show current configuration',
+      )
+      ..addOption(
+        'app-id',
+        help: 'Update OneSignal App ID',
+      )
+      ..addOption(
+        'polling-interval',
+        help: 'Update polling interval (seconds, 5-600)',
+      )
+      ..addFlag(
+        'soft-prompt',
+        help: 'Enable soft prompt',
+      )
+      ..addFlag(
+        'no-soft-prompt',
+        negatable: false,
+        help: 'Disable soft prompt',
+      );
+  }
 
   /// Get path to notifications config file
   String get _configPath => '$projectRoot/lib/config/notifications.dart';
@@ -13,6 +46,114 @@ class ConfigureCommand {
   /// Check if config file exists
   bool configExists() {
     return FileHelper.fileExists(_configPath);
+  }
+
+  @override
+  Future<void> handle() async {
+    info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
+
+    // Check if config exists
+    if (!configExists()) {
+      error('Configuration file not found');
+      info(
+          'Run installation first: dart run fluttersdk_magic_notifications:install');
+      exit(1);
+    }
+
+    // Show current configuration
+    if (hasOption('show') && arguments['show'] as bool) {
+      _showConfig();
+      return;
+    }
+
+    // Update configuration
+    final updates = <String, dynamic>{};
+    bool hasUpdates = false;
+
+    // Update app ID
+    if (hasOption('app-id')) {
+      final appId = option('app-id') as String;
+      updates['push'] = {'app_id': appId};
+      hasUpdates = true;
+      info('Updating OneSignal App ID...');
+    }
+
+    // Update polling interval
+    if (hasOption('polling-interval')) {
+      final intervalStr = option('polling-interval') as String;
+      final interval = int.tryParse(intervalStr);
+
+      if (interval == null) {
+        error('Invalid polling interval: must be a number');
+        exit(1);
+      }
+
+      if (!validatePollingInterval(interval)) {
+        error('Invalid polling interval: must be between 5 and 600');
+        exit(1);
+      }
+
+      updates['database'] = {'polling_interval': interval};
+      hasUpdates = true;
+      info('Updating polling interval...');
+    }
+
+    // Update soft prompt
+    if (hasOption('soft-prompt') && arguments.wasParsed('soft-prompt')) {
+      if (arguments['soft-prompt'] == true) {
+        updates['soft_prompt'] = {'enabled': true};
+        hasUpdates = true;
+        info('Enabling soft prompt...');
+      }
+    } else if (hasOption('no-soft-prompt') &&
+        arguments.wasParsed('no-soft-prompt')) {
+      if (arguments['no-soft-prompt'] == true) {
+        updates['soft_prompt'] = {'enabled': false};
+        hasUpdates = true;
+        info('Disabling soft prompt...');
+      }
+    }
+
+    if (!hasUpdates) {
+      warn('No configuration updates specified');
+      info('Use --help to see available options');
+      info('Use --show to view current configuration');
+      return;
+    }
+
+    // Apply updates
+    updateConfig(updates);
+    success('Configuration updated successfully!\n');
+
+    // Show updated config
+    _showConfig();
+  }
+
+  void _showConfig() {
+    try {
+      final config = readCurrentConfig();
+
+      info('Current Configuration:\n');
+
+      if (config.containsKey('push')) {
+        info('  ${ConsoleStyle.step(1, 3, 'Push Notifications')}');
+        info('    App ID: ${config['push']['app_id']}\n');
+      }
+
+      if (config.containsKey('database')) {
+        info('  ${ConsoleStyle.step(2, 3, 'Database Notifications')}');
+        info('    Enabled: ${config['database']['enabled'] ?? 'N/A'}');
+        info(
+            '    Polling Interval: ${config['database']['polling_interval'] ?? 'N/A'}s\n');
+      }
+
+      if (config.containsKey('soft_prompt')) {
+        info('  ${ConsoleStyle.step(3, 3, 'Soft Prompt')}');
+        info('    Enabled: ${config['soft_prompt']['enabled']}\n');
+      }
+    } catch (e) {
+      error('Error reading configuration: $e');
+    }
   }
 
   /// Read and parse current configuration

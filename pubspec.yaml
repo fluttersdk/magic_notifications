@@ -13,6 +13,8 @@ dependencies:
     sdk: flutter
   magic:
     path: ../magic
+  magic_cli:
+    path: ../magic/plugins/magic_cli
   onesignal_flutter: ^5.4.0
 
 dev_dependencies:
