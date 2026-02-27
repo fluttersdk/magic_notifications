@@ -4,6 +4,9 @@ version: 0.0.1
 homepage: https://magic.fluttersdk.com
 publish_to: none
 
+executables:
+  notifications: notifications
+
 environment:
   sdk: ">=3.6.0 <4.0.0"
   flutter: ">=3.27.0"

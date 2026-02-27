@@ -16,9 +16,11 @@ class InstallCommand extends Command {
   @override
   final String description = 'Install and configure Magic Notifications';
 
-  final String projectRoot;
+  /// Absolute path to the Flutter project root, resolved on first access.
+  String get projectRoot => getProjectRoot();
 
-  InstallCommand({required this.projectRoot});
+  /// Resolve the Flutter project root — may be overridden in tests.
+  String getProjectRoot() => FileHelper.findProjectRoot();
 
   @override
   void configure(ArgParser parser) {

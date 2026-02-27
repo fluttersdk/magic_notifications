@@ -9,9 +9,11 @@ class ConfigureCommand extends Command {
   @override
   final String description = 'Update Magic Notifications settings';
 
-  final String projectRoot;
+  /// Absolute path to the Flutter project root, resolved on access.
+  String get projectRoot => getProjectRoot();
 
-  ConfigureCommand({required this.projectRoot});
+  /// Resolve the Flutter project root — may be overridden in tests.
+  String getProjectRoot() => FileHelper.findProjectRoot();
 
   @override
   void configure(ArgParser parser) {

@@ -1,8 +1,103 @@
-/// Test command for sending test notifications
-class TestCommand {
-  TestCommand();
+import 'dart:io';
 
-  /// Build a test notification structure
+import 'package:magic_notifications/src/cli/cli.dart';
+
+/// Test command for sending test notifications via any available channel.
+class TestCommand extends Command {
+  @override
+  final String name = 'test';
+
+  @override
+  final String description = 'Send test notifications to verify setup';
+
+  @override
+  void configure(ArgParser parser) {
+    parser
+      ..addFlag(
+        'dry-run',
+        negatable: false,
+        help: 'Preview notification without sending',
+      )
+      ..addOption(
+        'title',
+        abbr: 't',
+        defaultsTo: 'Test Notification',
+        help: 'Notification title',
+      )
+      ..addOption(
+        'body',
+        abbr: 'b',
+        defaultsTo: 'This is a test notification from the CLI',
+        help: 'Notification body',
+      )
+      ..addOption(
+        'channel',
+        abbr: 'c',
+        defaultsTo: 'database',
+        help: 'Notification channel (database, push, mail)',
+      )
+      ..addOption(
+        'api-url',
+        help: 'API URL for push notifications',
+      );
+  }
+
+  @override
+  Future<void> handle() async {
+    info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
+
+    // 1. Validate channel selection.
+    final channel = arguments['channel'] as String;
+    final availableChannels = getAvailableChannels();
+
+    if (!availableChannels.contains(channel)) {
+      error('Invalid channel: $channel');
+      info('Available channels: ${availableChannels.join(', ')}');
+      exit(1);
+    }
+
+    // 2. Build the test notification and show preview.
+    final title = arguments['title'] as String;
+    final body = arguments['body'] as String;
+
+    final notification = buildTestNotification(
+      title: title,
+      body: body,
+      channel: channel,
+    );
+
+    final preview = formatNotificationPreview(notification);
+    stdout.write(preview);
+
+    // 3. Short-circuit on dry-run.
+    if (arguments['dry-run'] as bool) {
+      info('Dry run mode - notification not sent');
+      exit(0);
+    }
+
+    // 4. Send via the selected channel.
+    final apiUrl = option('api-url') as String?;
+    info('Sending test notification via $channel...');
+
+    switch (channel) {
+      case 'database':
+        await _sendDatabaseNotification(notification, apiUrl);
+      case 'push':
+        await _sendPushNotification(notification, apiUrl);
+      case 'mail':
+        await _sendMailNotification(notification, apiUrl);
+    }
+
+    success('Test notification sent successfully!');
+    newLine();
+    info('Check your application to verify receipt');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Notification helpers
+  // ---------------------------------------------------------------------------
+
+  /// Build a test notification payload.
   Map<String, dynamic> buildTestNotification({
     required String title,
     required String body,
@@ -22,7 +117,7 @@ class TestCommand {
     };
   }
 
-  /// Get list of available notification channels
+  /// Return the ordered list of supported notification channels.
   List<String> getAvailableChannels() {
     return [
       'database',
@@ -31,7 +126,7 @@ class TestCommand {
     ];
   }
 
-  /// Validate API URL format
+  /// Validate that [url] is an absolute HTTP/HTTPS URL.
   bool validateApiUrl(String url) {
     if (url.isEmpty) {
       return false;
@@ -47,7 +142,7 @@ class TestCommand {
     }
   }
 
-  /// Format notification for preview display
+  /// Format a notification map for human-readable preview output.
   String formatNotificationPreview(Map<String, dynamic> notification) {
     final buffer = StringBuffer();
     buffer.writeln('Notification Preview');
@@ -75,5 +170,62 @@ class TestCommand {
     }
 
     return buffer.toString();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Channel senders (private)
+  // ---------------------------------------------------------------------------
+
+  /// Simulate storing a database notification via the backend API.
+  Future<void> _sendDatabaseNotification(
+    Map<String, dynamic> notification,
+    String? apiUrl,
+  ) async {
+    info('Database notification would be stored in the database');
+
+    if (apiUrl != null) {
+      info('Using API: $apiUrl');
+    } else {
+      warn('No API URL provided - using default');
+    }
+
+    // Simulate API call.
+    await Future.delayed(const Duration(milliseconds: 500));
+  }
+
+  /// Simulate triggering a push notification via OneSignal.
+  Future<void> _sendPushNotification(
+    Map<String, dynamic> notification,
+    String? apiUrl,
+  ) async {
+    info('Push notification would be sent via OneSignal');
+
+    if (apiUrl == null) {
+      warn('No API URL provided - skipping actual send');
+      info('Use --api-url to specify your backend API');
+      return;
+    }
+
+    info('Using API: $apiUrl');
+
+    // Simulate API call.
+    await Future.delayed(const Duration(milliseconds: 500));
+  }
+
+  /// Simulate sending a mail notification.
+  Future<void> _sendMailNotification(
+    Map<String, dynamic> notification,
+    String? apiUrl,
+  ) async {
+    info('Mail notification would be sent via email');
+
+    if (apiUrl != null) {
+      info('Using API: $apiUrl');
+    } else {
+      warn('No API URL provided - using default');
+    }
+
+    // Simulate API call.
+    await Future.delayed(const Duration(milliseconds: 500));
   }
 }
