@@ -1,5 +1,3 @@
-library magic_notifications;
-
 // Contracts
 export 'src/contracts/notification.dart';
 export 'src/contracts/channel.dart';
