@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:magic_notifications/src/cli/cli.dart';
+import 'package:magic_cli/magic_cli.dart';
 
 /// Test command for sending test notifications via any available channel.
 class TestCommand extends Command {
@@ -40,6 +40,13 @@ class TestCommand extends Command {
         'api-url',
         help: 'API URL for push notifications',
       );
+  }
+
+  /// Return the Flutter project root directory.
+  ///
+  /// Overridable in tests to point at a temp directory.
+  String getProjectRoot() {
+    return FileHelper.findProjectRoot();
   }
 
   @override
@@ -98,6 +105,11 @@ class TestCommand extends Command {
   // ---------------------------------------------------------------------------
 
   /// Build a test notification payload.
+  ///
+  /// @param title Notification title.
+  /// @param body Notification body.
+  /// @param channel Notification channel.
+  /// @return Map containing notification payload.
   Map<String, dynamic> buildTestNotification({
     required String title,
     required String body,
@@ -118,6 +130,8 @@ class TestCommand extends Command {
   }
 
   /// Return the ordered list of supported notification channels.
+  ///
+  /// @return List of channel names.
   List<String> getAvailableChannels() {
     return [
       'database',
@@ -127,6 +141,9 @@ class TestCommand extends Command {
   }
 
   /// Validate that [url] is an absolute HTTP/HTTPS URL.
+  ///
+  /// @param url The URL to validate.
+  /// @return True if valid, false otherwise.
   bool validateApiUrl(String url) {
     if (url.isEmpty) {
       return false;
@@ -143,6 +160,9 @@ class TestCommand extends Command {
   }
 
   /// Format a notification map for human-readable preview output.
+  ///
+  /// @param notification The notification payload.
+  /// @return Formatted preview string.
   String formatNotificationPreview(Map<String, dynamic> notification) {
     final buffer = StringBuffer();
     buffer.writeln('Notification Preview');
