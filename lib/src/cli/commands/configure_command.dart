@@ -1,7 +1,12 @@
 import 'dart:io';
-import 'package:magic_notifications/src/cli/cli.dart';
 
-/// Configuration command for updating Magic Notifications settings
+import 'package:magic_cli/magic_cli.dart';
+
+/// CLI command for reading and updating Magic Notifications configuration.
+///
+/// Supports displaying the current config (--show) and mutating individual
+/// fields via named options. All file I/O is delegated to [FileHelper] so that
+/// tests can safely intercept by overriding [getProjectRoot].
 class ConfigureCommand extends Command {
   @override
   final String name = 'configure';
@@ -42,10 +47,10 @@ class ConfigureCommand extends Command {
       );
   }
 
-  /// Get path to notifications config file
+  /// Absolute path to the notifications config file.
   String get _configPath => '$projectRoot/lib/config/notifications.dart';
 
-  /// Check if config file exists
+  /// Returns true when the notifications config file exists on disk.
   bool configExists() {
     return FileHelper.fileExists(_configPath);
   }
@@ -54,21 +59,20 @@ class ConfigureCommand extends Command {
   Future<void> handle() async {
     info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
 
-    // Check if config exists
+    // Check if config exists before proceeding with any operation.
     if (!configExists()) {
       error('Configuration file not found');
-      info(
-          'Run installation first: dart run fluttersdk_magic_notifications:install');
+      info('Run installation first: dart run magic_notifications install');
       exit(1);
     }
 
-    // Show current configuration
+    // Show current configuration and exit early.
     if (hasOption('show') && arguments['show'] as bool) {
       _showConfig();
       return;
     }
 
-    // Update configuration
+    // Accumulate requested updates before applying them.
     final updates = <String, dynamic>{};
     bool hasUpdates = false;
 
@@ -123,14 +127,15 @@ class ConfigureCommand extends Command {
       return;
     }
 
-    // Apply updates
+    // Apply updates and confirm success.
     updateConfig(updates);
     success('Configuration updated successfully!\n');
 
-    // Show updated config
+    // Show updated config so the user can verify the changes.
     _showConfig();
   }
 
+  /// Print a formatted summary of the current config values.
   void _showConfig() {
     try {
       final config = readCurrentConfig();
@@ -146,7 +151,8 @@ class ConfigureCommand extends Command {
         info('  ${ConsoleStyle.step(2, 3, 'Database Notifications')}');
         info('    Enabled: ${config['database']['enabled'] ?? 'N/A'}');
         info(
-            '    Polling Interval: ${config['database']['polling_interval'] ?? 'N/A'}s\n');
+          '    Polling Interval: ${config['database']['polling_interval'] ?? 'N/A'}s\n',
+        );
       }
 
       if (config.containsKey('soft_prompt')) {
@@ -158,27 +164,35 @@ class ConfigureCommand extends Command {
     }
   }
 
-  /// Read and parse current configuration
+  /// Read and parse the current configuration from the Dart config file.
+  ///
+  /// Uses simple regex extraction — NOT an AST parser. The format is
+  /// intentionally kept stable so regex remains sufficient.
+  ///
+  /// Throws [FileSystemException] when the config file does not exist.
   Map<String, dynamic> readCurrentConfig() {
     if (!configExists()) {
       throw FileSystemException('Configuration file not found', _configPath);
     }
 
-    final content = File(_configPath).readAsStringSync();
+    // 1. Read raw Dart source via FileHelper — avoids direct File() usage.
+    final content = FileHelper.readFile(_configPath);
 
-    // Parse the Dart config file
-    // This is a simple parser - extracts values from the map structure
     final config = <String, dynamic>{};
 
-    // Extract push config
+    // 2. Extract push.app_id.
+    // Matches: 'app_id': 'some-uuid-value'
     final pushAppIdMatch = RegExp(r"'app_id':\s*'([^']*)'").firstMatch(content);
     if (pushAppIdMatch != null) {
       config['push'] = {'app_id': pushAppIdMatch.group(1)};
     }
 
-    // Extract database config
+    // 3. Extract database.polling_interval and database.enabled.
+    // Matches: 'polling_interval': 30
     final pollingMatch =
         RegExp(r"'polling_interval':\s*(\d+)").firstMatch(content);
+
+    // Matches: 'enabled': true|false within the database section specifically.
     final dbEnabledMatch = RegExp(r"'enabled':\s*(true|false)").firstMatch(
       content.substring(content.indexOf("'database'")),
     );
@@ -192,7 +206,8 @@ class ConfigureCommand extends Command {
       };
     }
 
-    // Extract soft_prompt config
+    // 4. Extract soft_prompt.enabled.
+    // Matches: 'enabled': true|false within the soft_prompt section.
     final softPromptMatch =
         RegExp(r"'soft_prompt':\s*\{[^}]*'enabled':\s*(true|false)")
             .firstMatch(content);
@@ -203,15 +218,22 @@ class ConfigureCommand extends Command {
     return config;
   }
 
-  /// Update configuration with new values
+  /// Apply [updates] to the config file using regex replacement.
+  ///
+  /// Supports updating: push.app_id, database.polling_interval,
+  /// database.enabled, and soft_prompt.enabled.
+  ///
+  /// Throws [FileSystemException] when the config file does not exist.
   void updateConfig(Map<String, dynamic> updates) {
     if (!configExists()) {
       throw FileSystemException('Configuration file not found', _configPath);
     }
 
-    var content = File(_configPath).readAsStringSync();
+    // 1. Read current content via FileHelper.
+    var content = FileHelper.readFile(_configPath);
 
-    // Update push app_id
+    // 2. Update push.app_id.
+    // Matches: 'app_id': 'some-uuid-value'
     if (updates.containsKey('push') && updates['push']['app_id'] != null) {
       final newAppId = updates['push']['app_id'];
       content = content.replaceAllMapped(
@@ -220,7 +242,8 @@ class ConfigureCommand extends Command {
       );
     }
 
-    // Update database polling_interval
+    // 3. Update database.polling_interval.
+    // Matches: 'polling_interval': <integer>
     if (updates.containsKey('database') &&
         updates['database']['polling_interval'] != null) {
       final newInterval = updates['database']['polling_interval'];
@@ -230,11 +253,11 @@ class ConfigureCommand extends Command {
       );
     }
 
-    // Update database enabled
+    // 4. Update database.enabled.
+    // Matches: 'enabled': true|false within database section.
     if (updates.containsKey('database') &&
         updates['database']['enabled'] != null) {
       final newEnabled = updates['database']['enabled'];
-      // Find the database section and update its enabled value
       final dbSection = RegExp(
         r"('database':\s*\{[^}]*'enabled':\s*)(true|false)",
       );
@@ -244,7 +267,8 @@ class ConfigureCommand extends Command {
       );
     }
 
-    // Update soft_prompt enabled
+    // 5. Update soft_prompt.enabled.
+    // Matches: 'enabled': true|false within soft_prompt section.
     if (updates.containsKey('soft_prompt') &&
         updates['soft_prompt']['enabled'] != null) {
       final newEnabled = updates['soft_prompt']['enabled'];
@@ -257,10 +281,11 @@ class ConfigureCommand extends Command {
       );
     }
 
-    File(_configPath).writeAsStringSync(content);
+    // 6. Write updated content back via FileHelper.
+    FileHelper.writeFile(_configPath, content);
   }
 
-  /// Get list of configurable options
+  /// Returns the list of configurable option names.
   List<String> getConfigOptions() {
     return [
       'OneSignal App ID',
@@ -271,7 +296,7 @@ class ConfigureCommand extends Command {
     ];
   }
 
-  /// Validate polling interval (must be between 5 and 600 seconds)
+  /// Validates that [interval] is within the accepted range (5–600 seconds).
   bool validatePollingInterval(int interval) {
     return interval >= 5 && interval <= 600;
   }
