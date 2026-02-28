@@ -5,14 +5,18 @@ import 'package:magic_notifications/src/cli/commands/configure_command.dart';
 import 'package:magic_notifications/src/cli/commands/status_command.dart';
 import 'package:magic_notifications/src/cli/commands/test_command.dart';
 
-/// Single consolidated entry point for all Magic Notifications CLI commands.
+/// Magic Notifications CLI entry point.
 void main(List<String> args) async {
   final kernel = Kernel();
+
+  // 1. Register notification specific commands.
   kernel.registerMany([
     InstallCommand(),
     ConfigureCommand(),
     StatusCommand(),
     TestCommand(),
   ]);
+
+  // 2. Execute requested command.
   await kernel.handle(args);
 }

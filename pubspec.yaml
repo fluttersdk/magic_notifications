@@ -4,7 +4,6 @@ version: 0.0.1
 homepage: https://magic.fluttersdk.com
 publish_to: none
 
-executables:
   notifications: notifications
 
 environment:
@@ -24,4 +23,5 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   test: ^1.25.0
-  flutter_lints: ^6.0.0
+  executables:
+  magic_notifications: magic_notifications

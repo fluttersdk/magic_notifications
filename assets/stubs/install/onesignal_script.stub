@@ -1,0 +1,5 @@
+  <!-- OneSignal Web SDK - Init handled by Dart config -->
+  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+  <script>
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+  </script>

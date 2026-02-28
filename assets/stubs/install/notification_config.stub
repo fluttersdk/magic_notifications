@@ -1,0 +1,22 @@
+/// Magic Notifications Configuration
+Map<String, dynamic> get notificationConfig => {
+  'notifications': {
+    'push': {
+      'driver': 'onesignal',
+      'app_id': '{{ oneSignalAppId }}',{{ safariWebIdLine }}
+      'notify_button_enabled': {{ notifyButtonEnabled }},
+    },
+    'database': {
+      'enabled': true,
+      'polling_interval': 30, // seconds
+    },
+    'mail': {
+      'enabled': false,
+    },
+    'soft_prompt': {
+      'enabled': {{ softPromptEnabled }},
+      'title': 'Enable Notifications',
+      'message': 'Stay updated with important alerts and updates',
+    },
+  },
+};
