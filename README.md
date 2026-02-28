@@ -18,7 +18,7 @@ The fastest way to set up notifications in your Flutter Magic project:
 
 ```bash
 # Run interactive installation wizard
-dart run fluttersdk_magic_notifications:install
+dart run magic_notifications install
 ```
 
 The CLI will:
@@ -32,17 +32,17 @@ The CLI will:
 
 ```bash
 # Non-interactive mode (for CI/CD)
-dart run fluttersdk_magic_notifications:install \
+dart run magic_notifications install \
   --non-interactive \
   --app-id YOUR_ONESIGNAL_APP_ID \
   --platforms android,ios,web
 
 # Disable soft prompt
-dart run fluttersdk_magic_notifications:install \
+dart run magic_notifications install \
   --no-soft-prompt
 
 # Web options: Safari Web ID and Notify Button
-dart run fluttersdk_magic_notifications:install \
+dart run magic_notifications install \
   --non-interactive \
   --app-id YOUR_APP_ID \
   --platforms web \
@@ -68,8 +68,8 @@ Add to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  fluttersdk_magic_notifications:
-    path: ./plugins/fluttersdk_magic_notifications
+  magic_notifications:
+    path: ./plugins/magic_notifications
 ```
 
 Then run:
@@ -291,7 +291,7 @@ Get your Safari Web ID from: OneSignal Dashboard → Settings → Platforms → 
 Or use the CLI to generate this automatically:
 
 ```bash
-dart run fluttersdk_magic_notifications:install \
+dart run magic_notifications install \
   --non-interactive \
   --app-id YOUR_APP_ID \
   --platforms web \
@@ -321,7 +321,7 @@ Add GCM sender ID:
 In your app's `lib/config/app.dart`:
 
 ```dart
-import 'package:fluttersdk_magic_notifications/fluttersdk_magic_notifications.dart';
+import 'package:magic_notifications/magic_notifications.dart';
 
 final appConfig = {
   'name': 'Your App',
@@ -363,7 +363,7 @@ The recommended approach is to start polling when the authenticated layout mount
 
 ```dart
 // In your AppLayout or AuthenticatedLayout widget:
-import 'package:fluttersdk_magic_notifications/fluttersdk_magic_notifications.dart';
+import 'package:magic_notifications/magic_notifications.dart';
 
 class _AppLayoutState extends State<AppLayout> {
   @override
@@ -385,7 +385,7 @@ class _AppLayoutState extends State<AppLayout> {
 In your `AuthController` or login handler:
 
 ```dart
-import 'package:fluttersdk_magic_notifications/fluttersdk_magic_notifications.dart';
+import 'package:magic_notifications/magic_notifications.dart';
 
 Future<void> onLoginSuccess(User user) async {
   // 1. Request push notification permission
@@ -493,16 +493,18 @@ For framework-specific setup instructions, see:
 
 ## CLI Commands
 
+All commands use the single entry point `dart run magic_notifications [command]`:
+
 ### Install
 
 Interactive wizard to set up notifications:
 
 ```bash
 # Interactive mode
-dart run fluttersdk_magic_notifications:install
+dart run magic_notifications install
 
 # Non-interactive mode
-dart run fluttersdk_magic_notifications:install \
+dart run magic_notifications install \
   --non-interactive \
   --app-id YOUR_APP_ID \
   --platforms android,ios,web \
@@ -515,36 +517,38 @@ Update notification configuration:
 
 ```bash
 # Show current configuration
-dart run fluttersdk_magic_notifications:configure --show
+dart run magic_notifications configure --show
 
 # Update OneSignal App ID
-dart run fluttersdk_magic_notifications:configure --app-id NEW_APP_ID
+dart run magic_notifications configure --app-id NEW_APP_ID
 
 # Update polling interval (5-600 seconds)
-dart run fluttersdk_magic_notifications:configure --polling-interval 60
+dart run magic_notifications configure --polling-interval 60
 
 # Enable/disable soft prompt
-dart run fluttersdk_magic_notifications:configure --soft-prompt
-dart run fluttersdk_magic_notifications:configure --no-soft-prompt
+dart run magic_notifications configure --soft-prompt
+dart run magic_notifications configure --no-soft-prompt
 ```
 
-### Status
+### Doctor
 
-Check installation and configuration status:
+Check installation and configuration health:
 
 ```bash
-# Check status
-dart run fluttersdk_magic_notifications:status
+# Run health check
+dart run magic_notifications doctor
 
 # Verbose output
-dart run fluttersdk_magic_notifications:status --verbose
+dart run magic_notifications doctor --verbose
 ```
 
 Verifies:
 - Plugin installed in `pubspec.yaml`
-- Configuration file exists
-- Platform-specific setup (Android, iOS, Web)
-- Lists any missing requirements
+- Configuration file exists at `lib/config/notifications.dart`
+- Config validation: App ID format, polling interval range
+- Platform setup (Android, iOS, Web)
+
+Exits with code `0` if all checks pass, `1` if any check fails.
 
 ### Test
 
@@ -552,26 +556,76 @@ Send test notifications to verify setup:
 
 ```bash
 # Preview notification (dry run)
-dart run fluttersdk_magic_notifications:test --dry-run
+dart run magic_notifications test --dry-run
 
 # Send test database notification
-dart run fluttersdk_magic_notifications:test
+dart run magic_notifications test
 
 # Send custom notification
-dart run fluttersdk_magic_notifications:test \
+dart run magic_notifications test \
   --title "Hello" \
   --body "World"
 
 # Send push notification
-dart run fluttersdk_magic_notifications:test \
+dart run magic_notifications test \
   --channel push \
   --api-url http://localhost:8000
 
 # Test different channels
-dart run fluttersdk_magic_notifications:test --channel database
-dart run fluttersdk_magic_notifications:test --channel push
-dart run fluttersdk_magic_notifications:test --channel mail
+dart run magic_notifications test --channel database
+dart run magic_notifications test --channel push
+dart run magic_notifications test --channel mail
 ```
+
+### Uninstall
+
+Remove plugin integration from your project:
+
+```bash
+# Interactive uninstall (asks for confirmation)
+dart run magic_notifications uninstall
+
+# Skip confirmation prompt
+dart run magic_notifications uninstall --force
+```
+
+Removes:
+- `lib/config/notifications.dart`
+- `magic_notifications` dependency from `pubspec.yaml`
+- `NotificationServiceProvider` injection from `lib/config/app.dart`
+- `notificationConfig` factory from `lib/main.dart`
+
+> [!WARNING]
+> Platform files (`android/app/src/main/AndroidManifest.xml`, `web/index.html`,
+> `web/OneSignalSDKWorker.js`) are NOT reverted automatically — manual cleanup required.
+
+### Publish
+
+Laravel vendor:publish style — copies the notification config stub to your project:
+
+```bash
+# Publish config stub (skips if already exists)
+dart run magic_notifications publish
+
+# Overwrite existing config
+dart run magic_notifications publish --force
+```
+
+Copies the default `notifications.dart` config to `lib/config/notifications.dart`.
+After publishing, update `YOUR_ONESIGNAL_APP_ID` with your actual OneSignal App ID.
+
+### Channels
+
+List all notification channels and their current status:
+
+```bash
+dart run magic_notifications channels
+```
+
+Shows each channel (database, push, mail) with:
+- Enabled / disabled status
+- Polling interval (database channel)
+- App ID presence (masked, push channel)
 
 ## Usage
 
@@ -580,7 +634,7 @@ dart run fluttersdk_magic_notifications:test --channel mail
 Use the `NotificationDropdownWithStream` widget:
 
 ```dart
-import 'package:fluttersdk_magic_notifications/fluttersdk_magic_notifications.dart';
+import 'package:magic_notifications/magic_notifications.dart';
 
 AppBar(
   actions: [
@@ -634,7 +688,7 @@ public function routeNotificationForOneSignal(): array
 ### Create Custom Notifications
 
 ```dart
-import 'package:fluttersdk_magic_notifications/fluttersdk_magic_notifications.dart';
+import 'package:magic_notifications/magic_notifications.dart';
 
 class CustomNotification extends Notification {
   final String title;
@@ -689,7 +743,7 @@ await Notify.updatePreferences(NotificationPreference(
 ### Run Plugin Tests
 
 ```bash
-cd plugins/fluttersdk_magic_notifications
+cd plugins/magic_notifications
 flutter test
 ```
 

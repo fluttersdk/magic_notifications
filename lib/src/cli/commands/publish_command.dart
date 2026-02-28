@@ -125,7 +125,6 @@ class PublishCommand extends Command {
             } else if (rootUri.startsWith('../')) {
               parsedPath = File(packageConfigPath)
                   .parent
-                  .parent
                   .uri
                   .resolve(rootUri)
                   .toFilePath();

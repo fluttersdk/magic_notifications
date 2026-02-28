@@ -358,7 +358,7 @@ class InstallCommand extends Command {
     if (!content.contains('NotificationServiceProvider')) {
       ConfigEditor.insertCodeBeforePattern(
         filePath: appPath,
-        pattern: RegExp(r'\s+\]\,\s*\},?'),
+        pattern: RegExp(r'^\s+\],', multiLine: true),
         code: '      (app) => NotificationServiceProvider(app),\n',
       );
       success('Injected NotificationServiceProvider into lib/config/app.dart');
@@ -376,7 +376,7 @@ class InstallCommand extends Command {
     if (!content.contains('notificationConfig')) {
       ConfigEditor.insertCodeBeforePattern(
         filePath: mainPath,
-        pattern: RegExp(r'\s+\]\,\s*\);'),
+        pattern: RegExp(r'^\s+\],', multiLine: true),
         code: '      () => notificationConfig,\n',
       );
       success('Injected notificationConfig into lib/main.dart');
@@ -463,9 +463,7 @@ class InstallCommand extends Command {
             if (rootUri.startsWith('file://')) {
               parsedPath = Uri.parse(rootUri).toFilePath();
             } else if (rootUri.startsWith('../')) {
-              parsedPath = Uri.parse(rootUri).toFilePath();
               parsedPath = File(packageConfigPath)
-                  .parent
                   .parent
                   .uri
                   .resolve(rootUri)
@@ -491,8 +489,8 @@ class InstallCommand extends Command {
     info('  1. Run: ${ConsoleStyle.cyan}flutter pub get${ConsoleStyle.reset}');
     info('  2. Configure your OneSignal dashboard');
     info(
-        '  3. Test: ${ConsoleStyle.cyan}dart run magic_notifications:test --dry-run${ConsoleStyle.reset}');
+        '  3. Test: ${ConsoleStyle.cyan}dart run magic_notifications test --dry-run${ConsoleStyle.reset}');
     info(
-        '  4. Check status: ${ConsoleStyle.cyan}dart run magic_notifications:status${ConsoleStyle.reset}');
+        '  4. Check status: ${ConsoleStyle.cyan}dart run magic_notifications doctor${ConsoleStyle.reset}');
   }
 }
