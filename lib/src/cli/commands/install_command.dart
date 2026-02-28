@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
-import 'package:magic_notifications/src/cli/cli.dart';
+
+import 'package:magic_cli/magic_cli.dart';
 
 /// Project type detection
 enum ProjectType {
@@ -21,6 +23,16 @@ class InstallCommand extends Command {
 
   /// Resolve the Flutter project root — may be overridden in tests.
   String getProjectRoot() => FileHelper.findProjectRoot();
+
+  /// Returns the paths to search for stubs.
+  ///
+  /// Overridable in tests.
+  List<String> getStubSearchPaths() {
+    return [
+      _resolvePluginStubsDir(),
+      '${Directory.current.path}/assets/stubs',
+    ];
+  }
 
   @override
   void configure(ArgParser parser) {
@@ -51,6 +63,13 @@ class InstallCommand extends Command {
         'notify-button',
         defaultsTo: false,
         help: 'Enable OneSignal notify button on web (default: disabled)',
+      )
+      ..addFlag(
+        'force',
+        abbr: 'f',
+        help: 'Overwrite existing configuration file.',
+        defaultsTo: false,
+        negatable: false,
       );
   }
 
@@ -260,23 +279,37 @@ class InstallCommand extends Command {
     String? safariWebId,
     bool notifyButtonEnabled = false,
   }) async {
+    final force = arguments['force'] as bool? ?? false;
+
     // 1. Create notification config file
     final configPath = '$projectRoot/lib/config/notifications.dart';
-    NotificationConfigHelper.createNotificationConfig(
-      configPath: configPath,
-      oneSignalAppId: oneSignalAppId,
-      softPromptEnabled: enableSoftPrompt,
-      safariWebId: safariWebId,
-      notifyButtonEnabled: notifyButtonEnabled,
-    );
+
+    if (FileHelper.fileExists(configPath) && !force) {
+      warn('Configuration file already exists. Use --force to overwrite.');
+    } else {
+      final stub = StubLoader.load(
+        'install/notification_config',
+        searchPaths: getStubSearchPaths(),
+      );
+      final content = StubLoader.replace(stub, {
+        'oneSignalAppId': oneSignalAppId,
+        'safariWebIdLine': safariWebId != null
+            ? "\n      'safari_web_id': '$safariWebId',"
+            : '',
+        'notifyButtonEnabled': notifyButtonEnabled.toString(),
+        'softPromptEnabled': enableSoftPrompt.toString(),
+      });
+      FileHelper.writeFile(configPath, content);
+      success('Created lib/config/notifications.dart');
+    }
 
     // 2. Update pubspec.yaml with dependency (path-based for local plugin)
     final pubspecPath = '$projectRoot/pubspec.yaml';
     try {
       ConfigEditor.addPathDependencyToPubspec(
         pubspecPath: pubspecPath,
-        name: 'fluttersdk_magic_notifications',
-        path: './plugins/fluttersdk_magic_notifications',
+        name: 'magic_notifications',
+        path: './plugins/magic_notifications',
       );
     } catch (e) {
       // Dependency might already exist
@@ -301,18 +334,52 @@ class InstallCommand extends Command {
       }
     }
 
-    // 4. Update main.dart (optional - can be done manually)
+    // 4. Update app.dart
+    final appPath = '$projectRoot/lib/config/app.dart';
+    if (FileHelper.fileExists(appPath)) {
+      _injectIntoApp(appPath);
+    }
+
+    // 5. Update main.dart
     final mainPath = '$projectRoot/lib/main.dart';
     if (FileHelper.fileExists(mainPath)) {
-      try {
-        NotificationConfigHelper.updateMainDart(
-          mainPath: mainPath,
-          addImports: ["import 'config/notifications.dart';"],
-          configFactoryEntry: '() => notificationConfig',
-        );
-      } catch (e) {
-        // main.dart might already be configured
-      }
+      _injectIntoMain(mainPath);
+    }
+  }
+
+  /// Injects provider and imports into lib/config/app.dart
+  void _injectIntoApp(String appPath) {
+    ConfigEditor.addImportToFile(
+      filePath: appPath,
+      importStatement:
+          "import 'package:magic_notifications/magic_notifications.dart';",
+    );
+    final content = FileHelper.readFile(appPath);
+    if (!content.contains('NotificationServiceProvider')) {
+      ConfigEditor.insertCodeBeforePattern(
+        filePath: appPath,
+        pattern: RegExp(r'\s+\]\,\s*\},?'),
+        code: '      (app) => NotificationServiceProvider(app),\n',
+      );
+      success('Injected NotificationServiceProvider into lib/config/app.dart');
+    }
+  }
+
+  /// Injects configFactory and imports into lib/main.dart
+  void _injectIntoMain(String mainPath) {
+    if (!FileHelper.fileExists(mainPath)) return;
+    ConfigEditor.addImportToFile(
+      filePath: mainPath,
+      importStatement: "import 'config/notifications.dart';",
+    );
+    final content = FileHelper.readFile(mainPath);
+    if (!content.contains('notificationConfig')) {
+      ConfigEditor.insertCodeBeforePattern(
+        filePath: mainPath,
+        pattern: RegExp(r'\s+\]\,\s*\);'),
+        code: '      () => notificationConfig,\n',
+      );
+      success('Injected notificationConfig into lib/main.dart');
     }
   }
 
@@ -364,24 +431,56 @@ class InstallCommand extends Command {
     // IMPORTANT: Use OneSignalSDK.sw.js (Service Worker version), NOT .page.js
     // The .page.js is for the main HTML page, .sw.js is for the Service Worker
     final workerPath = '$webDir/OneSignalSDKWorker.js';
-    final workerContent =
-        'importScripts("https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js");\n';
-    File(workerPath).writeAsStringSync(workerContent);
+    final workerContent = StubLoader.load('install/onesignal_worker',
+        searchPaths: getStubSearchPaths());
+    FileHelper.writeFile(workerPath, workerContent);
 
     // Update index.html if needed
     final indexPath = PlatformHelper.webIndexPath(projectRoot);
     if (FileHelper.fileExists(indexPath)) {
       if (!HtmlEditor.hasContent(indexPath, 'onesignalsdk')) {
         // Add OneSignal SDK script to head (init handled by Dart config)
-        const scriptTag = '''
-  <!-- OneSignal Web SDK - Init handled by Dart config -->
-  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
-  <script>
-    window.OneSignalDeferred = window.OneSignalDeferred || [];
-  </script>''';
-        HtmlEditor.injectBeforeClose(indexPath, '</head>', scriptTag);
+        final scriptContent = StubLoader.load('install/onesignal_script',
+            searchPaths: getStubSearchPaths());
+        HtmlEditor.injectBeforeClose(indexPath, '</head>', scriptContent);
       }
     }
+  }
+
+  /// Tries to resolve the package assets directory dynamically using package_config.json
+  String _resolvePluginStubsDir() {
+    final packageConfigPath =
+        '${Directory.current.path}/.dart_tool/package_config.json';
+    if (File(packageConfigPath).existsSync()) {
+      final content = File(packageConfigPath).readAsStringSync();
+      try {
+        final map = jsonDecode(content) as Map<String, dynamic>;
+        final packages = map['packages'] as List<dynamic>? ?? [];
+        for (final package in packages) {
+          if (package['name'] == 'magic_notifications') {
+            final rootUri = package['rootUri'] as String;
+            String parsedPath;
+            if (rootUri.startsWith('file://')) {
+              parsedPath = Uri.parse(rootUri).toFilePath();
+            } else if (rootUri.startsWith('../')) {
+              parsedPath = Uri.parse(rootUri).toFilePath();
+              parsedPath = File(packageConfigPath)
+                  .parent
+                  .parent
+                  .uri
+                  .resolve(rootUri)
+                  .toFilePath();
+            } else {
+              parsedPath = rootUri;
+            }
+            return '$parsedPath/assets/stubs'.replaceAll('//', '/');
+          }
+        }
+      } catch (_) {
+        // Fallback below
+      }
+    }
+    return '${Directory.current.path}/assets/stubs';
   }
 
   /// Show success message after installation
@@ -392,8 +491,8 @@ class InstallCommand extends Command {
     info('  1. Run: ${ConsoleStyle.cyan}flutter pub get${ConsoleStyle.reset}');
     info('  2. Configure your OneSignal dashboard');
     info(
-        '  3. Test: ${ConsoleStyle.cyan}dart run fluttersdk_magic_notifications:test --dry-run${ConsoleStyle.reset}');
+        '  3. Test: ${ConsoleStyle.cyan}dart run magic_notifications:test --dry-run${ConsoleStyle.reset}');
     info(
-        '  4. Check status: ${ConsoleStyle.cyan}dart run fluttersdk_magic_notifications:status${ConsoleStyle.reset}');
+        '  4. Check status: ${ConsoleStyle.cyan}dart run magic_notifications:status${ConsoleStyle.reset}');
   }
 }
