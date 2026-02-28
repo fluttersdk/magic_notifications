@@ -4,4 +4,3 @@
 library;
 
 export 'package:magic_cli/magic_cli.dart';
-export 'helpers/notification_config_helper.dart';
