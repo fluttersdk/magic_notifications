@@ -8,8 +8,6 @@ import 'package:magic_notifications/src/cli/commands/uninstall_command.dart';
 import 'package:magic_notifications/src/cli/commands/publish_command.dart';
 import 'package:magic_notifications/src/cli/commands/channels_command.dart';
 
-
-
 /// Magic Notifications CLI entry point.
 void main(List<String> args) async {
   final kernel = Kernel();

@@ -4,10 +4,12 @@ import 'package:test/test.dart';
 void main() {
   group('CLI End-to-End', () {
     test('main entry point shows help', () async {
-      final result = await Process.run('dart', ['bin/magic_notifications.dart', '--help']);
+      final result =
+          await Process.run('dart', ['bin/magic_notifications.dart', '--help']);
 
       expect(result.exitCode, equals(0));
-      expect(result.stdout.toString(), contains('Usage: magic_notifications <command> [arguments]'));
+      expect(result.stdout.toString(),
+          contains('Usage: magic_notifications <command> [arguments]'));
       expect(result.stdout.toString(), contains('Available commands:'));
       expect(result.stdout.toString(), contains('install'));
       expect(result.stdout.toString(), contains('configure'));
@@ -19,14 +21,24 @@ void main() {
     });
 
     test('all commands show help via main entry point', () async {
-      final commands = ['install', 'configure', 'test', 'doctor', 'uninstall', 'publish', 'channels'];
+      final commands = [
+        'install',
+        'configure',
+        'test',
+        'doctor',
+        'uninstall',
+        'publish',
+        'channels'
+      ];
 
       for (final cmd in commands) {
-        final result = await Process.run('dart', ['bin/magic_notifications.dart', cmd, '--help']);
+        final result = await Process.run(
+            'dart', ['bin/magic_notifications.dart', cmd, '--help']);
 
         expect(result.exitCode, equals(0),
             reason: '$cmd command should exit with code 0 on --help');
-        expect(result.stdout.toString(), contains('Usage: magic_notifications $cmd'),
+        expect(result.stdout.toString(),
+            contains('Usage: magic_notifications $cmd'),
             reason: '$cmd command should show usage in help');
       }
     });
