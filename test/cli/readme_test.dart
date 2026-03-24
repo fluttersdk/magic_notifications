@@ -3,9 +3,9 @@ import 'package:test/test.dart';
 
 void main() {
   group('README CLI Section', () {
-    test('README contains CLI commands section', () {
+    test('README contains CLI tools section', () {
       final readme = File('README.md').readAsStringSync();
-      expect(readme, contains('## CLI Commands'));
+      expect(readme, contains('## CLI Tools'));
     });
 
     test('README documents install command', () {
@@ -15,23 +15,25 @@ void main() {
 
     test('README documents configure command', () {
       final readme = File('README.md').readAsStringSync();
-      expect(readme, contains('dart run magic_notifications configure'));
+      expect(readme, contains('configure'));
     });
 
     test('README documents all commands', () {
       final readme = File('README.md').readAsStringSync();
-      expect(readme, contains('dart run magic_notifications install'));
-      expect(readme, contains('dart run magic_notifications configure'));
-      expect(readme, contains('dart run magic_notifications doctor'));
-      expect(readme, contains('dart run magic_notifications test'));
+      expect(readme, contains('install'));
+      expect(readme, contains('configure'));
+      expect(readme, contains('doctor'));
+      expect(readme, contains('uninstall'));
+      expect(readme, contains('publish'));
+      expect(readme, contains('channels'));
     });
 
-    test('README has examples for each command', () {
+    test('README links to CLI reference docs', () {
       final readme = File('README.md').readAsStringSync();
-      expect(readme, contains('### Install'));
-      expect(readme, contains('### Configure'));
-      expect(readme, contains('### Doctor'));
-      expect(readme, contains('### Test'));
+      expect(
+        readme,
+        contains('magic.fluttersdk.com/packages/notifications/basics/cli'),
+      );
     });
   });
 }

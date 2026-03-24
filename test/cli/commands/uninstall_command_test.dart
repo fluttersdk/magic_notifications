@@ -14,6 +14,23 @@ class _TestUninstallCommand extends UninstallCommand {
   String getProjectRoot() => _root;
 }
 
+/// Test double that also stubs [confirm] to avoid stdin blocking.
+class _TestUninstallCommandNoConfirm extends UninstallCommand {
+  final String _root;
+  final bool _confirmResult;
+
+  _TestUninstallCommandNoConfirm(
+    this._root, {
+    bool confirmResult = false,
+  }) : _confirmResult = confirmResult;
+
+  @override
+  String getProjectRoot() => _root;
+
+  @override
+  bool confirm(String message, {bool? defaultValue}) => _confirmResult;
+}
+
 /// Write a "fully installed" project into [tempDir].
 void _writeInstalledProject(Directory tempDir) {
   Directory('${tempDir.path}/lib/config').createSync(recursive: true);
@@ -262,16 +279,18 @@ void main() {
     group('without --force flag', () {
       test('does NOT execute removal when user declines (no --force)',
           () async {
-        // Without --force, the command should show a confirmation prompt.
-        // In non-interactive test environments (stdin is not a terminal),
-        // confirm() returns the defaultValue which is false — so uninstall is
-        // cancelled and nothing is removed.
+        // Uses a test double that stubs confirm() to return false,
+        // avoiding stdin blocking in non-interactive environments.
+        final declineCommand = _TestUninstallCommandNoConfirm(
+          tempDir.path,
+          confirmResult: false,
+        );
         final configPath = '${tempDir.path}/lib/config/notifications.dart';
         final pubspecPath = '${tempDir.path}/pubspec.yaml';
 
         final originalPubspec = File(pubspecPath).readAsStringSync();
 
-        final kernel = Kernel()..register(command);
+        final kernel = Kernel()..register(declineCommand);
         await kernel.handle(['uninstall']);
 
         // Config file should still exist because uninstall was cancelled

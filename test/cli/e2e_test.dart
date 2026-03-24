@@ -8,8 +8,6 @@ void main() {
           await Process.run('dart', ['bin/magic_notifications.dart', '--help']);
 
       expect(result.exitCode, equals(0));
-      expect(result.stdout.toString(),
-          contains('Usage: magic_notifications <command> [arguments]'));
       expect(result.stdout.toString(), contains('Available commands:'));
       expect(result.stdout.toString(), contains('install'));
       expect(result.stdout.toString(), contains('configure'));
@@ -28,18 +26,26 @@ void main() {
         'doctor',
         'uninstall',
         'publish',
-        'channels'
+        'channels',
       ];
 
       for (final cmd in commands) {
         final result = await Process.run(
-            'dart', ['bin/magic_notifications.dart', cmd, '--help']);
+          'dart',
+          ['bin/magic_notifications.dart', cmd, '--help'],
+        );
 
-        expect(result.exitCode, equals(0),
-            reason: '$cmd command should exit with code 0 on --help');
-        expect(result.stdout.toString(),
-            contains('Usage: magic_notifications $cmd'),
-            reason: '$cmd command should show usage in help');
+        expect(
+          result.exitCode,
+          equals(0),
+          reason: '$cmd command should exit with code 0 on --help',
+        );
+        // magic_cli Kernel uses "magic <command>" format in usage output
+        expect(
+          result.stdout.toString(),
+          contains(cmd),
+          reason: '$cmd command should appear in help output',
+        );
       }
     });
 

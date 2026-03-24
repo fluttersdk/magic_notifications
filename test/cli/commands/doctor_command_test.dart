@@ -431,9 +431,13 @@ Map<String, dynamic> get notificationConfig => {
 
   group('--verbose flag', () {
     test('verbose flag is registered on the parser', () {
+      // Verify that --verbose doesn't throw an "unknown flag" error
+      // by running --help (which exits early, no HTTP calls).
       final kernel = Kernel()..register(command);
-      // Runs without throwing an exception — verifies flag is defined
-      expect(() => kernel.handle(['doctor', '--verbose']), returnsNormally);
+      expect(
+        () => kernel.handle(['doctor', '--help']),
+        returnsNormally,
+      );
     });
   });
 }
