@@ -2,11 +2,6 @@
 
 ## [Unreleased]
 
-### 📚 Documentation
-- **README**: Rewrite to match Magic ecosystem format
-- **doc/ folder**: Add comprehensive documentation
-- **CLAUDE.md**: Add project guidance for AI-assisted development
-
 ## [0.0.1-alpha.1] - 2026-03-25
 
 ### ✨ Core Features
@@ -37,3 +32,9 @@
 - **Service Provider**: Two-phase bootstrap (register + boot) with IoC bindings
 - **Driver abstraction**: Swappable push providers (OneSignal, FCM, etc.)
 - **Config-driven**: All settings via Magic ConfigRepository
+
+### 📚 Documentation
+- **README**: Concise pub.dev-ready format with badges, features table, quick start
+- **doc/ folder**: Comprehensive docs — installation, configuration, channels, drivers, preferences, CLI, architecture, Laravel backend
+- **CLAUDE.md**: Project guidance for AI-assisted development
+- **CHANGELOG.md**: Emoji-categorized changelog
