@@ -1,3 +1,0 @@
-Running build hooks...Running build hooks...00:00 +0: loading test/cli/commands/doctor_command_test.dart
-00:00 +0: getMissingRequirements includes validation issue when app_id is invalid
-00:00 +1: All tests passed!
