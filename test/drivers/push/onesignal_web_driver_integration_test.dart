@@ -1,9 +1,9 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:fluttersdk_magic_notifications/src/drivers/push/onesignal_web_driver.dart';
-import 'package:fluttersdk_magic_notifications/src/drivers/push/push_driver.dart';
-import 'package:fluttersdk_magic_notifications/src/models/push_subscription.dart';
+import 'package:magic_notifications/src/drivers/push/onesignal_web_driver.dart';
+import 'package:magic_notifications/src/drivers/push/push_driver.dart';
+import 'package:magic_notifications/src/models/push_subscription.dart';
 
 void main() {
   group('OneSignalWebDriver Integration', () {

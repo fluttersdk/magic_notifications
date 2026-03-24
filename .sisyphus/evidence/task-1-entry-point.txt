@@ -1,0 +1,24 @@
+import 'package:magic_cli/magic_cli.dart' hide InstallCommand;
+
+import 'package:magic_notifications/src/cli/commands/install_command.dart';
+import 'package:magic_notifications/src/cli/commands/configure_command.dart';
+import 'package:magic_notifications/src/cli/commands/status_command.dart';
+import 'package:magic_notifications/src/cli/commands/test_command.dart';
+
+/// Magic Notifications CLI entry point.
+void main(List<String> args) async {
+  final kernel = Kernel();
+
+  // 1. Register notification specific commands.
+  kernel.registerMany([
+    InstallCommand(),
+    ConfigureCommand(),
+    StatusCommand(),
+    TestCommand(),
+  ]);
+
+  // 2. Execute requested command.
+  await kernel.handle(args);
+}
+ls: bin/notifications.dart: No such file or directory
+bin/notifications.dart is deleted

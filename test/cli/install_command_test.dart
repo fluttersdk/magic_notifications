@@ -2,10 +2,10 @@ import 'dart:io';
 
 import 'package:magic_cli/magic_cli.dart';
 import 'package:magic_notifications/src/cli/commands/install_command.dart'
-    as MN;
+    as mn;
 import 'package:test/test.dart';
 
-class _TestInstallCommand extends MN.InstallCommand {
+class _TestInstallCommand extends mn.InstallCommand {
   final String _root;
 
   _TestInstallCommand(this._root);

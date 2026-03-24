@@ -1,0 +1,80 @@
+Running build hooks...Running build hooks...00:00 +0: loading test/cli/publish_command_test.dart
+00:00 +0: PublishCommand has name "publish"
+00:00 +1: PublishCommand has a non-empty description
+00:00 +2: PublishCommand publishes notification_config.stub to lib/config/notifications.dart on empty project
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[32m✓[0m Published lib/config/notifications.dart
+
+[34m ℹ[0m Next steps:
+[34m ℹ[0m   1. Update 'YOUR_ONESIGNAL_APP_ID' with your actual OneSignal App ID
+[34m ℹ[0m   2. Run: [36mdart run magic_notifications install[0m
+[34m ℹ[0m      to inject providers and platform setup
+00:00 +3: PublishCommand published file contains valid Dart map structure
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[32m✓[0m Published lib/config/notifications.dart
+
+[34m ℹ[0m Next steps:
+[34m ℹ[0m   1. Update 'YOUR_ONESIGNAL_APP_ID' with your actual OneSignal App ID
+[34m ℹ[0m   2. Run: [36mdart run magic_notifications install[0m
+[34m ℹ[0m      to inject providers and platform setup
+00:00 +4: PublishCommand published file uses YOUR_ONESIGNAL_APP_ID as default placeholder
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[32m✓[0m Published lib/config/notifications.dart
+
+[34m ℹ[0m Next steps:
+[34m ℹ[0m   1. Update 'YOUR_ONESIGNAL_APP_ID' with your actual OneSignal App ID
+[34m ℹ[0m   2. Run: [36mdart run magic_notifications install[0m
+[34m ℹ[0m      to inject providers and platform setup
+00:00 +5: PublishCommand published file has notify_button_enabled set to false by default
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[32m✓[0m Published lib/config/notifications.dart
+
+[34m ℹ[0m Next steps:
+[34m ℹ[0m   1. Update 'YOUR_ONESIGNAL_APP_ID' with your actual OneSignal App ID
+[34m ℹ[0m   2. Run: [36mdart run magic_notifications install[0m
+[34m ℹ[0m      to inject providers and platform setup
+00:00 +6: PublishCommand published file has soft_prompt enabled set to true by default
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[32m✓[0m Published lib/config/notifications.dart
+
+[34m ℹ[0m Next steps:
+[34m ℹ[0m   1. Update 'YOUR_ONESIGNAL_APP_ID' with your actual OneSignal App ID
+[34m ℹ[0m   2. Run: [36mdart run magic_notifications install[0m
+[34m ℹ[0m      to inject providers and platform setup
+00:00 +7: PublishCommand creates lib/config directory if it does not exist
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[32m✓[0m Published lib/config/notifications.dart
+
+[34m ℹ[0m Next steps:
+[34m ℹ[0m   1. Update 'YOUR_ONESIGNAL_APP_ID' with your actual OneSignal App ID
+[34m ℹ[0m   2. Run: [36mdart run magic_notifications install[0m
+[34m ℹ[0m      to inject providers and platform setup
+00:00 +8: PublishCommand without --force, does not overwrite existing file
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[33m⚠[0m lib/config/notifications.dart already exists.
+[33m⚠[0m Use --force to overwrite.
+00:00 +9: PublishCommand with --force, overwrites existing file
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[32m✓[0m Published lib/config/notifications.dart
+
+[34m ℹ[0m Next steps:
+[34m ℹ[0m   1. Update 'YOUR_ONESIGNAL_APP_ID' with your actual OneSignal App ID
+[34m ℹ[0m   2. Run: [36mdart run magic_notifications install[0m
+[34m ℹ[0m      to inject providers and platform setup
+00:00 +10: All tests passed!

@@ -1,0 +1,498 @@
+Running build hooks...Running build hooks...00:00 +0: loading test/cli/commands/uninstall_command_test.dart
+00:00 +0: UninstallCommand metadata name is "uninstall"
+00:00 +1: UninstallCommand metadata description is non-empty
+00:00 +2: UninstallCommand --force flag removes all injected artifacts deletes lib/config/notifications.dart
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+[32m✓[0m Deleted lib/config/notifications.dart
+[32m✓[0m Removed magic_notifications from pubspec.yaml
+[32m✓[0m Removed NotificationServiceProvider from lib/config/app.dart
+[32m✓[0m Removed notificationConfig from lib/main.dart
+
+[33m⚠[0m Manual cleanup required for platform files:
+[34m ℹ[0m 
+[34m ℹ[0m Android (android/app/src/main/AndroidManifest.xml):
+[34m ℹ[0m   Remove: <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/index.html):
+[34m ℹ[0m   Remove the OneSignal SDK script tags
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/OneSignalSDKWorker.js):
+[34m ℹ[0m   Delete this file if no longer needed
+
+[32m✓[0m Magic Notifications uninstalled successfully!
+00:00 +3: UninstallCommand --force flag removes all injected artifacts removes magic_notifications from pubspec.yaml
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+[32m✓[0m Deleted lib/config/notifications.dart
+[32m✓[0m Removed magic_notifications from pubspec.yaml
+[32m✓[0m Removed NotificationServiceProvider from lib/config/app.dart
+[32m✓[0m Removed notificationConfig from lib/main.dart
+
+[33m⚠[0m Manual cleanup required for platform files:
+[34m ℹ[0m 
+[34m ℹ[0m Android (android/app/src/main/AndroidManifest.xml):
+[34m ℹ[0m   Remove: <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/index.html):
+[34m ℹ[0m   Remove the OneSignal SDK script tags
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/OneSignalSDKWorker.js):
+[34m ℹ[0m   Delete this file if no longer needed
+
+[32m✓[0m Magic Notifications uninstalled successfully!
+00:00 +4: UninstallCommand --force flag removes all injected artifacts removes magic_notifications import from lib/config/app.dart
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+[32m✓[0m Deleted lib/config/notifications.dart
+[32m✓[0m Removed magic_notifications from pubspec.yaml
+[32m✓[0m Removed NotificationServiceProvider from lib/config/app.dart
+[32m✓[0m Removed notificationConfig from lib/main.dart
+
+[33m⚠[0m Manual cleanup required for platform files:
+[34m ℹ[0m 
+[34m ℹ[0m Android (android/app/src/main/AndroidManifest.xml):
+[34m ℹ[0m   Remove: <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/index.html):
+[34m ℹ[0m   Remove the OneSignal SDK script tags
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/OneSignalSDKWorker.js):
+[34m ℹ[0m   Delete this file if no longer needed
+
+[32m✓[0m Magic Notifications uninstalled successfully!
+00:00 +5: UninstallCommand --force flag removes all injected artifacts removes NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+[32m✓[0m Deleted lib/config/notifications.dart
+[32m✓[0m Removed magic_notifications from pubspec.yaml
+[32m✓[0m Removed NotificationServiceProvider from lib/config/app.dart
+[32m✓[0m Removed notificationConfig from lib/main.dart
+
+[33m⚠[0m Manual cleanup required for platform files:
+[34m ℹ[0m 
+[34m ℹ[0m Android (android/app/src/main/AndroidManifest.xml):
+[34m ℹ[0m   Remove: <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/index.html):
+[34m ℹ[0m   Remove the OneSignal SDK script tags
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/OneSignalSDKWorker.js):
+[34m ℹ[0m   Delete this file if no longer needed
+
+[32m✓[0m Magic Notifications uninstalled successfully!
+00:00 +6: UninstallCommand --force flag removes all injected artifacts preserves non-notification content in lib/config/app.dart
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+[32m✓[0m Deleted lib/config/notifications.dart
+[32m✓[0m Removed magic_notifications from pubspec.yaml
+[32m✓[0m Removed NotificationServiceProvider from lib/config/app.dart
+[32m✓[0m Removed notificationConfig from lib/main.dart
+
+[33m⚠[0m Manual cleanup required for platform files:
+[34m ℹ[0m 
+[34m ℹ[0m Android (android/app/src/main/AndroidManifest.xml):
+[34m ℹ[0m   Remove: <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/index.html):
+[34m ℹ[0m   Remove the OneSignal SDK script tags
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/OneSignalSDKWorker.js):
+[34m ℹ[0m   Delete this file if no longer needed
+
+[32m✓[0m Magic Notifications uninstalled successfully!
+00:00 +7: UninstallCommand --force flag removes all injected artifacts removes notifications.dart import from lib/main.dart
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+[32m✓[0m Deleted lib/config/notifications.dart
+[32m✓[0m Removed magic_notifications from pubspec.yaml
+[32m✓[0m Removed NotificationServiceProvider from lib/config/app.dart
+[32m✓[0m Removed notificationConfig from lib/main.dart
+
+[33m⚠[0m Manual cleanup required for platform files:
+[34m ℹ[0m 
+[34m ℹ[0m Android (android/app/src/main/AndroidManifest.xml):
+[34m ℹ[0m   Remove: <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/index.html):
+[34m ℹ[0m   Remove the OneSignal SDK script tags
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/OneSignalSDKWorker.js):
+[34m ℹ[0m   Delete this file if no longer needed
+
+[32m✓[0m Magic Notifications uninstalled successfully!
+00:00 +8: UninstallCommand --force flag removes all injected artifacts removes notificationConfig factory from lib/main.dart
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+[32m✓[0m Deleted lib/config/notifications.dart
+[32m✓[0m Removed magic_notifications from pubspec.yaml
+[32m✓[0m Removed NotificationServiceProvider from lib/config/app.dart
+[32m✓[0m Removed notificationConfig from lib/main.dart
+
+[33m⚠[0m Manual cleanup required for platform files:
+[34m ℹ[0m 
+[34m ℹ[0m Android (android/app/src/main/AndroidManifest.xml):
+[34m ℹ[0m   Remove: <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/index.html):
+[34m ℹ[0m   Remove the OneSignal SDK script tags
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/OneSignalSDKWorker.js):
+[34m ℹ[0m   Delete this file if no longer needed
+
+[32m✓[0m Magic Notifications uninstalled successfully!
+00:00 +9: UninstallCommand --force flag removes all injected artifacts preserves non-notification content in lib/main.dart
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+[32m✓[0m Deleted lib/config/notifications.dart
+[32m✓[0m Removed magic_notifications from pubspec.yaml
+[32m✓[0m Removed NotificationServiceProvider from lib/config/app.dart
+[32m✓[0m Removed notificationConfig from lib/main.dart
+
+[33m⚠[0m Manual cleanup required for platform files:
+[34m ℹ[0m 
+[34m ℹ[0m Android (android/app/src/main/AndroidManifest.xml):
+[34m ℹ[0m   Remove: <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/index.html):
+[34m ℹ[0m   Remove the OneSignal SDK script tags
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/OneSignalSDKWorker.js):
+[34m ℹ[0m   Delete this file if no longer needed
+
+[32m✓[0m Magic Notifications uninstalled successfully!
+00:00 +10: UninstallCommand platform files are NOT touched does not touch AndroidManifest.xml when present
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+[32m✓[0m Deleted lib/config/notifications.dart
+[32m✓[0m Removed magic_notifications from pubspec.yaml
+[32m✓[0m Removed NotificationServiceProvider from lib/config/app.dart
+[32m✓[0m Removed notificationConfig from lib/main.dart
+
+[33m⚠[0m Manual cleanup required for platform files:
+[34m ℹ[0m 
+[34m ℹ[0m Android (android/app/src/main/AndroidManifest.xml):
+[34m ℹ[0m   Remove: <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/index.html):
+[34m ℹ[0m   Remove the OneSignal SDK script tags
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/OneSignalSDKWorker.js):
+[34m ℹ[0m   Delete this file if no longer needed
+
+[32m✓[0m Magic Notifications uninstalled successfully!
+00:00 +11: UninstallCommand platform files are NOT touched does not touch web/index.html when present
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+[32m✓[0m Deleted lib/config/notifications.dart
+[32m✓[0m Removed magic_notifications from pubspec.yaml
+[32m✓[0m Removed NotificationServiceProvider from lib/config/app.dart
+[32m✓[0m Removed notificationConfig from lib/main.dart
+
+[33m⚠[0m Manual cleanup required for platform files:
+[34m ℹ[0m 
+[34m ℹ[0m Android (android/app/src/main/AndroidManifest.xml):
+[34m ℹ[0m   Remove: <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/index.html):
+[34m ℹ[0m   Remove the OneSignal SDK script tags
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/OneSignalSDKWorker.js):
+[34m ℹ[0m   Delete this file if no longer needed
+
+[32m✓[0m Magic Notifications uninstalled successfully!
+00:00 +12: UninstallCommand platform files are NOT touched does not touch OneSignalSDKWorker.js when present
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+[32m✓[0m Deleted lib/config/notifications.dart
+[32m✓[0m Removed magic_notifications from pubspec.yaml
+[32m✓[0m Removed NotificationServiceProvider from lib/config/app.dart
+[32m✓[0m Removed notificationConfig from lib/main.dart
+
+[33m⚠[0m Manual cleanup required for platform files:
+[34m ℹ[0m 
+[34m ℹ[0m Android (android/app/src/main/AndroidManifest.xml):
+[34m ℹ[0m   Remove: <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/index.html):
+[34m ℹ[0m   Remove the OneSignal SDK script tags
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/OneSignalSDKWorker.js):
+[34m ℹ[0m   Delete this file if no longer needed
+
+[32m✓[0m Magic Notifications uninstalled successfully!
+00:00 +13: UninstallCommand graceful handling of already-removed artifacts does not throw when config file does not exist
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+[33m⚠[0m Config file not found (already removed?)
+[32m✓[0m Removed magic_notifications from pubspec.yaml
+[32m✓[0m Removed NotificationServiceProvider from lib/config/app.dart
+[32m✓[0m Removed notificationConfig from lib/main.dart
+
+[33m⚠[0m Manual cleanup required for platform files:
+[34m ℹ[0m 
+[34m ℹ[0m Android (android/app/src/main/AndroidManifest.xml):
+[34m ℹ[0m   Remove: <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/index.html):
+[34m ℹ[0m   Remove the OneSignal SDK script tags
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/OneSignalSDKWorker.js):
+[34m ℹ[0m   Delete this file if no longer needed
+
+[32m✓[0m Magic Notifications uninstalled successfully!
+00:00 +14: UninstallCommand graceful handling of already-removed artifacts does not throw when app.dart does not exist
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+[32m✓[0m Deleted lib/config/notifications.dart
+[32m✓[0m Removed magic_notifications from pubspec.yaml
+[32m✓[0m Removed notificationConfig from lib/main.dart
+
+[33m⚠[0m Manual cleanup required for platform files:
+[34m ℹ[0m 
+[34m ℹ[0m Android (android/app/src/main/AndroidManifest.xml):
+[34m ℹ[0m   Remove: <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/index.html):
+[34m ℹ[0m   Remove the OneSignal SDK script tags
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/OneSignalSDKWorker.js):
+[34m ℹ[0m   Delete this file if no longer needed
+
+[32m✓[0m Magic Notifications uninstalled successfully!
+00:00 +15: UninstallCommand graceful handling of already-removed artifacts does not throw when main.dart does not exist
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+[32m✓[0m Deleted lib/config/notifications.dart
+[32m✓[0m Removed magic_notifications from pubspec.yaml
+[32m✓[0m Removed NotificationServiceProvider from lib/config/app.dart
+
+[33m⚠[0m Manual cleanup required for platform files:
+[34m ℹ[0m 
+[34m ℹ[0m Android (android/app/src/main/AndroidManifest.xml):
+[34m ℹ[0m   Remove: <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/index.html):
+[34m ℹ[0m   Remove the OneSignal SDK script tags
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/OneSignalSDKWorker.js):
+[34m ℹ[0m   Delete this file if no longer needed
+
+[32m✓[0m Magic Notifications uninstalled successfully!
+00:00 +16: UninstallCommand without --force flag does NOT execute removal when user declines (no --force)
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+Are you sure you want to uninstall Magic Notifications? [y/N]: [34m ℹ[0m Uninstall cancelled.
+00:00 +17: UninstallCommand output messages shows platform cleanup warning after --force uninstall
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m The following will be removed:
+[34m ℹ[0m   • lib/config/notifications.dart
+[34m ℹ[0m   • magic_notifications dependency from pubspec.yaml
+[34m ℹ[0m   • NotificationServiceProvider from lib/config/app.dart
+[34m ℹ[0m   • notificationConfig factory from lib/main.dart
+
+[33m⚠[0m Platform files will NOT be reverted (manual cleanup required):
+[34m ℹ[0m   • android/app/src/main/AndroidManifest.xml
+[34m ℹ[0m   • web/index.html
+[34m ℹ[0m   • web/OneSignalSDKWorker.js
+
+[32m✓[0m Deleted lib/config/notifications.dart
+[32m✓[0m Removed magic_notifications from pubspec.yaml
+[32m✓[0m Removed NotificationServiceProvider from lib/config/app.dart
+[32m✓[0m Removed notificationConfig from lib/main.dart
+
+[33m⚠[0m Manual cleanup required for platform files:
+[34m ℹ[0m 
+[34m ℹ[0m Android (android/app/src/main/AndroidManifest.xml):
+[34m ℹ[0m   Remove: <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/index.html):
+[34m ℹ[0m   Remove the OneSignal SDK script tags
+[34m ℹ[0m 
+[34m ℹ[0m Web (web/OneSignalSDKWorker.js):
+[34m ℹ[0m   Delete this file if no longer needed
+
+[32m✓[0m Magic Notifications uninstalled successfully!
+00:00 +18: All tests passed!

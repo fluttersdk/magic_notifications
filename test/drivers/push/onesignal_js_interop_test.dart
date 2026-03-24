@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:fluttersdk_magic_notifications/src/drivers/push/onesignal_js_interop.dart';
+import 'package:magic_notifications/src/drivers/push/onesignal_js_interop.dart';
 
 void main() {
   group('OneSignalJsInterop', () {

@@ -1,0 +1,70 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for Magic Notifications Plugin
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea for the notifications plugin? We'd love to hear it!
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What feature or improvement would you like to see?
+      placeholder: A clear description of the feature and why it's needed.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: Module
+      description: Which part of the plugin does this relate to?
+      options:
+        - NotificationManager
+        - Channels (New channel type)
+        - Drivers (New push driver)
+        - CLI Tools
+        - Models / Preferences
+        - Widgets
+        - New Module
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: api-syntax
+    attributes:
+      label: Proposed API
+      description: How would the API look? Show the usage pattern.
+      placeholder: |
+        // Custom channel example
+        class SmsChannel extends NotificationChannel {
+          @override
+          String get name => 'sms';
+          // ...
+        }
+      render: dart
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case
+      description: Describe a real scenario where you'd use this feature.
+      placeholder: "When sending SMS notifications, I need a dedicated channel..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any workarounds or alternative approaches you've tried?
+
+  - type: textarea
+    id: code
+    attributes:
+      label: Example Implementation
+      description: How would this look in a real app?
+      render: dart

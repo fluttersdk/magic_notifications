@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'package:test/test.dart';
-import 'package:magic_cli/magic_cli.dart';
 import 'package:magic_notifications/src/cli/commands/channels_command.dart';
 
 class _TestChannelsCommand extends ChannelsCommand {

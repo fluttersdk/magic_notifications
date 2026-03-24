@@ -1,5 +1,5 @@
 import 'package:flutter/widgets.dart';
-import 'package:fluttersdk_magic/fluttersdk_magic.dart';
+import 'package:magic/magic.dart';
 
 /// Initialize Magic framework for tests.
 ///

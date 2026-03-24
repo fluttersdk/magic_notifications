@@ -1,6 +1,5 @@
 import 'package:test/test.dart';
 import 'package:magic_notifications/src/cli/commands/test_command.dart';
-import 'package:magic_cli/magic_cli.dart';
 
 void main() {
   late TestCommand command;

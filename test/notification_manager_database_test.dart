@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fluttersdk_magic_notifications/src/models/database_notification.dart';
-import 'package:fluttersdk_magic_notifications/src/notification_manager.dart';
+import 'package:magic_notifications/src/models/database_notification.dart';
+import 'package:magic_notifications/src/notification_manager.dart';
 
 import 'test_helper.dart';
 

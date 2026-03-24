@@ -8,16 +8,16 @@ on:
 
 jobs:
   analyze-and-test:
+    name: Lint & Test
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.27.1"
-          channel: "stable"
+          channel: stable
           cache: true
 
       - name: Install dependencies
@@ -33,7 +33,7 @@ jobs:
         run: flutter test --coverage
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: coverage/lcov.info
           fail_ci_if_error: false

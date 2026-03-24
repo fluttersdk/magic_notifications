@@ -1,0 +1,8 @@
+Running build hooks...Running build hooks...00:00 +0: loading test/cli/publish_command_test.dart
+00:00 +0: PublishCommand without --force, does not overwrite existing file
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[33m⚠[0m lib/config/notifications.dart already exists.
+[33m⚠[0m Use --force to overwrite.
+00:00 +1: All tests passed!

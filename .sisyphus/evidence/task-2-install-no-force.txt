@@ -1,0 +1,20 @@
+Running build hooks...Running build hooks...00:00 +0: loading test/cli/install_command_test.dart
+00:00 +0: InstallCommand does not overwrite existing config without force
+[34m ℹ[0m [32m╔══════════════════════════════╗
+║  Magic Notifications v0.0.1  ║
+╚══════════════════════════════╝[0m
+[34m ℹ[0m Detected flutter project
+
+[34m ℹ[0m [36m[1/3][0m Creating configuration files...
+[33m⚠[0m Configuration file already exists. Use --force to overwrite.
+[32m✓[0m Injected NotificationServiceProvider into lib/config/app.dart
+[32m✓[0m Injected notificationConfig into lib/main.dart
+
+[32m✓[0m Installation complete!
+
+[34m ℹ[0m Next steps:
+[34m ℹ[0m   1. Run: [36mflutter pub get[0m
+[34m ℹ[0m   2. Configure your OneSignal dashboard
+[34m ℹ[0m   3. Test: [36mdart run magic_notifications:test --dry-run[0m
+[34m ℹ[0m   4. Check status: [36mdart run magic_notifications:status[0m
+00:00 +1: All tests passed!

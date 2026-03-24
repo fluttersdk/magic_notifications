@@ -98,12 +98,12 @@ dependencies:
       expect(command.checkPluginInstalled(), isFalse);
     });
 
-    test('returns false when only old package name is present', () {
+    test('returns false when unrelated dependency is present', () {
       File('${tempDir.path}/pubspec.yaml').writeAsStringSync('''
 name: test_app
 dependencies:
-  fluttersdk_magic_notifications:
-    path: ./plugins/fluttersdk_magic_notifications
+  some_other_package:
+    path: ./plugins/some_other_package
 ''');
       expect(command.checkPluginInstalled(), isFalse);
     });

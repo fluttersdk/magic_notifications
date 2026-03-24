@@ -44,7 +44,13 @@ app.*.map.json
 /android/app/release
 
 # AI coding tools
-AGENTS.md
-.claude/
-.opencode/
-.sisyphus/
+.ac/
+
+# Package lock file
+pubspec.lock
+
+# Environment variables
+.env
+
+# Test coverage
+coverage/

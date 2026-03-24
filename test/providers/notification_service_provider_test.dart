@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fluttersdk_magic/fluttersdk_magic.dart';
-import 'package:fluttersdk_magic_notifications/fluttersdk_magic_notifications.dart';
+import 'package:magic/magic.dart';
+import 'package:magic_notifications/magic_notifications.dart';
 
 void main() {
   late MagicApp app;

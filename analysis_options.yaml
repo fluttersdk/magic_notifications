@@ -6,3 +6,4 @@ analyzer:
   errors:
     # CLI tools legitimately use print
     avoid_print: ignore
+    unintended_html_in_doc_comment: ignore

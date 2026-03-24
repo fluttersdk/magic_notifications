@@ -1,0 +1,19 @@
+Task 4 — configure --polling-interval (updateConfig interval) evidence
+=======================================================================
+
+Command run:
+  dart test test/cli/commands/configure_command_test.dart --name "polling_interval"
+
+Output:
+  Running build hooks...
+  00:00 +0: loading test/cli/commands/configure_command_test.dart
+  00:00 +0: readCurrentConfig parses polling_interval from database section
+  00:00 +1: updateConfig polling_interval replaces polling_interval in the file
+  00:00 +2: updateConfig polling_interval updated polling_interval is readable by readCurrentConfig
+  00:00 +3: All tests passed!
+
+Verified:
+  - updateConfig({'database': {'polling_interval': 60}}) rewrites 30 → 60
+  - Round-trip: readCurrentConfig() returns updated value after write
+  - Uses FileHelper.readFile() + FileHelper.writeFile() — no direct File() calls
+  - validatePollingInterval: 5 passes, 4 fails, 600 passes, 601 fails (separate tests)

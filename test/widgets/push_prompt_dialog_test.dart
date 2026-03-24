@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fluttersdk_magic_notifications/fluttersdk_magic_notifications.dart';
+import 'package:magic_notifications/magic_notifications.dart';
 
 void main() {
   testWidgets('PushPromptDialog shows title and message', (tester) async {

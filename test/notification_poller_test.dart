@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fluttersdk_magic_notifications/src/notification_poller.dart';
+import 'package:magic_notifications/src/notification_poller.dart';
 
 /// Mock that tracks fetch calls for testing without calling real implementation.
 class MockNotificationManager {

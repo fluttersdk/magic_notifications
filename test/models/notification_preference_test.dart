@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fluttersdk_magic_notifications/src/models/notification_preference.dart';
+import 'package:magic_notifications/src/models/notification_preference.dart';
 
 void main() {
   group('NotificationPreference', () {

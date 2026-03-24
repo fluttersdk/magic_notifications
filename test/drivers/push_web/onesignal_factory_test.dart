@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fluttersdk_magic_notifications/src/drivers/push_web/onesignal_stub.dart';
+import 'package:magic_notifications/src/drivers/push_web/onesignal_stub.dart';
 
 void main() {
   group('OneSignal Platform Factory', () {
