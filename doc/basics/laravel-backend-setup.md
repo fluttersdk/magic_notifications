@@ -1,50 +1,69 @@
-# Laravel Backend Setup Guide
+# Laravel Backend Setup
 
-This guide shows how to implement the notification backend using Laravel's built-in notification system.
+## Table of Contents
 
-## Prerequisites
+- <a name="toc-overview"></a>[Overview](#overview)
+- <a name="toc-prerequisites"></a>[Prerequisites](#prerequisites)
+- <a name="toc-database-setup"></a>[Database Setup](#database-setup)
+- <a name="toc-models"></a>[Models](#models)
+- <a name="toc-notification-class"></a>[Notification Class](#notification-class)
+- <a name="toc-api-controllers"></a>[API Controllers](#api-controllers)
+- <a name="toc-api-routes"></a>[API Routes](#api-routes)
+- <a name="toc-onesignal-push"></a>[OneSignal Push Integration](#onesignal-push)
+- <a name="toc-sending"></a>[Sending Notifications](#sending)
+- <a name="toc-api-contract"></a>[API Contract Reference](#api-contract)
+- <a name="toc-testing"></a>[Testing](#testing)
+
+---
+
+## <a name="overview"></a>Overview
+
+Magic Notifications works with any backend that provides REST API endpoints. This guide shows how to implement the notification backend using **Laravel's built-in notification system** — the recommended approach for Laravel-based projects.
+
+> [!NOTE]
+> This guide covers the Laravel backend side. For Flutter client setup, see [Installation](../getting-started/installation.md) and [Configuration](../getting-started/configuration.md).
+
+---
+
+## <a name="prerequisites"></a>Prerequisites
 
 - Laravel 10.x or higher
 - PHP 8.1+
 - Composer
 
-## 1. Create Notifications Table
+---
 
-Laravel provides a built-in artisan command to create the notifications table:
+## <a name="database-setup"></a>Database Setup
+
+### Notifications Table
+
+Laravel provides a built-in artisan command:
 
 ```bash
 php artisan make:notifications-table
 php artisan migrate
 ```
 
-This creates the standard `notifications` table with the following structure:
+This creates the standard `notifications` table:
 
 | Column | Type | Description |
 |--------|------|-------------|
 | id | uuid | Primary key |
 | type | string | Notification class name |
-| notifiable_type | string | Model type (e.g., App\Models\User) |
+| notifiable_type | string | Model type (e.g., `App\Models\User`) |
 | notifiable_id | bigint | Model ID |
 | data | json | Notification payload |
-| read_at | timestamp | When marked as read (null = unread) |
+| read_at | timestamp | When marked as read (`null` = unread) |
 | created_at | timestamp | Creation time |
 | updated_at | timestamp | Last update time |
 
-## 2. Create Notification Preferences Table
+### Notification Preferences Table
 
 ```bash
 php artisan make:migration create_notification_preferences_table
 ```
 
-Edit the migration:
-
 ```php
-<?php
-
-use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
-
 return new class extends Migration
 {
     public function up(): void
@@ -69,19 +88,19 @@ return new class extends Migration
 };
 ```
 
-Run the migration:
-
 ```bash
 php artisan migrate
 ```
 
-## 3. Setup User Model
+---
+
+## <a name="models"></a>Models
+
+### User Model
 
 Ensure your User model uses the `Notifiable` trait:
 
 ```php
-<?php
-
 namespace App\Models;
 
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -98,15 +117,13 @@ class User extends Authenticatable
 }
 ```
 
-## 4. Create NotificationPreference Model
+### NotificationPreference Model
 
 ```bash
 php artisan make:model NotificationPreference
 ```
 
 ```php
-<?php
-
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -136,15 +153,15 @@ class NotificationPreference extends Model
 }
 ```
 
-## 5. Create a Notification Class
+---
+
+## <a name="notification-class"></a>Notification Class
 
 ```bash
 php artisan make:notification MonitorDownNotification
 ```
 
 ```php
-<?php
-
 namespace App\Notifications;
 
 use App\Models\Monitor;
@@ -160,11 +177,6 @@ class MonitorDownNotification extends Notification
         public Monitor $monitor
     ) {}
 
-    /**
-     * Determine which channels the notification should be delivered on.
-     *
-     * @return array<int, string>
-     */
     public function via(object $notifiable): array
     {
         $channels = [];
@@ -181,11 +193,6 @@ class MonitorDownNotification extends Notification
         return $channels;
     }
 
-    /**
-     * Get the array representation for database storage.
-     *
-     * @return array<string, mixed>
-     */
     public function toArray(object $notifiable): array
     {
         return [
@@ -196,17 +203,11 @@ class MonitorDownNotification extends Notification
         ];
     }
 
-    /**
-     * Customize the notification type stored in database.
-     */
     public function databaseType(object $notifiable): string
     {
         return 'monitor_down';
     }
 
-    /**
-     * Get the mail representation of the notification.
-     */
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
@@ -219,7 +220,9 @@ class MonitorDownNotification extends Notification
 }
 ```
 
-## 6. Create API Controllers
+---
+
+## <a name="api-controllers"></a>API Controllers
 
 ### NotificationController
 
@@ -228,8 +231,6 @@ php artisan make:controller Api/V1/NotificationController
 ```
 
 ```php
-<?php
-
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
@@ -238,9 +239,6 @@ use Illuminate\Http\JsonResponse;
 
 class NotificationController extends Controller
 {
-    /**
-     * List user notifications.
-     */
     public function index(Request $request): JsonResponse
     {
         $notifications = $request->user()
@@ -264,9 +262,6 @@ class NotificationController extends Controller
         ]);
     }
 
-    /**
-     * Get unread notification count.
-     */
     public function unreadCount(Request $request): JsonResponse
     {
         $count = $request->user()->unreadNotifications()->count();
@@ -274,9 +269,6 @@ class NotificationController extends Controller
         return response()->json(['count' => $count]);
     }
 
-    /**
-     * Mark a notification as read.
-     */
     public function markAsRead(Request $request, string $id): JsonResponse
     {
         $notification = $request->user()
@@ -288,9 +280,6 @@ class NotificationController extends Controller
         return response()->json(['message' => 'Notification marked as read']);
     }
 
-    /**
-     * Mark all notifications as read.
-     */
     public function markAllAsRead(Request $request): JsonResponse
     {
         $request->user()->unreadNotifications->markAsRead();
@@ -298,9 +287,6 @@ class NotificationController extends Controller
         return response()->json(['message' => 'All notifications marked as read']);
     }
 
-    /**
-     * Delete a notification.
-     */
     public function destroy(Request $request, string $id): JsonResponse
     {
         $request->user()
@@ -320,8 +306,6 @@ php artisan make:controller Api/V1/NotificationPreferenceController
 ```
 
 ```php
-<?php
-
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
@@ -331,9 +315,6 @@ use Illuminate\Http\JsonResponse;
 
 class NotificationPreferenceController extends Controller
 {
-    /**
-     * Get user's notification preferences.
-     */
     public function show(Request $request): JsonResponse
     {
         $prefs = $request->user()->notificationPreference
@@ -349,9 +330,6 @@ class NotificationPreferenceController extends Controller
         ]);
     }
 
-    /**
-     * Update user's notification preferences.
-     */
     public function update(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -364,19 +342,7 @@ class NotificationPreferenceController extends Controller
         $prefs = $request->user()->notificationPreference
             ?? new NotificationPreference(['user_id' => $request->user()->id]);
 
-        if (isset($validated['push_enabled'])) {
-            $prefs->push_enabled = $validated['push_enabled'];
-        }
-        if (isset($validated['email_enabled'])) {
-            $prefs->email_enabled = $validated['email_enabled'];
-        }
-        if (isset($validated['in_app_enabled'])) {
-            $prefs->in_app_enabled = $validated['in_app_enabled'];
-        }
-        if (isset($validated['type_preferences'])) {
-            $prefs->type_preferences = $validated['type_preferences'];
-        }
-
+        $prefs->fill($validated);
         $prefs->save();
 
         return response()->json([
@@ -392,51 +358,43 @@ class NotificationPreferenceController extends Controller
 }
 ```
 
-## 7. Add API Routes
+---
+
+## <a name="api-routes"></a>API Routes
 
 In `routes/api/v1.php`:
 
 ```php
-<?php
-
 use App\Http\Controllers\Api\V1\NotificationController;
 use App\Http\Controllers\Api\V1\NotificationPreferenceController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('auth:sanctum')->group(function () {
-    // Notifications
     Route::get('notifications', [NotificationController::class, 'index']);
     Route::get('notifications/unread-count', [NotificationController::class, 'unreadCount']);
     Route::post('notifications/{id}/read', [NotificationController::class, 'markAsRead']);
     Route::post('notifications/read-all', [NotificationController::class, 'markAllAsRead']);
     Route::delete('notifications/{id}', [NotificationController::class, 'destroy']);
 
-    // Notification Preferences
     Route::get('notification-preferences', [NotificationPreferenceController::class, 'show']);
     Route::put('notification-preferences', [NotificationPreferenceController::class, 'update']);
 });
 ```
 
-## 8. OneSignal Push Notifications (Optional)
+---
 
-For push notifications via OneSignal:
+## <a name="onesignal-push"></a>OneSignal Push Integration
 
-### Install Packages
+For push notifications via OneSignal, install the Laravel notification channel:
 
 ```bash
 composer require laravel-notification-channels/onesignal
 composer require berkayk/onesignal-laravel
 ```
 
-### Publish OneSignal Config
-
 ```bash
 php artisan vendor:publish --provider="Berkayk\OneSignal\OneSignalServiceProvider"
 ```
-
-This creates `config/onesignal.php` which reads from environment variables.
-
-### Configure Environment
 
 Add to `.env`:
 
@@ -445,61 +403,42 @@ ONESIGNAL_APP_ID=your-onesignal-app-id
 ONESIGNAL_REST_API_KEY=your-onesignal-rest-api-key
 ```
 
-> **Note**: Get the REST API Key from OneSignal Dashboard → Settings → Keys & IDs. Use the "REST API Key" (starts with `os_v2_app_...`), not the "User Auth Key".
+> [!NOTE]
+> Get the REST API Key from OneSignal Dashboard → Settings → Keys & IDs. Use the "REST API Key" (starts with `os_v2_app_...`), not the "User Auth Key".
 
 ### Update Notification Class
 
+Add the OneSignal channel to your notification:
+
 ```php
-<?php
-
-namespace App\Notifications;
-
-use App\Models\Monitor;
-use Illuminate\Bus\Queueable;
-use Illuminate\Notifications\Notification;
 use NotificationChannels\OneSignal\OneSignalChannel;
 use NotificationChannels\OneSignal\OneSignalMessage;
 
-class MonitorDownNotification extends Notification
+public function via(object $notifiable): array
 {
-    use Queueable;
+    $channels = ['database'];
+    $prefs = $notifiable->notificationPreference;
 
-    public function __construct(
-        public Monitor $monitor
-    ) {}
-
-    public function via(object $notifiable): array
-    {
-        $channels = ['database'];
-        $prefs = $notifiable->notificationPreference;
-
-        if (!$prefs || $prefs->push_enabled) {
-            $channels[] = OneSignalChannel::class;
-        }
-
-        if (!$prefs || $prefs->email_enabled) {
-            $channels[] = 'mail';
-        }
-
-        return $channels;
+    if (!$prefs || $prefs->push_enabled) {
+        $channels[] = OneSignalChannel::class;
     }
 
-    public function toOneSignal(object $notifiable): OneSignalMessage
-    {
-        return OneSignalMessage::create()
-            ->setSubject('Monitor Down')
-            ->setBody("Your monitor '{$this->monitor->name}' is not responding.")
-            ->setUrl(url("/monitors/{$this->monitor->id}"))
-            ->setData('monitor_id', $this->monitor->id);
-    }
+    return $channels;
+}
 
-    // ... toArray and toMail methods remain the same
+public function toOneSignal(object $notifiable): OneSignalMessage
+{
+    return OneSignalMessage::create()
+        ->setSubject('Monitor Down')
+        ->setBody("Your monitor '{$this->monitor->name}' is not responding.")
+        ->setUrl(url("/monitors/{$this->monitor->id}"))
+        ->setData('monitor_id', $this->monitor->id);
 }
 ```
 
 ### Route User to OneSignal
 
-Add to User model:
+Add to your User model:
 
 ```php
 /**
@@ -507,11 +446,6 @@ Add to User model:
  *
  * IMPORTANT: The external_user_id must match what the Flutter app sets
  * when calling Notify.initializePush('user_' + user.id).
- *
- * We use 'user_' prefix because OneSignal blocks simple values
- * like '0', '1', '-1', 'null', 'undefined' etc. as external_id.
- *
- * @return array<string, mixed>
  */
 public function routeNotificationForOneSignal(): array
 {
@@ -519,9 +453,12 @@ public function routeNotificationForOneSignal(): array
 }
 ```
 
-> ⚠️ **Important**: The `user_` prefix is required to avoid OneSignal's blocked external_id values. Both Flutter and Laravel must use the same format: `user_{id}`
+> [!TIP]
+> The `user_` prefix is required to avoid OneSignal's blocked external_id values. Both Flutter and Laravel must use the same format: `user_{id}`.
 
-## 9. Sending Notifications
+---
+
+## <a name="sending"></a>Sending Notifications
 
 ### From Controller
 
@@ -539,8 +476,6 @@ public function checkMonitor(Monitor $monitor)
 ### From Job/Queue
 
 ```php
-use App\Models\User;
-use App\Notifications\MonitorDownNotification;
 use Illuminate\Support\Facades\Notification;
 
 // Single user
@@ -550,7 +485,77 @@ $user->notify(new MonitorDownNotification($monitor));
 Notification::send($users, new MonitorDownNotification($monitor));
 ```
 
-## Testing
+---
+
+## <a name="api-contract"></a>API Contract Reference
+
+These are the endpoints the Flutter plugin expects from your backend:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/notifications` | GET | List user notifications (paginated) |
+| `/notifications/unread-count` | GET | Get unread notification count |
+| `/notifications/{id}/read` | POST | Mark single notification as read |
+| `/notifications/read-all` | POST | Mark all notifications as read |
+| `/notifications/{id}` | DELETE | Delete a notification |
+| `/notification-preferences` | GET | Get user notification preferences |
+| `/notification-preferences` | PUT | Update user preferences |
+
+### Response Formats
+
+**GET /notifications**:
+
+```json
+{
+  "data": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "type": "monitor_down",
+      "data": {
+        "title": "Monitor Alert",
+        "body": "Your monitor 'API Server' is down",
+        "action_url": "/monitors/1"
+      },
+      "read_at": null,
+      "created_at": "2024-01-15T10:30:00Z"
+    }
+  ],
+  "meta": {
+    "current_page": 1,
+    "last_page": 3,
+    "per_page": 15,
+    "total": 42
+  }
+}
+```
+
+**GET /notifications/unread-count**:
+
+```json
+{
+  "count": 5
+}
+```
+
+**GET /notification-preferences**:
+
+```json
+{
+  "data": {
+    "push_enabled": true,
+    "email_enabled": false,
+    "in_app_enabled": true,
+    "type_preferences": {
+      "monitor_down": { "push": true, "email": true, "in_app": true },
+      "monitor_up": { "push": false, "email": false, "in_app": true }
+    }
+  }
+}
+```
+
+---
+
+## <a name="testing"></a>Testing
 
 ### Test Database Notification
 
@@ -575,8 +580,6 @@ test('sends monitor down notification', function () {
 ### Test API Endpoints
 
 ```php
-use App\Models\User;
-
 test('lists user notifications', function () {
     $user = User::factory()->create();
     $user->notify(new \App\Notifications\MonitorDownNotification($monitor));
@@ -592,7 +595,11 @@ test('lists user notifications', function () {
 });
 ```
 
-## Reference
+---
+
+**Related**
 
 - [Laravel Notifications Documentation](https://laravel.com/docs/notifications)
 - [OneSignal Laravel Channel](https://github.com/laravel-notification-channels/onesignal)
+- [Installation](https://magic.fluttersdk.com/packages/notifications/getting-started/installation)
+- [Channels](https://magic.fluttersdk.com/packages/notifications/basics/channels)
