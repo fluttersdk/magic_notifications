@@ -1,6 +1,7 @@
 import 'package:magic/magic.dart';
 
 import '../drivers/push_web/onesignal_factory.dart';
+import '../facades/notify.dart';
 import '../notification_manager.dart';
 
 /// Service provider for notifications.
@@ -49,6 +50,43 @@ class NotificationServiceProvider extends ServiceProvider {
           _log('Failed to initialize OneSignal: $e', isError: true);
         }
       }
+    }
+
+    // Auto-attach push on Auth state change
+    final autoAttach =
+        Config.get<bool>('notifications.push.auto_attach_on_auth') ?? true;
+
+    if (autoAttach) {
+      final externalIdPrefix =
+          Config.get<String>('notifications.push.external_id_prefix') ??
+              'user_';
+      final autoRequestPermission =
+          Config.get<bool>('notifications.push.auto_request_permission') ??
+              true;
+
+      var lastUserId = '';
+      Auth.stateNotifier.addListener(() async {
+        try {
+          if (!Auth.check()) {
+            lastUserId = '';
+            Notify.stopPolling();
+            await Notify.logoutPush();
+            return;
+          }
+          final id = '${Auth.id() ?? ''}';
+          if (id.isEmpty || id == lastUserId) return;
+          lastUserId = id;
+          await Notify.initializePush('$externalIdPrefix$id');
+          if (autoRequestPermission) {
+            await Notify.requestPushPermission();
+          }
+        } catch (e) {
+          _log(
+            '[NotificationServiceProvider] auth state change failed: $e',
+            isError: true,
+          );
+        }
+      });
     }
   }
 
