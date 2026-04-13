@@ -5,6 +5,9 @@ Map<String, dynamic> get notificationConfig => {
       'driver': 'onesignal',
       'app_id': '{{ oneSignalAppId }}',{{ safariWebIdLine }}
       'notify_button_enabled': {{ notifyButtonEnabled }},
+      'auto_attach_on_auth': true,
+      'external_id_prefix': 'user_',
+      'auto_request_permission': true,
     },
     'database': {
       'enabled': true,

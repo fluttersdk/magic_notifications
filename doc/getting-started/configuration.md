@@ -32,6 +32,9 @@ Map<String, dynamic> get notificationConfig => {
       'app_id': const String.fromEnvironment('ONESIGNAL_APP_ID'),
       // 'safari_web_id': 'web.onesignal.auto.xxx',  // web only, optional
       'notify_button_enabled': false,
+      'auto_attach_on_auth': true,
+      'external_id_prefix': 'user_',
+      'auto_request_permission': true,
     },
     'database': {
       'enabled': true,
@@ -61,6 +64,9 @@ Controls the push notification channel and its driver.
 | `app_id` | `String` | `''` | OneSignal App ID (UUID format). Must be non-empty for push to function. |
 | `safari_web_id` | `String?` | `null` | Safari Web Push ID for Safari browser support. Optional — omit for non-Safari targets. |
 | `notify_button_enabled` | `bool` | `false` | Whether to show the floating OneSignal notification bell widget on web. |
+| `auto_attach_on_auth` | `bool` | `true` | Automatically initialize push on login and cleanup on logout via `Auth.stateNotifier`. Set `false` to manage push lifecycle manually. |
+| `external_id_prefix` | `String` | `'user_'` | Prefix prepended to the user ID when calling `PushDriver.login()`. OneSignal rejects bare numeric IDs — this prefix prevents that. |
+| `auto_request_permission` | `bool` | `true` | Whether to call `requestPushPermission()` automatically after login. Set `false` if your app prompts from a settings screen instead. |
 
 > [!NOTE]
 > `NotificationServiceProvider.boot()` reads `notifications.push.driver` first. If it equals `'onesignal'`, it calls `createOneSignalDriver()` (which returns `OneSignalWebDriver` on web, `OneSignalDriver` on iOS/Android) and initializes it with `app_id`, `safari_web_id`, and `notify_button_enabled`.
