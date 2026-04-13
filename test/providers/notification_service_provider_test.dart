@@ -2,6 +2,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:magic/magic.dart';
 import 'package:magic_notifications/magic_notifications.dart';
 
+/// Drain the microtask and event queues without wall-clock delay.
+///
+/// Replaces `Future.delayed(Duration(milliseconds: 50))` — runs faster
+/// and does not introduce timing-based flakiness.
+Future<void> _pumpEventQueue([int times = 20]) async {
+  for (var i = 0; i < times; i++) {
+    await Future.delayed(Duration.zero);
+  }
+}
+
 void main() {
   late MagicApp app;
   late NotificationServiceProvider provider;
@@ -14,6 +24,8 @@ void main() {
     Config.flush();
     // Clear push driver from manager
     NotificationManager().forgetPushDriver();
+    // Reset static listener guard between tests
+    NotificationServiceProvider.resetForTesting();
     provider = NotificationServiceProvider(app);
     // Auth must be faked so boot() can access Auth.stateNotifier
     Auth.fake();
@@ -38,10 +50,7 @@ void main() {
     test('boot() completes without error', () async {
       provider.register();
 
-      await expectLater(
-        provider.boot(),
-        completes,
-      );
+      await expectLater(provider.boot(), completes);
     });
 
     test('boot() sets push driver when onesignal is configured', () async {
@@ -58,21 +67,20 @@ void main() {
       expect(manager.pushDriver.name, 'onesignal');
     });
 
-    test('boot() does not set push driver when driver is not onesignal',
-        () async {
-      // Set up different driver
-      Config.set('notifications.push.driver', 'fcm');
+    test(
+      'boot() does not set push driver when driver is not onesignal',
+      () async {
+        // Set up different driver
+        Config.set('notifications.push.driver', 'fcm');
 
-      provider.register();
-      await provider.boot();
+        provider.register();
+        await provider.boot();
 
-      final manager = NotificationManager();
-      // Should throw since driver is not configured
-      expect(
-        () => manager.pushDriver,
-        throwsA(isA<NotificationException>()),
-      );
-    });
+        final manager = NotificationManager();
+        // Should throw since driver is not configured
+        expect(() => manager.pushDriver, throwsA(isA<NotificationException>()));
+      },
+    );
 
     test('boot() does not set push driver when config is empty', () async {
       provider.register();
@@ -80,10 +88,7 @@ void main() {
 
       final manager = NotificationManager();
       // Should throw since no config
-      expect(
-        () => manager.pushDriver,
-        throwsA(isA<NotificationException>()),
-      );
+      expect(() => manager.pushDriver, throwsA(isA<NotificationException>()));
     });
   });
 
@@ -95,10 +100,6 @@ void main() {
       NotificationManager().setPushDriver(driver);
     });
 
-    tearDown(() {
-      Auth.unfake();
-    });
-
     test('listener calls initializePush with prefixed ID on login', () async {
       Auth.fake();
 
@@ -106,40 +107,42 @@ void main() {
       await provider.boot();
 
       await Auth.guard().login({'token': 'tok'}, _makeUser(id: 42));
-      await Future.delayed(const Duration(milliseconds: 50));
+      await _pumpEventQueue();
 
       expect(driver.loggedInAs, 'user_42');
     });
 
     test(
-        'listener calls requestPushPermission when auto_request_permission is true',
-        () async {
-      Config.set('notifications.push.auto_request_permission', true);
-      Auth.fake();
+      'listener calls requestPushPermission when auto_request_permission is true',
+      () async {
+        Config.set('notifications.push.auto_request_permission', true);
+        Auth.fake();
 
-      provider.register();
-      await provider.boot();
+        provider.register();
+        await provider.boot();
 
-      await Auth.guard().login({'token': 'tok'}, _makeUser(id: 1));
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Auth.guard().login({'token': 'tok'}, _makeUser(id: 1));
+        await _pumpEventQueue();
 
-      expect(driver.permissionRequested, isTrue);
-    });
+        expect(driver.permissionRequested, isTrue);
+      },
+    );
 
     test(
-        'listener does NOT call requestPushPermission when auto_request_permission is false',
-        () async {
-      Config.set('notifications.push.auto_request_permission', false);
-      Auth.fake();
+      'listener does NOT call requestPushPermission when auto_request_permission is false',
+      () async {
+        Config.set('notifications.push.auto_request_permission', false);
+        Auth.fake();
 
-      provider.register();
-      await provider.boot();
+        provider.register();
+        await provider.boot();
 
-      await Auth.guard().login({'token': 'tok'}, _makeUser(id: 1));
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Auth.guard().login({'token': 'tok'}, _makeUser(id: 1));
+        await _pumpEventQueue();
 
-      expect(driver.permissionRequested, isFalse);
-    });
+        expect(driver.permissionRequested, isFalse);
+      },
+    );
 
     test('listener calls logoutPush and stopPolling on logout', () async {
       Auth.fake(user: _makeUser(id: 5));
@@ -148,7 +151,7 @@ void main() {
       await provider.boot();
 
       await Auth.logout();
-      await Future.delayed(const Duration(milliseconds: 50));
+      await _pumpEventQueue();
 
       expect(driver.loggedOut, isTrue);
     });
@@ -160,13 +163,13 @@ void main() {
       await provider.boot();
 
       await Auth.guard().login({'token': 'tok'}, _makeUser(id: 7));
-      await Future.delayed(const Duration(milliseconds: 50));
+      await _pumpEventQueue();
 
       final firstLoginCount = driver.loginCount;
 
       // Second login with same user ID — should be skipped
       await Auth.guard().login({'token': 'tok2'}, _makeUser(id: 7));
-      await Future.delayed(const Duration(milliseconds: 50));
+      await _pumpEventQueue();
 
       expect(driver.loginCount, equals(firstLoginCount));
     });
@@ -179,7 +182,7 @@ void main() {
       await provider.boot();
 
       await Auth.guard().login({'token': 'tok'}, _makeUser(id: 3));
-      await Future.delayed(const Duration(milliseconds: 50));
+      await _pumpEventQueue();
 
       expect(driver.loggedInAs, isNull);
     });

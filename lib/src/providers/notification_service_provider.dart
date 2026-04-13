@@ -14,6 +14,17 @@ import '../notification_manager.dart';
 class NotificationServiceProvider extends ServiceProvider {
   NotificationServiceProvider(super.app);
 
+  /// Whether the auth state listener has been attached.
+  ///
+  /// Prevents duplicate listeners when `boot()` runs more than once
+  /// (tests, hot restart, multiple `MagicApp` initializations).
+  static bool _authListenerAttached = false;
+
+  /// Reset static state for testing.
+  static void resetForTesting() {
+    _authListenerAttached = false;
+  }
+
   @override
   void register() {
     // Register manager singleton
@@ -32,8 +43,9 @@ class NotificationServiceProvider extends ServiceProvider {
 
       // Get config values
       final appId = Config.get<String>('notifications.push.app_id');
-      final safariWebId =
-          Config.get<String>('notifications.push.safari_web_id');
+      final safariWebId = Config.get<String>(
+        'notifications.push.safari_web_id',
+      );
       final notifyButtonEnabled =
           Config.get<bool>('notifications.push.notify_button_enabled') ?? false;
 
@@ -56,7 +68,9 @@ class NotificationServiceProvider extends ServiceProvider {
     final autoAttach =
         Config.get<bool>('notifications.push.auto_attach_on_auth') ?? true;
 
-    if (autoAttach) {
+    if (autoAttach && !_authListenerAttached) {
+      _authListenerAttached = true;
+
       final externalIdPrefix =
           Config.get<String>('notifications.push.external_id_prefix') ??
               'user_';
@@ -65,27 +79,33 @@ class NotificationServiceProvider extends ServiceProvider {
               true;
 
       var lastUserId = '';
-      Auth.stateNotifier.addListener(() async {
-        try {
-          if (!Auth.check()) {
-            lastUserId = '';
-            Notify.stopPolling();
-            await Notify.logoutPush();
-            return;
+      Future<void> authListenerQueue = Future.value();
+
+      Auth.stateNotifier.addListener(() {
+        final isAuthenticated = Auth.check();
+        final id = isAuthenticated ? '${Auth.id() ?? ''}' : '';
+
+        authListenerQueue = authListenerQueue.then((_) async {
+          try {
+            if (!isAuthenticated) {
+              lastUserId = '';
+              Notify.stopPolling();
+              await Notify.logoutPush();
+              return;
+            }
+            if (id.isEmpty || id == lastUserId) return;
+            lastUserId = id;
+            await Notify.initializePush('$externalIdPrefix$id');
+            if (autoRequestPermission) {
+              await Notify.requestPushPermission();
+            }
+          } catch (e) {
+            _log(
+              '[NotificationServiceProvider] auth state change failed: $e',
+              isError: true,
+            );
           }
-          final id = '${Auth.id() ?? ''}';
-          if (id.isEmpty || id == lastUserId) return;
-          lastUserId = id;
-          await Notify.initializePush('$externalIdPrefix$id');
-          if (autoRequestPermission) {
-            await Notify.requestPushPermission();
-          }
-        } catch (e) {
-          _log(
-            '[NotificationServiceProvider] auth state change failed: $e',
-            isError: true,
-          );
-        }
+        });
       });
     }
   }
