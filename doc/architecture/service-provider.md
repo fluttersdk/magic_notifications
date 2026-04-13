@@ -115,23 +115,44 @@ After push driver initialization, `boot()` hooks `Auth.stateNotifier` to automat
 final autoAttach = Config.get<bool>('notifications.push.auto_attach_on_auth') ?? true;
 
 if (autoAttach) {
-  Auth.stateNotifier.addListener(() async {
-    if (!Auth.check()) {
-      Notify.stopPolling();
-      await Notify.logoutPush();
-      return;
-    }
-    await Notify.initializePush('$externalIdPrefix$id');
-    if (autoRequestPermission) {
-      await Notify.requestPushPermission();
-    }
+  final externalIdPrefix =
+      Config.get<String>('notifications.push.external_id_prefix') ?? 'user_';
+  final autoRequestPermission =
+      Config.get<bool>('notifications.push.auto_request_permission') ?? true;
+
+  var lastUserId = '';
+  Future<void> authListenerQueue = Future.value();
+
+  Auth.stateNotifier.addListener(() {
+    final isAuthenticated = Auth.check();
+    final id = isAuthenticated ? '${Auth.id() ?? ''}' : '';
+
+    // Serialize runs — prevents overlapping async work on rapid auth changes
+    authListenerQueue = authListenerQueue.then((_) async {
+      if (!isAuthenticated) {
+        lastUserId = '';
+        Notify.stopPolling();
+        await Notify.logoutPush();
+        return;
+      }
+      if (id.isEmpty || id == lastUserId) return;
+      lastUserId = id;
+      await Notify.initializePush('$externalIdPrefix$id');
+      if (autoRequestPermission) {
+        await Notify.requestPushPermission();
+      }
+    });
   });
 }
 ```
 
 This solves the browser user-gesture requirement for web push — `Auth.stateNotifier` fires synchronously inside the login response callback, so the user-gesture from the form submit is still valid when `requestPermission()` runs.
 
-A `lastUserId` guard prevents re-initialization when profile refreshes or team switches bump the notifier without changing the authenticated user.
+Key details:
+
+- **Serialized queue** — auth state is captured synchronously, then async work chains via `.then()` to prevent overlapping runs (e.g., logout racing a prior login)
+- **`lastUserId` dedup** — prevents re-initialization when profile refreshes or team switches bump the notifier without changing the authenticated user
+- **Idempotent registration** — a static `_authListenerAttached` flag ensures the listener is only added once, even if `boot()` runs multiple times (hot restart, tests)
 
 > [!TIP]
 > Set `auto_attach_on_auth: false` if your app manages push lifecycle manually (e.g., prompting from a settings screen).

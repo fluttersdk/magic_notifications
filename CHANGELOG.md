@@ -7,6 +7,11 @@
 - New push config keys: `auto_attach_on_auth` (default `true`), `external_id_prefix` (default `'user_'`), `auto_request_permission` (default `true`)
 - Dedup via `lastUserId` prevents re-initialization on profile refresh or team switch
 
+### Fixed
+- Serialized auth listener queue prevents overlapping async runs on rapid auth state changes
+- Idempotent listener registration via static guard prevents duplicate listeners on hot restart or repeated `boot()` calls
+- Deterministic event-queue pump in tests replaces wall-clock `Future.delayed` for faster, reliable test execution
+
 ## [0.0.1-alpha.1] - 2026-03-25
 
 ### ✨ Core Features
