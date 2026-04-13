@@ -84,12 +84,14 @@ Every feature, fix, or refactor must go through the red-green-refactor cycle:
 | Mistake | Fix |
 |---------|-----|
 | OneSignal blocks bare numeric IDs | Always use `user_` prefix: `Notify.initializePush('user_$userId')` |
-| Hardcoded config values | Read from `ConfigRepository`: `config.get('notifications.push.app_id')` |
+| Hardcoded config values | Static type-safe call: `Config.get<String>('notifications.push.app_id')` |
 | Direct manager instantiation | Use singleton factory: `NotificationManager()` |
 | Timer leak in poller | Ensure `stop()` on dispose |
 | Direct web push imports | Use conditional imports via `onesignal_factory.dart` |
 | Optimistic updates without rollback | Always rollback on API failure in markAsRead/delete |
 | Missing stream disposal | `StreamController` must be disposed in provider teardown |
+| Tests fail silently | Call `initMagicForTests()` (from `test/test_helper.dart`) in `main()` before any test needing Magic |
+| `Platform.isIOS` throws in tests | Wrap platform checks in `try/catch` — return `false` on error |
 
 ## Skills & Extensions
 
