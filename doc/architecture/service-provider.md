@@ -6,6 +6,7 @@
 - <a name="toc-two-phase"></a>[Two-Phase Bootstrap Pattern](#two-phase)
 - <a name="toc-register"></a>[register() — IoC Binding](#register)
 - <a name="toc-boot"></a>[boot() — Push Driver Initialization](#boot)
+- <a name="toc-auth-auto-attach"></a>[Auth Auto-Attach](#auth-auto-attach)
 - <a name="toc-config-loading"></a>[Config Loading from ConfigRepository](#config-loading)
 - <a name="toc-ioc"></a>[IoC Integration](#ioc)
 - <a name="toc-registration"></a>[Registering the Provider](#registration)
@@ -106,8 +107,37 @@ The `boot()` sequence:
 5. Call `driver.initialize(config)` if `app_id` is present and non-empty
 6. Catch any initialization errors and log them without rethrowing — a failed push init should not prevent the app from starting
 
+### Auth Auto-Attach
+
+After push driver initialization, `boot()` hooks `Auth.stateNotifier` to automatically manage push lifecycle on auth state changes:
+
+```dart
+final autoAttach = Config.get<bool>('notifications.push.auto_attach_on_auth') ?? true;
+
+if (autoAttach) {
+  Auth.stateNotifier.addListener(() async {
+    if (!Auth.check()) {
+      Notify.stopPolling();
+      await Notify.logoutPush();
+      return;
+    }
+    await Notify.initializePush('$externalIdPrefix$id');
+    if (autoRequestPermission) {
+      await Notify.requestPushPermission();
+    }
+  });
+}
+```
+
+This solves the browser user-gesture requirement for web push — `Auth.stateNotifier` fires synchronously inside the login response callback, so the user-gesture from the form submit is still valid when `requestPermission()` runs.
+
+A `lastUserId` guard prevents re-initialization when profile refreshes or team switches bump the notifier without changing the authenticated user.
+
+> [!TIP]
+> Set `auto_attach_on_auth: false` if your app manages push lifecycle manually (e.g., prompting from a settings screen).
+
 > [!NOTE]
-> `boot()` does not start database polling. Polling should be started from your authenticated layout's `initState` via `Notify.startPolling()`, so it only runs when a user is logged in.
+> `boot()` does not start database polling. When `auto_attach_on_auth` is enabled, polling stop is handled automatically on logout. Start polling from your authenticated layout's `initState` via `Notify.startPolling()`.
 
 ---
 

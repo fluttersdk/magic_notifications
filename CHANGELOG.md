@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+- **Auth auto-attach**: `NotificationServiceProvider.boot()` hooks `Auth.stateNotifier` to auto-initialize push on login and cleanup on logout
+- New push config keys: `auto_attach_on_auth` (default `true`), `external_id_prefix` (default `'user_'`), `auto_request_permission` (default `true`)
+- Dedup via `lastUserId` prevents re-initialization on profile refresh or team switch
+
 ## [0.0.1-alpha.1] - 2026-03-25
 
 ### ✨ Core Features

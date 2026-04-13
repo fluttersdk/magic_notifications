@@ -53,6 +53,7 @@ Managing notifications in Flutter means juggling multiple channels — database 
 | :gear: | **Config-Driven** | All settings in one Dart config file via `ConfigRepository` |
 | :speech_balloon: | **Soft Prompt** | Custom permission dialog before OS prompt |
 | :globe_with_meridians: | **Web Support** | Full web push via conditional JS interop |
+| :key: | **Auth Auto-Attach** | Auto-initialize push on login, cleanup on logout via `Auth.stateNotifier` |
 
 ---
 
