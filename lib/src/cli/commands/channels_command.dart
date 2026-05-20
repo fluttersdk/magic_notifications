@@ -1,5 +1,4 @@
-import 'dart:io';
-import 'package:magic_cli/magic_cli.dart';
+import 'package:fluttersdk_artisan/artisan.dart';
 
 /// CLI command to display all notification channels and their configuration.
 ///
@@ -8,15 +7,18 @@ import 'package:magic_cli/magic_cli.dart';
 ///
 /// ## Usage
 /// ```bash
-/// dart run magic_notifications channels
+/// artisan notifications:channels
 /// ```
-class ChannelsCommand extends Command {
+class ChannelsCommand extends ArtisanCommand {
   @override
-  String get name => 'channels';
+  String get signature => 'notifications:channels';
 
   @override
   String get description =>
       'Show notification channels and their configuration status';
+
+  @override
+  CommandBoot get boot => CommandBoot.none;
 
   /// Get the project root directory.
   ///
@@ -27,29 +29,25 @@ class ChannelsCommand extends Command {
   String get projectRoot => getProjectRoot();
 
   @override
-  void configure(ArgParser parser) {
-    // No options for this command
-  }
-
-  @override
-  Future<void> handle() async {
+  Future<int> handle(ArtisanContext ctx) async {
     // 1. Display banner with version.
-    info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
+    ctx.output.info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
 
     final configPath = '$projectRoot/lib/config/notifications.dart';
 
     // 2. Check if configuration file exists.
     if (!FileHelper.fileExists(configPath)) {
-      error('Configuration file not found.');
-      info(
-        'Run: ${ConsoleStyle.cyan}dart run magic_notifications install${ConsoleStyle.reset} to set up notifications.',
+      ctx.output.error('Configuration file not found.');
+      ctx.output.info(
+        'Run: ${ConsoleStyle.cyan}artisan notifications:install${ConsoleStyle.reset} to set up notifications.',
       );
-      exit(1);
+      return 1;
     }
 
     // 3. Parse and display channel configuration.
     final config = parseChannelConfig(configPath);
-    _displayChannels(config);
+    _displayChannels(ctx, config);
+    return 0;
   }
 
   /// Parse channel configuration from the notifications config file.
@@ -63,8 +61,9 @@ class ChannelsCommand extends Command {
 
     // 2. Parse push channel configuration.
     final appIdMatch = RegExp(r"'app_id':\s*'([^']*)'").firstMatch(content);
-    final notifyButtonMatch =
-        RegExp(r"'notify_button_enabled':\s*(true|false)").firstMatch(content);
+    final notifyButtonMatch = RegExp(
+      r"'notify_button_enabled':\s*(true|false)",
+    ).firstMatch(content);
 
     result['push'] = {
       'driver': 'onesignal',
@@ -73,13 +72,15 @@ class ChannelsCommand extends Command {
     };
 
     // 3. Parse database channel configuration.
-    final pollingMatch =
-        RegExp(r"'polling_interval':\s*(\d+)").firstMatch(content);
+    final pollingMatch = RegExp(
+      r"'polling_interval':\s*(\d+)",
+    ).firstMatch(content);
     final dbContent = content.contains("'database'")
         ? content.substring(content.indexOf("'database'"))
         : '';
-    final dbEnabledMatch =
-        RegExp(r"'enabled':\s*(true|false)").firstMatch(dbContent);
+    final dbEnabledMatch = RegExp(
+      r"'enabled':\s*(true|false)",
+    ).firstMatch(dbContent);
 
     result['database'] = {
       'enabled': dbEnabledMatch?.group(1) == 'true',
@@ -92,23 +93,21 @@ class ChannelsCommand extends Command {
     final mailContent = content.contains("'mail'")
         ? content.substring(content.indexOf("'mail'"))
         : '';
-    final mailEnabledMatch =
-        RegExp(r"'enabled':\s*(true|false)").firstMatch(mailContent);
+    final mailEnabledMatch = RegExp(
+      r"'enabled':\s*(true|false)",
+    ).firstMatch(mailContent);
 
-    result['mail'] = {
-      'enabled': mailEnabledMatch?.group(1) == 'true',
-    };
+    result['mail'] = {'enabled': mailEnabledMatch?.group(1) == 'true'};
 
     // 5. Parse soft_prompt configuration.
     final softContent = content.contains("'soft_prompt'")
         ? content.substring(content.indexOf("'soft_prompt'"))
         : '';
-    final softEnabledMatch =
-        RegExp(r"'enabled':\s*(true|false)").firstMatch(softContent);
+    final softEnabledMatch = RegExp(
+      r"'enabled':\s*(true|false)",
+    ).firstMatch(softContent);
 
-    result['soft_prompt'] = {
-      'enabled': softEnabledMatch?.group(1) == 'true',
-    };
+    result['soft_prompt'] = {'enabled': softEnabledMatch?.group(1) == 'true'};
 
     return result;
   }
@@ -116,36 +115,37 @@ class ChannelsCommand extends Command {
   /// Display the parsed configuration in a formatted output.
   ///
   /// @param config The parsed configuration map.
-  void _displayChannels(Map<String, dynamic> config) {
-    newLine();
-    info('Notification Channels');
-    info('=' * 50);
-    newLine();
+  void _displayChannels(ArtisanContext ctx, Map<String, dynamic> config) {
+    ctx.output.writeln('');
+    ctx.output.info('Notification Channels');
+    ctx.output.info('=' * 50);
+    ctx.output.writeln('');
 
     // 1. Push channel display.
     final push = config['push'] as Map<String, dynamic>;
     final appId = push['app_id'] as String;
     final maskedId = appId.length > 8 ? '${appId.substring(0, 8)}...' : appId;
-    info('${ConsoleStyle.cyan}push${ConsoleStyle.reset}');
-    info('  Driver:       onesignal');
-    info('  App ID:       $maskedId');
-    info(
-        '  Notify Button: ${push['notify_button_enabled'] == true ? "enabled" : "disabled"}');
-    newLine();
+    ctx.output.info('${ConsoleStyle.cyan}push${ConsoleStyle.reset}');
+    ctx.output.info('  Driver:       onesignal');
+    ctx.output.info('  App ID:       $maskedId');
+    ctx.output.info(
+      '  Notify Button: ${push['notify_button_enabled'] == true ? "enabled" : "disabled"}',
+    );
+    ctx.output.writeln('');
 
     // 2. Database channel display.
     final db = config['database'] as Map<String, dynamic>;
     final dbEnabled = db['enabled'] as bool;
-    info('${ConsoleStyle.cyan}database${ConsoleStyle.reset}');
-    info('  Status:          ${dbEnabled ? "enabled" : "disabled"}');
-    info('  Polling Interval: ${db['polling_interval']}s');
-    newLine();
+    ctx.output.info('${ConsoleStyle.cyan}database${ConsoleStyle.reset}');
+    ctx.output.info('  Status:          ${dbEnabled ? "enabled" : "disabled"}');
+    ctx.output.info('  Polling Interval: ${db['polling_interval']}s');
+    ctx.output.writeln('');
 
     // 3. Mail channel display.
     final mail = config['mail'] as Map<String, dynamic>;
     final mailEnabled = mail['enabled'] as bool;
-    info('${ConsoleStyle.cyan}mail${ConsoleStyle.reset}');
-    info('  Status: ${mailEnabled ? "enabled" : "disabled"}');
-    newLine();
+    ctx.output.info('${ConsoleStyle.cyan}mail${ConsoleStyle.reset}');
+    ctx.output.info('  Status: ${mailEnabled ? "enabled" : "disabled"}');
+    ctx.output.writeln('');
   }
 }

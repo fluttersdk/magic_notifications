@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:magic_cli/magic_cli.dart';
+import 'package:fluttersdk_artisan/artisan.dart';
 
 /// CLI command to publish Magic Notifications stub files to the project.
 ///
@@ -14,16 +14,20 @@ import 'package:magic_cli/magic_cli.dart';
 /// ## Usage
 ///
 /// ```bash
-/// dart run magic_notifications publish
-/// dart run magic_notifications publish --force
+/// artisan notifications:publish
+/// artisan notifications:publish --force
 /// ```
-class PublishCommand extends Command {
+class PublishCommand extends ArtisanCommand {
   @override
-  String get name => 'publish';
+  String get signature =>
+      'notifications:publish {--force : Overwrite existing published files.}';
 
   @override
   String get description =>
       'Publish Magic Notifications config stub for customization';
+
+  @override
+  CommandBoot get boot => CommandBoot.none;
 
   /// Absolute path to the Flutter project root, resolved on first access.
   String get projectRoot => getProjectRoot();
@@ -35,35 +39,21 @@ class PublishCommand extends Command {
   ///
   /// Overridable in tests.
   List<String> getStubSearchPaths() {
-    return [
-      _resolvePluginStubsDir(),
-      '${Directory.current.path}/assets/stubs',
-    ];
+    return [_resolvePluginStubsDir(), '${Directory.current.path}/assets/stubs'];
   }
 
   @override
-  void configure(ArgParser parser) {
-    parser.addFlag(
-      'force',
-      abbr: 'f',
-      help: 'Overwrite existing published files.',
-      defaultsTo: false,
-      negatable: false,
-    );
-  }
+  Future<int> handle(ArtisanContext ctx) async {
+    ctx.output.info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
 
-  @override
-  Future<void> handle() async {
-    info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
-
-    final force = arguments['force'] as bool? ?? false;
+    final force = ctx.input.option('force') as bool? ?? false;
     final configPath = '$projectRoot/lib/config/notifications.dart';
 
     // 1. Guard against overwriting existing file without explicit --force flag.
     if (FileHelper.fileExists(configPath) && !force) {
-      warn('lib/config/notifications.dart already exists.');
-      warn('Use --force to overwrite.');
-      return;
+      ctx.output.warning('lib/config/notifications.dart already exists.');
+      ctx.output.warning('Use --force to overwrite.');
+      return 0;
     }
 
     // 2. Load the notification_config stub and replace placeholders with
@@ -87,19 +77,20 @@ class PublishCommand extends Command {
 
     // 4. Write the populated stub to the project.
     FileHelper.writeFile(configPath, content);
-    success('Published lib/config/notifications.dart');
+    ctx.output.success('Published lib/config/notifications.dart');
 
     // 5. Guide the user toward their next actions.
-    newLine();
-    info('Next steps:');
-    info(
+    ctx.output.writeln('');
+    ctx.output.info('Next steps:');
+    ctx.output.info(
       "  1. Update 'YOUR_ONESIGNAL_APP_ID' with your actual OneSignal App ID",
     );
-    info(
-      '  2. Run: ${ConsoleStyle.cyan}dart run magic_notifications install'
+    ctx.output.info(
+      '  2. Run: ${ConsoleStyle.cyan}artisan notifications:install'
       '${ConsoleStyle.reset}',
     );
-    info('     to inject providers and platform setup');
+    ctx.output.info('     to inject providers and platform setup');
+    return 0;
   }
 
   /// Resolve the package assets directory from `.dart_tool/package_config.json`.
@@ -123,11 +114,9 @@ class PublishCommand extends Command {
             if (rootUri.startsWith('file://')) {
               parsedPath = Uri.parse(rootUri).toFilePath();
             } else if (rootUri.startsWith('../')) {
-              parsedPath = File(packageConfigPath)
-                  .parent
-                  .uri
-                  .resolve(rootUri)
-                  .toFilePath();
+              parsedPath = File(
+                packageConfigPath,
+              ).parent.uri.resolve(rootUri).toFilePath();
             } else {
               parsedPath = rootUri;
             }

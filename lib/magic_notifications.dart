@@ -33,3 +33,6 @@ export 'src/widgets/push_prompt_dialog.dart';
 
 // Exceptions
 export 'src/exceptions/notification_exception.dart';
+
+// CLI
+export 'src/cli/notifications_artisan_provider.dart';

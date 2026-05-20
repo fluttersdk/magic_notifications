@@ -2,15 +2,10 @@
 
 ## [Unreleased]
 
-### Added
-- **Auth auto-attach**: `NotificationServiceProvider.boot()` hooks `Auth.stateNotifier` to auto-initialize push on login and cleanup on logout
-- New push config keys: `auto_attach_on_auth` (default `true`), `external_id_prefix` (default `'user_'`), `auto_request_permission` (default `true`)
-- Dedup via `lastUserId` prevents re-initialization on profile refresh or team switch
-
-### Fixed
-- Serialized auth listener queue prevents overlapping async runs on rapid auth state changes
-- Idempotent listener registration via static guard prevents duplicate listeners on hot restart or repeated `boot()` calls
-- Deterministic event-queue pump in tests replaces wall-clock `Future.delayed` for faster, reliable test execution
+### 📚 Documentation
+- **README**: Rewrite to match Magic ecosystem format
+- **doc/ folder**: Add comprehensive documentation
+- **CLAUDE.md**: Add project guidance for AI-assisted development
 
 ## [0.0.1-alpha.1] - 2026-03-25
 
@@ -42,9 +37,3 @@
 - **Service Provider**: Two-phase bootstrap (register + boot) with IoC bindings
 - **Driver abstraction**: Swappable push providers (OneSignal, FCM, etc.)
 - **Config-driven**: All settings via Magic ConfigRepository
-
-### 📚 Documentation
-- **README**: Concise pub.dev-ready format with badges, features table, quick start
-- **doc/ folder**: Comprehensive docs — installation, configuration, channels, drivers, preferences, CLI, architecture, Laravel backend
-- **CLAUDE.md**: Project guidance for AI-assisted development
-- **CHANGELOG.md**: Emoji-categorized changelog

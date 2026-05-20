@@ -1,6 +1,4 @@
-import 'dart:io';
-
-import 'package:magic_cli/magic_cli.dart';
+import 'package:fluttersdk_artisan/artisan.dart';
 import 'package:magic_notifications/src/cli/cli.dart';
 
 /// Diagnostic command for checking Magic Notifications health.
@@ -13,16 +11,20 @@ import 'package:magic_notifications/src/cli/cli.dart';
 ///
 /// ## Usage
 /// ```bash
-/// dart run magic_notifications doctor
-/// dart run magic_notifications doctor --verbose
+/// artisan notifications:doctor
+/// artisan notifications:doctor --verbose
 /// ```
-class DoctorCommand extends Command {
+class DoctorCommand extends ArtisanCommand {
   @override
-  String get name => 'doctor';
+  String get signature =>
+      'notifications:doctor {--verbose : Show detailed diagnostic information}';
 
   @override
   String get description =>
       'Check Magic Notifications installation and configuration health';
+
+  @override
+  CommandBoot get boot => CommandBoot.none;
 
   /// Absolute path to the Flutter project root, resolved on access.
   String get projectRoot => getProjectRoot();
@@ -31,37 +33,27 @@ class DoctorCommand extends Command {
   String getProjectRoot() => FileHelper.findProjectRoot();
 
   @override
-  void configure(ArgParser parser) {
-    parser.addFlag(
-      'verbose',
-      abbr: 'v',
-      negatable: false,
-      help: 'Show detailed diagnostic information',
-    );
-  }
-
-  @override
-  Future<void> handle() async {
-    info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
+  Future<int> handle(ArtisanContext ctx) async {
+    ctx.output.info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
 
     // 1. Collect missing requirements before printing — we need both for output.
-    final verbose = arguments['verbose'] as bool;
+    final verbose = ctx.input.option('verbose') as bool;
     final missing = getMissingRequirements();
 
     // 2. Print human-readable report.
-    stdout.write(generateReport(verbose: verbose));
+    ctx.output.writeln(generateReport(verbose: verbose));
 
     // 3. Exit with appropriate code.
     if (missing.isEmpty) {
-      success('All checks passed!');
-      newLine();
-      exit(0);
+      ctx.output.success('All checks passed!');
+      ctx.output.writeln('');
+      return 0;
     } else {
-      newLine();
-      warn('Issues detected. Run the following to fix:');
-      stdout.writeln('  • Install: dart run magic_notifications install');
-      stdout.writeln('  • Configure: dart run magic_notifications configure');
-      exit(1);
+      ctx.output.writeln('');
+      ctx.output.warning('Issues detected. Run the following to fix:');
+      ctx.output.writeln('  • Install: artisan notifications:install');
+      ctx.output.writeln('  • Configure: artisan notifications:configure');
+      return 1;
     }
   }
 
@@ -130,8 +122,9 @@ class DoctorCommand extends Command {
     }
 
     // 2. Validate polling_interval range (5–600 seconds).
-    final pollingMatch =
-        RegExp(r"'polling_interval':\s*(\d+)").firstMatch(content);
+    final pollingMatch = RegExp(
+      r"'polling_interval':\s*(\d+)",
+    ).firstMatch(content);
     if (pollingMatch != null) {
       final interval = int.tryParse(pollingMatch.group(1)!);
       if (interval != null && (interval < 5 || interval > 600)) {
@@ -245,11 +238,7 @@ class DoctorCommand extends Command {
       };
     }
 
-    return {
-      'configured': true,
-      'exists': true,
-      'issues': <String>[],
-    };
+    return {'configured': true, 'exists': true, 'issues': <String>[]};
   }
 
   // ---------------------------------------------------------------------------
@@ -268,8 +257,9 @@ class DoctorCommand extends Command {
 
     // 2. Config file existence.
     if (!checkConfigExists()) {
-      missing
-          .add('Configuration file not found (lib/config/notifications.dart)');
+      missing.add(
+        'Configuration file not found (lib/config/notifications.dart)',
+      );
     }
 
     // 3. Config content validation (only when the file exists).
@@ -370,9 +360,7 @@ class DoctorCommand extends Command {
                 '      Required: Push Notifications capability in Xcode',
               );
             case 'web':
-              buffer.writeln(
-                '      Service Worker: web/OneSignalSDKWorker.js',
-              );
+              buffer.writeln('      Service Worker: web/OneSignalSDKWorker.js');
               buffer.writeln('      Required: OneSignal SDK in index.html');
           }
           for (final issue in issues) {
