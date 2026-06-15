@@ -20,7 +20,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  magic: ^1.0.0-alpha.3
+  magic: ^1.0.0-alpha.14
   magic_cli: ^0.0.1-alpha.3
   onesignal_flutter: ^5.4.6
 
