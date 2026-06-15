@@ -2,11 +2,11 @@ import 'package:magic_notifications/src/cli/notifications_artisan_provider.dart'
 import 'package:test/test.dart';
 
 void main() {
-  group('NotificationsArtisanProvider.mcpTools', () {
-    late NotificationsArtisanProvider provider;
+  group('MagicNotificationsArtisanProvider.mcpTools', () {
+    late MagicNotificationsArtisanProvider provider;
 
     setUp(() {
-      provider = NotificationsArtisanProvider();
+      provider = MagicNotificationsArtisanProvider();
     });
 
     test('exposes exactly 2 MCP tools', () {

@@ -3,11 +3,11 @@ import 'package:magic_notifications/src/cli/notifications_artisan_provider.dart'
 import 'package:test/test.dart';
 
 void main() {
-  group('NotificationsArtisanProvider e2e surface', () {
-    late NotificationsArtisanProvider provider;
+  group('MagicNotificationsArtisanProvider e2e surface', () {
+    late MagicNotificationsArtisanProvider provider;
 
     setUp(() {
-      provider = NotificationsArtisanProvider();
+      provider = MagicNotificationsArtisanProvider();
     });
 
     test('provider name is "notifications"', () {

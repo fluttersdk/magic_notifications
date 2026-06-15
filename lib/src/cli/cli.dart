@@ -2,8 +2,8 @@
 ///
 /// Re-exports the artisan infrastructure plus the notifications provider and
 /// all seven notifications:* commands. Consumers register
-/// [NotificationsArtisanProvider] in their `artisan.providers` config; the
-/// commands surface automatically through the host [ArtisanApplication].
+/// [MagicNotificationsArtisanProvider] in their `artisan.providers` config;
+/// the commands surface automatically through the host [ArtisanApplication].
 library;
 
 // Hide the artisan-builtin DoctorCommand so the notifications-specific

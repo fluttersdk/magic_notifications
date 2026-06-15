@@ -16,12 +16,12 @@ import 'commands/uninstall_command.dart';
 /// doctor, uninstall, publish, channels) to the host application's
 /// [ArtisanApplication]. Consumers wire this into their `artisan.providers`
 /// config alongside other plugin providers (e.g. [MagicArtisanProvider],
-/// [StarterArtisanProvider]).
+/// [MagicStarterArtisanProvider]).
 ///
 /// MCP tools expose ONLY read-only diagnostics: `notifications_doctor` and
 /// `notifications_channels`. Mutating commands (install, configure, test,
 /// uninstall, publish) are intentionally excluded from the MCP surface.
-class NotificationsArtisanProvider extends ArtisanServiceProvider {
+class MagicNotificationsArtisanProvider extends ArtisanServiceProvider {
   @override
   String get providerName => 'notifications';
 
