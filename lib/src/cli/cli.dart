@@ -1,6 +1,6 @@
 /// CLI utilities and helpers
 ///
-/// Re-exports the shared CLI base infrastructure from magic_cli
+/// Re-exports the shared CLI base infrastructure from fluttersdk_artisan.
 library;
 
-export 'package:magic_cli/magic_cli.dart';
+export 'package:fluttersdk_artisan/artisan.dart';

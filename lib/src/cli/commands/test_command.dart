@@ -1,46 +1,20 @@
-import 'dart:io';
-
-import 'package:magic_cli/magic_cli.dart';
+import 'package:fluttersdk_artisan/artisan.dart';
 
 /// Test command for sending test notifications via any available channel.
-class TestCommand extends Command {
+class TestCommand extends ArtisanCommand {
   @override
-  final String name = 'test';
+  String get signature => 'notifications:test '
+      '{--dry-run : Preview notification without sending} '
+      '{--title=Test Notification : Notification title} '
+      '{--body=This is a test notification from the CLI : Notification body} '
+      '{--channel=database : Notification channel (database, push, mail)} '
+      '{--api-url= : API URL for push notifications}';
 
   @override
-  final String description = 'Send test notifications to verify setup';
+  String get description => 'Send test notifications to verify setup';
 
   @override
-  void configure(ArgParser parser) {
-    parser
-      ..addFlag(
-        'dry-run',
-        negatable: false,
-        help: 'Preview notification without sending',
-      )
-      ..addOption(
-        'title',
-        abbr: 't',
-        defaultsTo: 'Test Notification',
-        help: 'Notification title',
-      )
-      ..addOption(
-        'body',
-        abbr: 'b',
-        defaultsTo: 'This is a test notification from the CLI',
-        help: 'Notification body',
-      )
-      ..addOption(
-        'channel',
-        abbr: 'c',
-        defaultsTo: 'database',
-        help: 'Notification channel (database, push, mail)',
-      )
-      ..addOption(
-        'api-url',
-        help: 'API URL for push notifications',
-      );
-  }
+  CommandBoot get boot => CommandBoot.none;
 
   /// Return the Flutter project root directory.
   ///
@@ -50,22 +24,22 @@ class TestCommand extends Command {
   }
 
   @override
-  Future<void> handle() async {
-    info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
+  Future<int> handle(ArtisanContext ctx) async {
+    ctx.output.info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
 
     // 1. Validate channel selection.
-    final channel = arguments['channel'] as String;
+    final channel = ctx.input.option('channel') as String;
     final availableChannels = getAvailableChannels();
 
     if (!availableChannels.contains(channel)) {
-      error('Invalid channel: $channel');
-      info('Available channels: ${availableChannels.join(', ')}');
-      exit(1);
+      ctx.output.error('Invalid channel: $channel');
+      ctx.output.info('Available channels: ${availableChannels.join(', ')}');
+      return 1;
     }
 
     // 2. Build the test notification and show preview.
-    final title = arguments['title'] as String;
-    final body = arguments['body'] as String;
+    final title = ctx.input.option('title') as String;
+    final body = ctx.input.option('body') as String;
 
     final notification = buildTestNotification(
       title: title,
@@ -74,30 +48,31 @@ class TestCommand extends Command {
     );
 
     final preview = formatNotificationPreview(notification);
-    stdout.write(preview);
+    ctx.output.writeln(preview);
 
     // 3. Short-circuit on dry-run.
-    if (arguments['dry-run'] as bool) {
-      info('Dry run mode - notification not sent');
-      exit(0);
+    if (ctx.input.option('dry-run') as bool) {
+      ctx.output.info('Dry run mode - notification not sent');
+      return 0;
     }
 
     // 4. Send via the selected channel.
-    final apiUrl = option('api-url') as String?;
-    info('Sending test notification via $channel...');
+    final apiUrl = ctx.input.option('api-url') as String?;
+    ctx.output.info('Sending test notification via $channel...');
 
     switch (channel) {
       case 'database':
-        await _sendDatabaseNotification(notification, apiUrl);
+        await _sendDatabaseNotification(ctx, notification, apiUrl);
       case 'push':
-        await _sendPushNotification(notification, apiUrl);
+        await _sendPushNotification(ctx, notification, apiUrl);
       case 'mail':
-        await _sendMailNotification(notification, apiUrl);
+        await _sendMailNotification(ctx, notification, apiUrl);
     }
 
-    success('Test notification sent successfully!');
-    newLine();
-    info('Check your application to verify receipt');
+    ctx.output.success('Test notification sent successfully!');
+    ctx.output.writeln('');
+    ctx.output.info('Check your application to verify receipt');
+    return 0;
   }
 
   // ---------------------------------------------------------------------------
@@ -122,10 +97,7 @@ class TestCommand extends Command {
       'channel': channel,
       'created_at': DateTime.now().toIso8601String(),
       'read_at': null,
-      'data': {
-        'test': true,
-        'source': 'cli',
-      },
+      'data': {'test': true, 'source': 'cli'},
     };
   }
 
@@ -133,11 +105,7 @@ class TestCommand extends Command {
   ///
   /// @return List of channel names.
   List<String> getAvailableChannels() {
-    return [
-      'database',
-      'push',
-      'mail',
-    ];
+    return ['database', 'push', 'mail'];
   }
 
   /// Validate that [url] is an absolute HTTP/HTTPS URL.
@@ -198,15 +166,16 @@ class TestCommand extends Command {
 
   /// Simulate storing a database notification via the backend API.
   Future<void> _sendDatabaseNotification(
+    ArtisanContext ctx,
     Map<String, dynamic> notification,
     String? apiUrl,
   ) async {
-    info('Database notification would be stored in the database');
+    ctx.output.info('Database notification would be stored in the database');
 
     if (apiUrl != null) {
-      info('Using API: $apiUrl');
+      ctx.output.info('Using API: $apiUrl');
     } else {
-      warn('No API URL provided - using default');
+      ctx.output.warning('No API URL provided - using default');
     }
 
     // Simulate API call.
@@ -215,18 +184,19 @@ class TestCommand extends Command {
 
   /// Simulate triggering a push notification via OneSignal.
   Future<void> _sendPushNotification(
+    ArtisanContext ctx,
     Map<String, dynamic> notification,
     String? apiUrl,
   ) async {
-    info('Push notification would be sent via OneSignal');
+    ctx.output.info('Push notification would be sent via OneSignal');
 
     if (apiUrl == null) {
-      warn('No API URL provided - skipping actual send');
-      info('Use --api-url to specify your backend API');
+      ctx.output.warning('No API URL provided - skipping actual send');
+      ctx.output.info('Use --api-url to specify your backend API');
       return;
     }
 
-    info('Using API: $apiUrl');
+    ctx.output.info('Using API: $apiUrl');
 
     // Simulate API call.
     await Future.delayed(const Duration(milliseconds: 500));
@@ -234,15 +204,16 @@ class TestCommand extends Command {
 
   /// Simulate sending a mail notification.
   Future<void> _sendMailNotification(
+    ArtisanContext ctx,
     Map<String, dynamic> notification,
     String? apiUrl,
   ) async {
-    info('Mail notification would be sent via email');
+    ctx.output.info('Mail notification would be sent via email');
 
     if (apiUrl != null) {
-      info('Using API: $apiUrl');
+      ctx.output.info('Using API: $apiUrl');
     } else {
-      warn('No API URL provided - using default');
+      ctx.output.warning('No API URL provided - using default');
     }
 
     // Simulate API call.

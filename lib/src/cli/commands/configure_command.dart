@@ -1,51 +1,32 @@
 import 'dart:io';
 
-import 'package:magic_cli/magic_cli.dart';
+import 'package:fluttersdk_artisan/artisan.dart';
 
 /// CLI command for reading and updating Magic Notifications configuration.
 ///
 /// Supports displaying the current config (--show) and mutating individual
 /// fields via named options. All file I/O is delegated to [FileHelper] so that
 /// tests can safely intercept by overriding [getProjectRoot].
-class ConfigureCommand extends Command {
+class ConfigureCommand extends ArtisanCommand {
   @override
-  final String name = 'configure';
+  String get signature => 'notifications:configure '
+      '{--show : Show current configuration} '
+      '{--app-id= : Update OneSignal App ID} '
+      '{--polling-interval= : Update polling interval (seconds, 5-600)} '
+      '{--soft-prompt : Enable soft prompt} '
+      '{--no-soft-prompt : Disable soft prompt}';
 
   @override
-  final String description = 'Update Magic Notifications settings';
+  String get description => 'Update Magic Notifications settings';
+
+  @override
+  CommandBoot get boot => CommandBoot.none;
 
   /// Absolute path to the Flutter project root, resolved on access.
   String get projectRoot => getProjectRoot();
 
   /// Resolve the Flutter project root — may be overridden in tests.
   String getProjectRoot() => FileHelper.findProjectRoot();
-
-  @override
-  void configure(ArgParser parser) {
-    parser
-      ..addFlag(
-        'show',
-        negatable: false,
-        help: 'Show current configuration',
-      )
-      ..addOption(
-        'app-id',
-        help: 'Update OneSignal App ID',
-      )
-      ..addOption(
-        'polling-interval',
-        help: 'Update polling interval (seconds, 5-600)',
-      )
-      ..addFlag(
-        'soft-prompt',
-        help: 'Enable soft prompt',
-      )
-      ..addFlag(
-        'no-soft-prompt',
-        negatable: false,
-        help: 'Disable soft prompt',
-      );
-  }
 
   /// Absolute path to the notifications config file.
   String get _configPath => '$projectRoot/lib/config/notifications.dart';
@@ -56,20 +37,20 @@ class ConfigureCommand extends Command {
   }
 
   @override
-  Future<void> handle() async {
-    info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
+  Future<int> handle(ArtisanContext ctx) async {
+    ctx.output.info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
 
     // Check if config exists before proceeding with any operation.
     if (!configExists()) {
-      error('Configuration file not found');
-      info('Run installation first: dart run magic_notifications install');
-      exit(1);
+      ctx.output.error('Configuration file not found');
+      ctx.output.info('Run installation first: artisan notifications:install');
+      return 1;
     }
 
     // Show current configuration and exit early.
-    if (hasOption('show') && arguments['show'] as bool) {
-      _showConfig();
-      return;
+    if (ctx.input.hasOption('show') && ctx.input.option('show') as bool) {
+      _showConfig(ctx);
+      return 0;
     }
 
     // Accumulate requested updates before applying them.
@@ -77,90 +58,94 @@ class ConfigureCommand extends Command {
     bool hasUpdates = false;
 
     // Update app ID
-    if (hasOption('app-id')) {
-      final appId = option('app-id') as String;
+    if (ctx.input.hasOption('app-id')) {
+      final appId = ctx.input.option('app-id') as String;
       updates['push'] = {'app_id': appId};
       hasUpdates = true;
-      info('Updating OneSignal App ID...');
+      ctx.output.info('Updating OneSignal App ID...');
     }
 
     // Update polling interval
-    if (hasOption('polling-interval')) {
-      final intervalStr = option('polling-interval') as String;
+    if (ctx.input.hasOption('polling-interval')) {
+      final intervalStr = ctx.input.option('polling-interval') as String;
       final interval = int.tryParse(intervalStr);
 
       if (interval == null) {
-        error('Invalid polling interval: must be a number');
-        exit(1);
+        ctx.output.error('Invalid polling interval: must be a number');
+        return 1;
       }
 
       if (!validatePollingInterval(interval)) {
-        error('Invalid polling interval: must be between 5 and 600');
-        exit(1);
+        ctx.output.error('Invalid polling interval: must be between 5 and 600');
+        return 1;
       }
 
       updates['database'] = {'polling_interval': interval};
       hasUpdates = true;
-      info('Updating polling interval...');
+      ctx.output.info('Updating polling interval...');
     }
 
     // Update soft prompt
-    if (hasOption('soft-prompt') && arguments.wasParsed('soft-prompt')) {
-      if (arguments['soft-prompt'] == true) {
+    if (ctx.input.hasOption('soft-prompt')) {
+      if (ctx.input.option('soft-prompt') == true) {
         updates['soft_prompt'] = {'enabled': true};
         hasUpdates = true;
-        info('Enabling soft prompt...');
+        ctx.output.info('Enabling soft prompt...');
       }
-    } else if (hasOption('no-soft-prompt') &&
-        arguments.wasParsed('no-soft-prompt')) {
-      if (arguments['no-soft-prompt'] == true) {
+    } else if (ctx.input.hasOption('no-soft-prompt')) {
+      if (ctx.input.option('no-soft-prompt') == true) {
         updates['soft_prompt'] = {'enabled': false};
         hasUpdates = true;
-        info('Disabling soft prompt...');
+        ctx.output.info('Disabling soft prompt...');
       }
     }
 
     if (!hasUpdates) {
-      warn('No configuration updates specified');
-      info('Use --help to see available options');
-      info('Use --show to view current configuration');
-      return;
+      ctx.output.warning('No configuration updates specified');
+      ctx.output.info('Use --help to see available options');
+      ctx.output.info('Use --show to view current configuration');
+      return 0;
     }
 
     // Apply updates and confirm success.
     updateConfig(updates);
-    success('Configuration updated successfully!\n');
+    ctx.output.success('Configuration updated successfully!\n');
 
     // Show updated config so the user can verify the changes.
-    _showConfig();
+    _showConfig(ctx);
+    return 0;
   }
 
   /// Print a formatted summary of the current config values.
-  void _showConfig() {
+  void _showConfig(ArtisanContext ctx) {
     try {
       final config = readCurrentConfig();
 
-      info('Current Configuration:\n');
+      ctx.output.info('Current Configuration:\n');
 
       if (config.containsKey('push')) {
-        info('  ${ConsoleStyle.step(1, 3, 'Push Notifications')}');
-        info('    App ID: ${config['push']['app_id']}\n');
+        ctx.output.info('  ${ConsoleStyle.step(1, 3, 'Push Notifications')}');
+        ctx.output.info('    App ID: ${config['push']['app_id']}\n');
       }
 
       if (config.containsKey('database')) {
-        info('  ${ConsoleStyle.step(2, 3, 'Database Notifications')}');
-        info('    Enabled: ${config['database']['enabled'] ?? 'N/A'}');
-        info(
+        ctx.output.info(
+          '  ${ConsoleStyle.step(2, 3, 'Database Notifications')}',
+        );
+        ctx.output.info(
+          '    Enabled: ${config['database']['enabled'] ?? 'N/A'}',
+        );
+        ctx.output.info(
           '    Polling Interval: ${config['database']['polling_interval'] ?? 'N/A'}s\n',
         );
       }
 
       if (config.containsKey('soft_prompt')) {
-        info('  ${ConsoleStyle.step(3, 3, 'Soft Prompt')}');
-        info('    Enabled: ${config['soft_prompt']['enabled']}\n');
+        ctx.output.info('  ${ConsoleStyle.step(3, 3, 'Soft Prompt')}');
+        ctx.output.info('    Enabled: ${config['soft_prompt']['enabled']}\n');
       }
     } catch (e) {
-      error('Error reading configuration: $e');
+      ctx.output.error('Error reading configuration: $e');
     }
   }
 
@@ -189,13 +174,14 @@ class ConfigureCommand extends Command {
 
     // 3. Extract database.polling_interval and database.enabled.
     // Matches: 'polling_interval': 30
-    final pollingMatch =
-        RegExp(r"'polling_interval':\s*(\d+)").firstMatch(content);
+    final pollingMatch = RegExp(
+      r"'polling_interval':\s*(\d+)",
+    ).firstMatch(content);
 
     // Matches: 'enabled': true|false within the database section specifically.
-    final dbEnabledMatch = RegExp(r"'enabled':\s*(true|false)").firstMatch(
-      content.substring(content.indexOf("'database'")),
-    );
+    final dbEnabledMatch = RegExp(
+      r"'enabled':\s*(true|false)",
+    ).firstMatch(content.substring(content.indexOf("'database'")));
 
     if (pollingMatch != null || dbEnabledMatch != null) {
       config['database'] = {
@@ -208,9 +194,9 @@ class ConfigureCommand extends Command {
 
     // 4. Extract soft_prompt.enabled.
     // Matches: 'enabled': true|false within the soft_prompt section.
-    final softPromptMatch =
-        RegExp(r"'soft_prompt':\s*\{[^}]*'enabled':\s*(true|false)")
-            .firstMatch(content);
+    final softPromptMatch = RegExp(
+      r"'soft_prompt':\s*\{[^}]*'enabled':\s*(true|false)",
+    ).firstMatch(content);
     if (softPromptMatch != null) {
       config['soft_prompt'] = {'enabled': softPromptMatch.group(1) == 'true'};
     }
