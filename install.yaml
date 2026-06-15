@@ -1,52 +1,43 @@
 # magic_notifications install manifest (PluginInstaller DSL schema v1).
 #
-# Notifications is a Magic-side plugin: install registers
-# NotificationsArtisanProvider into the consumer's lib/app/_plugins.g.dart
-# codegen barrel AND injects NotificationServiceProvider into
-# lib/config/app.dart's providers list so the Magic IoC container resolves
-# the runtime Notifications facade.
+# Hybrid layout: this manifest carries only the STATIC, always-on slice. The
+# dynamic OneSignal install flow lives in InstallCommand's fluent override,
+# because the v1 schema cannot express any of:
 #
-# No stub files are published: push driver config is scaffolded on demand
-# by `dart run artisan notifications:configure --driver=<onesignal|fcm>`.
+#   - fail-fast UUID validation of --app-id before staging,
+#   - prompts that only fire when web is selected (manifest `prompts:` run
+#     unconditionally during prepare()),
+#   - an arbitrary web/ file write (native.web supports only head_scripts /
+#     meta_tags), or
+#   - a head-script injection guarded for idempotency (the head_scripts
+#     dispatcher has no hasContent guard, so a re-install would double-inject).
+#
+# The provider injection IS static (the consumer's lib/config/app.dart provider
+# list is mutated unconditionally on every install), so it stays here as
+# `magic.provider`. The override appends its writeFile + helper ops AFTER the
+# manifest stages this provider inject, keeping helper-backed mutations last.
 #
 # See doc/install_yaml_schema.md (in fluttersdk_artisan) for the full schema.
 
 plugin_name: magic_notifications
 
-publish: {}
-
 magic:
+  # Injects `import 'package:magic_notifications/magic_notifications.dart';`
+  # plus `(app) => NotificationServiceProvider(app),` into the consumer's
+  # lib/config/app.dart providers list. Idempotent (ConfigEditor skips when the
+  # import + entry already exist), so re-running install does not duplicate it.
   provider: NotificationServiceProvider
 
 post_install:
   message: |
-    magic_notifications plugin:installed. Bootstrap workflow:
+    Magic Notifications installed. Next steps:
 
-    1. Verify the IoC wiring (auto-injected by `magic:install`):
+    1. Run `flutter pub get`.
+    2. Configure your OneSignal dashboard.
+    3. Verify the install:  dart run <app>:artisan notifications:doctor
+    4. Manage channels:     dart run <app>:artisan notifications:channels --list
 
-         lib/config/app.dart:
-           providers: [
-             ...,
-             (app) => NotificationServiceProvider(app),
-           ],
-
-    2. Configure your push driver (OneSignal, FCM, or null for dev):
-
-         dart run artisan notifications:configure --driver=onesignal
-
-    3. Run doctor to verify the driver SDK is wired and credentials resolve:
-
-         dart run artisan notifications:doctor
-
-    4. Send a test notification:
-
-         dart run artisan notifications:publish --to=<user-id> --title='Test'
-
-    5. Manage push channels (subscribe / unsubscribe / topic broadcast):
-
-         dart run artisan notifications:channels --list
-
-    6. Verify the CLI surface:
-
-         dart run artisan list   # includes notifications:install + configure
-                                 # + doctor + publish + channels + uninstall
+    Note: provider + main.dart wiring are written synchronously by the install
+    helpers and are NOT rolled back on a later failure. If install reports an
+    error after the provider was injected, inspect lib/config/app.dart and
+    lib/main.dart before re-running.

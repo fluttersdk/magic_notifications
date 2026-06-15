@@ -1,4 +1,6 @@
-import 'package:fluttersdk_artisan/artisan.dart';
+// cli.dart re-exports fluttersdk_artisan/artisan.dart (hiding only the builtin
+// DoctorCommand that collides with this class), so a direct artisan.dart import
+// is redundant here.
 import 'package:magic_notifications/src/cli/cli.dart';
 
 /// Diagnostic command for checking Magic Notifications health.

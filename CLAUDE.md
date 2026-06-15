@@ -6,18 +6,20 @@ Flutter push and database notification plugin for the Magic Framework. In-app po
 
 ## Commands
 
+Notifications CLI commands surface via the host app's artisan binary (not as a standalone `magic_notifications` binary).
+
 | Command | Description |
 |---------|-------------|
 | `flutter test --coverage` | Run all tests with coverage |
 | `flutter analyze --no-fatal-infos` | Static analysis |
 | `dart format .` | Format all code |
-| `dart run magic_notifications install` | Interactive setup wizard |
-| `dart run magic_notifications configure` | Update notification config |
-| `dart run magic_notifications doctor` | Health check |
-| `dart run magic_notifications test` | Send test notification |
-| `dart run magic_notifications channels` | List channel status |
-| `dart run magic_notifications uninstall` | Remove plugin integration |
-| `dart run magic_notifications publish` | Copy config stub to project |
+| `dart run <app>:artisan notifications:install` | Interactive setup wizard |
+| `dart run <app>:artisan notifications:configure` | Update notification config |
+| `dart run <app>:artisan notifications:doctor` | Health check (also available as MCP tool) |
+| `dart run <app>:artisan notifications:test` | Send test notification |
+| `dart run <app>:artisan notifications:channels` | List channel status (also available as MCP tool) |
+| `dart run <app>:artisan notifications:uninstall` | Remove plugin integration |
+| `dart run <app>:artisan notifications:publish` | Copy config stub to project |
 
 ## Architecture
 
@@ -38,11 +40,14 @@ lib/
     ├── providers/                 # NotificationServiceProvider (register + boot)
     ├── widgets/                   # PushPromptDialog
     ├── exceptions/               # NotificationException
-    └── cli/commands/             # install, configure, doctor, test, channels, uninstall, publish
-bin/
-└── magic_notifications.dart       # CLI entry point
+    └── cli/
+        ├── notifications_artisan_provider.dart  # ArtisanServiceProvider (7 commands + 2 MCP tools)
+        └── commands/             # InstallCommand, ConfigureCommand, DoctorCommand, TestCommand, ChannelsCommand, UninstallCommand, PublishCommand
+install.yaml                       # Manifest-driven install configuration
 assets/stubs/                      # Stub templates for code generation
 ```
+
+**CLI architecture:** Notifications commands are contributed via `NotificationsArtisanProvider` (extends `ArtisanServiceProvider`) registered in the host app's `artisan.providers` config. The provider exposes 7 commands (`notifications:install/configure/test/doctor/uninstall/publish/channels`) and 2 read-only MCP tools (`notifications_doctor`, `notifications_channels`). Install is hybrid: static layer in `install.yaml` (provider injection, config publish), dynamic layer in `InstallCommand`'s fluent override (UUID validation, platform conditionals, arbitrary file writes). No standalone `bin/` entry point; commands surface through the host app's unified artisan binary.
 
 **Data flow:** App boot → `NotificationServiceProvider.boot()` → registers channels + push driver → `Notify.startPolling()` → `NotificationPoller` fetches via HTTP → emits to broadcast stream. Push: `Notify.initializePush()` → OneSignalDriver → platform-specific (mobile vs web JS interop)
 

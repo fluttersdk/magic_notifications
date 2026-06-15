@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+- **Removed `bin/magic_notifications.dart` entrypoint** — CLI commands now surface via host app's artisan binary (`dart run <app>:artisan notifications:<cmd>`), not as a standalone `dart run magic_notifications <cmd>`. Update your scripts and CI workflows accordingly.
+- **Removed `magic_cli` dependency** — Install now uses `fluttersdk_artisan`'s manifest-driven model, not magic_cli's imperative Kernel.
+
+### Changed
+- **Install now manifest-driven** — `install.yaml` drives static scaffolding (provider injection, config publish); dynamic logic (UUID validation, platform conditionals) lives in `InstallCommand`'s fluent override.
+- **CLI architecture** — Commands contributed via `NotificationsArtisanProvider` registered in host's `artisan.providers` config.
+
+### Added
+- **MCP tools** — `notifications_doctor` and `notifications_channels` are now read-only tools available to AI agents via MCP.
+
 ### 📚 Documentation
 - **README**: Rewrite to match Magic ecosystem format
 - **doc/ folder**: Add comprehensive documentation

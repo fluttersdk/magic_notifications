@@ -68,7 +68,7 @@ dependencies:
 ### 2. Install configuration
 
 ```bash
-dart run magic_notifications install
+dart run <app>:artisan notifications:install
 ```
 
 This generates `lib/config/notifications.dart`, injects `NotificationServiceProvider` into `lib/config/app.dart`, wires the `notificationConfig` factory into `lib/main.dart`, and configures platform-specific setup for your selected platforms.
@@ -164,17 +164,19 @@ Future<void> onLogout() async {
 
 ## CLI Tools
 
-All commands use the single entry point `dart run magic_notifications [command]`:
+All commands use the host app's artisan binary: `dart run <app>:artisan notifications:[command]`
 
 | Command | Description |
 |---------|-------------|
-| `install` | Interactive wizard to set up notifications |
-| `configure` | Update notification configuration |
-| `doctor` | Check installation and configuration health |
-| `test` | Send test notifications to verify setup |
-| `channels` | List all channels and their status |
-| `publish` | Copy config stub to your project |
-| `uninstall` | Remove plugin integration |
+| `notifications:install` | Interactive wizard to set up notifications |
+| `notifications:configure` | Update notification configuration |
+| `notifications:doctor` | Check installation and configuration health |
+| `notifications:test` | Send test notifications to verify setup |
+| `notifications:channels` | List all channels and their status |
+| `notifications:publish` | Copy config stub to your project |
+| `notifications:uninstall` | Remove plugin integration |
+
+The `notifications:doctor` and `notifications:channels` commands are also available as read-only MCP tools for AI agents.
 
 See the [CLI Reference](https://magic.fluttersdk.com/packages/notifications/basics/cli) for all flags and options.
 

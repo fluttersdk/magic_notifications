@@ -3,493 +3,472 @@ import 'dart:io';
 
 import 'package:fluttersdk_artisan/artisan.dart';
 
-/// Project type detection
+/// Project type detection result for the install banner.
 enum ProjectType { flutter, dart, unknown }
 
-/// Installation command for Magic Notifications
-class InstallCommand extends ArtisanCommand {
+/// Resolved install plan computed from CLI flags or the interactive wizard.
+///
+/// Carries everything the staging phase needs so [InstallCommand.handle] can
+/// validate + collect the full answer set BEFORE touching the installer. The
+/// UUID is already validated by the time this is built.
+class _InstallPlan {
+  const _InstallPlan({
+    required this.oneSignalAppId,
+    required this.platforms,
+    required this.enableSoftPrompt,
+    required this.safariWebId,
+    required this.notifyButtonEnabled,
+  });
+
+  /// Validated OneSignal App ID (UUID format).
+  final String oneSignalAppId;
+
+  /// Platforms the operator opted into (subset of android / ios / web).
+  final List<String> platforms;
+
+  /// Whether the soft-prompt permission flow is enabled in the config.
+  final bool enableSoftPrompt;
+
+  /// Optional Safari Web ID for web push.
+  final String? safariWebId;
+
+  /// Whether the OneSignal notify button renders on web.
+  final bool notifyButtonEnabled;
+
+  /// `true` when the operator selected the web platform.
+  bool get hasWeb => platforms.contains('web');
+
+  /// `true` when the operator selected the android platform.
+  bool get hasAndroid => platforms.contains('android');
+}
+
+/// `notifications:install`: installs Magic Notifications via the bundled
+/// install.yaml manifest layered with a fluent override for the dynamic
+/// OneSignal flow the v1 manifest schema cannot express.
+///
+/// ## Layered architecture
+///
+/// 1. `install.yaml` declares the STATIC slice: `plugin_name`, the
+///    `magic.provider: NotificationServiceProvider` injection, and the
+///    `post_install` message. [resolveManifestPath] locates it relative to the
+///    plugin package root.
+/// 2. [handle] validates `--app-id` as a UUID BEFORE staging anything (fail
+///    fast, exit 1), resolves the platform selection (non-interactive flags or
+///    the interactive wizard), then drives the fluent override.
+/// 3. The override stages TRANSACTIONAL writes first (the placeholder-rendered
+///    `lib/config/notifications.dart`, and `web/OneSignalSDKWorker.js` when web
+///    is selected) so the atomic `.tmp` swap covers them, then helper-backed
+///    mutations LAST (provider inject from the manifest, android permission,
+///    main.dart configFactory inject, and the idempotent `<head>` script).
+///    Helper-backed ops write synchronously during stage and do NOT roll back
+///    (PluginInstaller V1 limitation), so they trail every high-risk write.
+/// 4. The head-script injection is gated with [HtmlEditor.hasContent] so a
+///    re-install never double-injects.
+///
+/// ## Why a fluent override, not a pure manifest
+///
+/// Four things the v1 schema cannot do, all handled here in code:
+///   - UUID validation of `--app-id` with fail-fast exit.
+///   - Web / Safari prompts that fire ONLY when web is selected (manifest
+///     `prompts:` run unconditionally during prepare and cannot be skipped).
+///   - The arbitrary `web/OneSignalSDKWorker.js` write (`native.web` supports
+///     only head_scripts / meta_tags).
+///   - The placeholder-substituted config + the idempotent head-script guard.
+class InstallCommand extends ArtisanInstallCommand {
+  /// Public default constructor. Tests subclass to pin [getProjectRoot],
+  /// [getStubSearchPaths], and [resolveManifestPath].
+  InstallCommand();
+
   @override
   String get signature => 'notifications:install '
-      '{--non-interactive : Run in non-interactive mode (for CI/CD)} '
-      '{--app-id= : OneSignal App ID} '
-      '{--platforms= : Comma-separated list of platforms (android,ios,web)} '
-      '{--no-soft-prompt : Disable soft prompt (enabled by default)} '
+      '$baseFlags'
+      '{--app-id= : OneSignal App ID (UUID format)} '
+      '{--platforms= : Comma-separated platforms (android,ios,web)} '
+      '{--no-soft-prompt : Disable the soft prompt (enabled by default)} '
       '{--safari-web-id= : Safari Web ID for web push (optional)} '
-      '{--notify-button : Enable OneSignal notify button on web (default: disabled)} '
-      '{--force : Overwrite existing configuration file.}';
+      '{--notify-button : Enable the OneSignal notify button on web}';
 
   @override
   String get description => 'Install and configure Magic Notifications';
 
   @override
-  CommandBoot get boot => CommandBoot.none;
+  String pluginName(ArtisanContext ctx) => 'magic_notifications';
 
-  /// Absolute path to the Flutter project root, resolved on first access.
+  /// Absolute path to the Flutter project root, resolved on access.
   String get projectRoot => getProjectRoot();
 
-  /// Resolve the Flutter project root — may be overridden in tests.
+  /// Resolve the Flutter project root. Overridable in tests.
   String getProjectRoot() => FileHelper.findProjectRoot();
 
-  /// Returns the paths to search for stubs.
+  /// Stub search paths, plugin assets first. Overridable in tests.
+  List<String> getStubSearchPaths() =>
+      [_resolvePluginStubsDir(), '${Directory.current.path}/assets/stubs'];
+
+  /// Resolves the plugin's `install.yaml` path. Overridable in tests.
   ///
-  /// Overridable in tests.
-  List<String> getStubSearchPaths() {
-    return [_resolvePluginStubsDir(), '${Directory.current.path}/assets/stubs'];
+  /// Walks the consumer's `.dart_tool/package_config.json` to find the
+  /// magic_notifications package root, mirroring [resolveMagicStubsDir]'s
+  /// resolution so the `.parent` / `.parent.parent` ambiguity never bites.
+  String resolveManifestPath() {
+    final pluginRoot = _resolvePluginRoot();
+    return pluginRoot == null
+        ? '${Directory.current.path}/install.yaml'
+        : '$pluginRoot/install.yaml';
   }
 
-  /// Detect the project type by inspecting pubspec.yaml
+  /// Builds the [InstallContext] bound to the resolved project root. Overrides
+  /// the base so the installer targets [projectRoot] rather than the cwd.
+  @override
+  InstallContext buildContext(ArtisanContext ctx) =>
+      InstallContext.real(ctx, projectRoot: projectRoot);
+
+  /// Validate an OneSignal App ID against the canonical UUID 8-4-4-4-12 shape.
+  bool validateOneSignalAppId(String appId) {
+    final uuidRegex = RegExp(
+      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+      r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+    );
+    return uuidRegex.hasMatch(appId);
+  }
+
+  /// Detect the project type by inspecting pubspec.yaml.
   ProjectType detectProjectType() {
     final pubspecPath = '$projectRoot/pubspec.yaml';
-
     if (!FileHelper.fileExists(pubspecPath)) {
       return ProjectType.unknown;
     }
-
-    try {
-      final yaml = FileHelper.readYamlFile(pubspecPath);
-      final dependencies = yaml['dependencies'];
-
-      if (dependencies is Map && dependencies.containsKey('flutter')) {
-        return ProjectType.flutter;
-      }
-
-      return ProjectType.dart;
-    } catch (e) {
-      return ProjectType.unknown;
+    final yaml = FileHelper.readYamlFile(pubspecPath);
+    final dependencies = yaml['dependencies'];
+    if (dependencies is Map && dependencies.containsKey('flutter')) {
+      return ProjectType.flutter;
     }
-  }
-
-  /// Validate OneSignal App ID format (UUID-like format)
-  bool validateOneSignalAppId(String appId) {
-    // UUID format: 8-4-4-4-12 characters
-    final uuidRegex = RegExp(
-      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
-    );
-    return uuidRegex.hasMatch(appId);
+    return ProjectType.dart;
   }
 
   @override
   Future<int> handle(ArtisanContext ctx) async {
     ctx.output.info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
 
-    // Check project type
+    // 1. Project-type guard. An unrecognised root means there is nothing safe
+    //    to scaffold into.
     final projectType = detectProjectType();
     if (projectType == ProjectType.unknown) {
       ctx.output.error('Could not detect project type');
       return 1;
     }
-
     ctx.output.info('Detected ${projectType.name} project\n');
 
-    // Non-interactive mode
-    if (ctx.input.hasOption('non-interactive') &&
-        ctx.input.option('non-interactive') as bool) {
-      return _runNonInteractive(ctx);
+    // 2. Resolve the install plan (validates --app-id as UUID, fail-fast). The
+    //    plan must be fully built BEFORE the installer stages any op so a bad
+    //    App ID never leaves a half-written project behind.
+    final plan = isNonInteractive(ctx)
+        ? _resolveNonInteractivePlan(ctx)
+        : _resolveInteractivePlan(ctx);
+    if (plan == null) {
+      return 1;
     }
 
-    // Interactive mode
-    return _runInteractive(ctx);
+    // 3. Parse the manifest for the static slice (provider name + message).
+    final InstallManifest manifest;
+    try {
+      manifest = ManifestParser.parseFile(resolveManifestPath());
+    } on FormatException catch (e) {
+      ctx.output.error('install.yaml: $e');
+      return 1;
+    } on ManifestValidationException catch (e) {
+      ctx.output.error('install.yaml: ${e.message}');
+      return 1;
+    }
+
+    // 4. Stage + commit the install via the fluent override.
+    final result = await _runInstall(ctx, manifest, plan);
+
+    // 5. Echo the post-install message on Success.
+    if (result is Success && manifest.postInstall.message != null) {
+      ctx.output.info(manifest.postInstall.message!);
+    }
+
+    return _renderResult(ctx, result);
   }
 
-  /// Run installation in non-interactive mode (for CI/CD)
-  Future<int> _runNonInteractive(ArtisanContext ctx) async {
+  /// Builds the install plan from CLI flags (CI/CD path). Returns `null` after
+  /// emitting an error when `--app-id` is missing or malformed.
+  _InstallPlan? _resolveNonInteractivePlan(ArtisanContext ctx) {
     final appId = ctx.input.option('app-id') as String?;
     if (appId == null || appId.isEmpty) {
       ctx.output.error('--app-id is required in non-interactive mode');
-      return 1;
+      return null;
     }
-
     if (!validateOneSignalAppId(appId)) {
       ctx.output.error('Invalid OneSignal App ID format');
-      return 1;
+      return null;
     }
 
     final platformsStr =
         ctx.input.option('platforms') as String? ?? 'android,ios,web';
-    final platforms = platformsStr.split(',').map((p) => p.trim()).toList();
-    final enableSoftPrompt = !(ctx.input.option('no-soft-prompt') as bool);
-    final safariWebId = ctx.input.option('safari-web-id') as String?;
-    final notifyButtonEnabled = ctx.input.option('notify-button') as bool;
+    final platforms =
+        platformsStr.split(',').map((p) => p.trim()).toList(growable: false);
 
-    ctx.output.info(ConsoleStyle.step(1, 3, 'Creating configuration files...'));
-    await _executeInstallation(
-      ctx,
+    return _InstallPlan(
       oneSignalAppId: appId,
       platforms: platforms,
-      enableSoftPrompt: enableSoftPrompt,
-      safariWebId: safariWebId,
-      notifyButtonEnabled: notifyButtonEnabled,
+      enableSoftPrompt: !(ctx.input.option('no-soft-prompt') as bool? ?? false),
+      safariWebId: ctx.input.option('safari-web-id') as String?,
+      notifyButtonEnabled: ctx.input.option('notify-button') as bool? ?? false,
     );
-
-    _showSuccessMessage(ctx);
-    return 0;
   }
 
-  /// Run installation in interactive mode
-  Future<int> _runInteractive(ArtisanContext ctx) async {
+  /// Builds the install plan via the interactive wizard. The web / Safari
+  /// prompts are gated on the platform selection IN CODE because manifest
+  /// prompts run unconditionally and cannot be skipped when web is deselected.
+  _InstallPlan? _resolveInteractivePlan(ArtisanContext ctx) {
     ctx.output.info('Starting interactive installation wizard...\n');
 
-    // Step 1: Get OneSignal App ID
+    // 1. OneSignal App ID, re-prompt until a valid UUID is entered.
     ctx.output.info(ConsoleStyle.step(1, 4, 'OneSignal Configuration'));
     ctx.output.comment('Get your App ID from https://onesignal.com/\n');
-
     String? appId;
     while (appId == null || appId.isEmpty) {
       final input = Prompt.ask('Enter your OneSignal App ID');
-
       if (input.isEmpty) {
         ctx.output.error('App ID is required');
         continue;
       }
-
       if (!validateOneSignalAppId(input)) {
         ctx.output.error('Invalid App ID format (expected UUID format)');
         ctx.output.comment('Example: 12345678-1234-1234-1234-123456789012');
         continue;
       }
-
       appId = input;
     }
     ctx.output.success('App ID configured\n');
 
-    // Step 2: Select platforms
+    // 2. Platform selection.
     ctx.output.info(ConsoleStyle.step(2, 4, 'Platform Selection'));
-    final availablePlatforms = PlatformHelper.detectPlatforms(projectRoot);
-
-    if (availablePlatforms.isEmpty) {
+    final available = PlatformHelper.detectPlatforms(projectRoot);
+    if (available.isEmpty) {
       ctx.output.warning('No platform directories found');
       ctx.output.info('Defaulting to: android, ios, web');
-      availablePlatforms.addAll(['android', 'ios', 'web']);
+      available.addAll(['android', 'ios', 'web']);
     } else {
-      ctx.output.info('Detected platforms: ${availablePlatforms.join(', ')}');
+      ctx.output.info('Detected platforms: ${available.join(', ')}');
     }
-
-    final selectedPlatforms = <String>[];
-    for (final platform in availablePlatforms) {
+    final selected = <String>[];
+    for (final platform in available) {
       if (Prompt.confirm('Enable $platform?', defaultValue: true)) {
-        selectedPlatforms.add(platform);
+        selected.add(platform);
         ctx.output.success('  $platform enabled');
       } else {
         ctx.output.comment('  $platform skipped');
       }
     }
-
-    if (selectedPlatforms.isEmpty) {
+    if (selected.isEmpty) {
       ctx.output.warning('No platforms selected, using all detected');
-      selectedPlatforms.addAll(availablePlatforms);
+      selected.addAll(available);
     }
     ctx.output.writeln('');
 
-    // Step 3: Web-specific configuration
+    // 3. Web-specific config, only when web was selected.
     String? safariWebId;
-    bool notifyButtonEnabled = false;
-
-    if (selectedPlatforms.contains('web')) {
+    var notifyButtonEnabled = false;
+    if (selected.contains('web')) {
       ctx.output.info(ConsoleStyle.step(3, 5, 'Web Configuration'));
-      ctx.output.comment(
-        'Safari Web ID is required for Safari push notifications',
-      );
-
-      final safariInput = Prompt.ask(
-        'Enter Safari Web ID (or press Enter to skip)',
-      );
+      ctx.output
+          .comment('Safari Web ID is required for Safari push notifications');
+      final safariInput =
+          Prompt.ask('Enter Safari Web ID (or press Enter to skip)');
       if (safariInput.isNotEmpty) {
         safariWebId = safariInput;
         ctx.output.success('Safari Web ID configured');
       } else {
         ctx.output.comment('Safari Web ID skipped');
       }
-
-      notifyButtonEnabled = Prompt.confirm(
-        'Enable OneSignal notify button?',
-        defaultValue: false,
-      );
-
-      if (notifyButtonEnabled) {
-        ctx.output.success('Notify button enabled');
-      } else {
-        ctx.output.comment('Notify button disabled');
-      }
+      notifyButtonEnabled = Prompt.confirm('Enable OneSignal notify button?',
+          defaultValue: false);
       ctx.output.writeln('');
     }
 
-    // Step 4: Soft prompt configuration
+    // 4. Soft-prompt config.
+    final hasWeb = selected.contains('web');
     ctx.output.info(
-      ConsoleStyle.step(
-        selectedPlatforms.contains('web') ? 4 : 3,
-        selectedPlatforms.contains('web') ? 5 : 4,
-        'Soft Prompt Configuration',
-      ),
+      ConsoleStyle.step(hasWeb ? 4 : 3, hasWeb ? 5 : 4, 'Soft Prompt'),
     );
-    ctx.output.comment(
-      'Soft prompt asks users before requesting push permissions',
-    );
-
-    final enableSoftPrompt = Prompt.confirm(
-      'Enable soft prompt?',
-      defaultValue: true,
-    );
-
-    if (enableSoftPrompt) {
-      ctx.output.success('Soft prompt enabled');
-    } else {
-      ctx.output.comment('Soft prompt disabled');
-    }
+    ctx.output
+        .comment('Soft prompt asks users before requesting push permissions');
+    final enableSoftPrompt =
+        Prompt.confirm('Enable soft prompt?', defaultValue: true);
     ctx.output.writeln('');
 
-    // Step 5: Execute installation
-    ctx.output.info(
-      ConsoleStyle.step(
-        selectedPlatforms.contains('web') ? 5 : 4,
-        selectedPlatforms.contains('web') ? 5 : 4,
-        'Installing...',
-      ),
-    );
-
-    await _executeInstallation(
-      ctx,
+    return _InstallPlan(
       oneSignalAppId: appId,
-      platforms: selectedPlatforms,
+      platforms: selected,
       enableSoftPrompt: enableSoftPrompt,
       safariWebId: safariWebId,
       notifyButtonEnabled: notifyButtonEnabled,
     );
-
-    _showSuccessMessage(ctx);
-    return 0;
   }
 
-  /// Execute installation core logic
-  Future<void> _executeInstallation(
-    ArtisanContext ctx, {
-    required String oneSignalAppId,
-    required List<String> platforms,
-    required bool enableSoftPrompt,
-    String? safariWebId,
-    bool notifyButtonEnabled = false,
-  }) async {
-    final force = ctx.input.option('force') as bool? ?? false;
+  /// Stages the ordered op list onto a fresh [PluginInstaller] and commits.
+  ///
+  /// Op-order contract (Must Have): transactional `writeFile` ops first so the
+  /// atomic `.tmp` swap covers them, helper-backed mutations last (they write
+  /// synchronously during stage and do NOT roll back).
+  Future<TransactionResult> _runInstall(
+    ArtisanContext ctx,
+    InstallManifest manifest,
+    _InstallPlan plan,
+  ) async {
+    final installContext = buildContext(ctx);
+    final installer = PluginInstaller(
+      installContext,
+      pluginName: manifest.pluginName,
+    );
+    final force = isForce(ctx);
 
-    // 1. Create notification config file
+    // ---- Transactional writes FIRST (ride the atomic .tmp swap) ----
+
+    // 1. Config file. Skip when it already exists and --force was not passed
+    //    (mirrors the legacy behavior; the installer would otherwise overwrite).
     final configPath = '$projectRoot/lib/config/notifications.dart';
-
     if (FileHelper.fileExists(configPath) && !force) {
       ctx.output.warning(
-        'Configuration file already exists. Use --force to overwrite.',
-      );
+          'Configuration file already exists. Use --force to overwrite.');
     } else {
-      final stub = StubLoader.load(
-        'install/notification_config',
-        searchPaths: getStubSearchPaths(),
+      installer.writeFile(
+        targetPath: configPath,
+        content: _renderConfig(plan),
       );
-      final content = StubLoader.replace(stub, {
-        'oneSignalAppId': oneSignalAppId,
-        'safariWebIdLine': safariWebId != null
-            ? "\n      'safari_web_id': '$safariWebId',"
-            : '',
-        'notifyButtonEnabled': notifyButtonEnabled.toString(),
-        'softPromptEnabled': enableSoftPrompt.toString(),
-      });
-      FileHelper.writeFile(configPath, content);
-      ctx.output.success('Created lib/config/notifications.dart');
     }
 
-    // 2. Update pubspec.yaml with dependency (path-based for local plugin)
-    final pubspecPath = '$projectRoot/pubspec.yaml';
-    try {
-      ConfigEditor.addPathDependencyToPubspec(
-        pubspecPath: pubspecPath,
-        name: 'magic_notifications',
-        path: './plugins/magic_notifications',
+    // 2. Web service worker (arbitrary file write the manifest cannot express).
+    if (plan.hasWeb && PlatformHelper.hasPlatform(projectRoot, 'web')) {
+      installer.writeFile(
+        targetPath: '$projectRoot/web/OneSignalSDKWorker.js',
+        content: StubLoader.load(
+          'install/onesignal_worker',
+          searchPaths: getStubSearchPaths(),
+        ),
       );
-    } catch (e) {
-      // Dependency might already exist
     }
 
-    // 3. Generate platform-specific files
-    for (final platform in platforms) {
-      switch (platform) {
-        case 'android':
-          await _setupAndroid(oneSignalAppId);
-          break;
-        case 'ios':
-          await _setupIOS(oneSignalAppId);
-          break;
-        case 'web':
-          await _setupWeb(
-            oneSignalAppId,
-            safariWebId: safariWebId,
-            notifyButtonEnabled: notifyButtonEnabled,
-          );
-          break;
+    // ---- Helper-backed mutations LAST (synchronous, no rollback) ----
+
+    // 3. Provider injection from the manifest's magic.provider slot. Uses the
+    //    PluginInstaller composite (import + providers-list append); idempotent.
+    final provider = manifest.magic.provider;
+    if (provider != null) {
+      installer.injectProvider(provider);
+    }
+
+    // 4. Android POST_NOTIFICATIONS permission, gated on platform selection.
+    //    The dispatcher additionally skips silently when android/ is absent.
+    if (plan.hasAndroid) {
+      installer
+          .injectAndroidPermission('android.permission.POST_NOTIFICATIONS');
+    }
+
+    // 5. main.dart configFactory inject. The import is RELATIVE
+    //    (config/notifications.dart, not a package: import) so injectConfigFactory
+    //    cannot be used; stage the import + the factory append explicitly.
+    final mainPath = '$projectRoot/lib/main.dart';
+    if (FileHelper.fileExists(mainPath) &&
+        !FileHelper.readFile(mainPath).contains('notificationConfig')) {
+      installer
+        ..injectMainDartImport("import 'config/notifications.dart';")
+        ..injectAfter(
+          targetFile: mainPath,
+          pattern: RegExp(r'\(\)\s*=>\s*\w+Config,(?=\s*\n\s*\])'),
+          code: '\n      () => notificationConfig,',
+        );
+    }
+
+    // 6. Web SDK <head> script, gated on web selection AND idempotency. The
+    //    head_scripts dispatcher has no hasContent guard, so re-installing
+    //    would double-inject without this check; stage the inject only when the
+    //    SDK is not already present.
+    if (plan.hasWeb && PlatformHelper.hasPlatform(projectRoot, 'web')) {
+      final indexPath = PlatformHelper.webIndexPath(projectRoot);
+      if (FileHelper.fileExists(indexPath) &&
+          !HtmlEditor.hasContent(indexPath, 'onesignalsdk')) {
+        installer.injectIntoWebHead(
+          StubLoader.load(
+            'install/onesignal_script',
+            searchPaths: getStubSearchPaths(),
+          ),
+        );
       }
     }
 
-    // 4. Update app.dart
-    final appPath = '$projectRoot/lib/config/app.dart';
-    if (FileHelper.fileExists(appPath)) {
-      _injectIntoApp(ctx, appPath);
-    }
-
-    // 5. Update main.dart
-    final mainPath = '$projectRoot/lib/main.dart';
-    if (FileHelper.fileExists(mainPath)) {
-      _injectIntoMain(ctx, mainPath);
-    }
+    return installer.commit(dryRun: isDryRun(ctx), force: force);
   }
 
-  /// Injects provider and imports into lib/config/app.dart
-  void _injectIntoApp(ArtisanContext ctx, String appPath) {
-    ConfigEditor.addImportToFile(
-      filePath: appPath,
-      importStatement:
-          "import 'package:magic_notifications/magic_notifications.dart';",
-    );
-    final content = FileHelper.readFile(appPath);
-    if (!content.contains('NotificationServiceProvider')) {
-      ConfigEditor.insertCodeBeforePattern(
-        filePath: appPath,
-        pattern: RegExp(r'^\s+\],', multiLine: true),
-        code: '      (app) => NotificationServiceProvider(app),\n',
-      );
-      ctx.output.success(
-        'Injected NotificationServiceProvider into lib/config/app.dart',
-      );
-    }
-  }
-
-  /// Injects configFactory and imports into lib/main.dart
-  void _injectIntoMain(ArtisanContext ctx, String mainPath) {
-    if (!FileHelper.fileExists(mainPath)) return;
-    ConfigEditor.addImportToFile(
-      filePath: mainPath,
-      importStatement: "import 'config/notifications.dart';",
-    );
-    final content = FileHelper.readFile(mainPath);
-    if (!content.contains('notificationConfig')) {
-      ConfigEditor.insertCodeBeforePattern(
-        filePath: mainPath,
-        pattern: RegExp(r'^\s+\],', multiLine: true),
-        code: '      () => notificationConfig,\n',
-      );
-      ctx.output.success('Injected notificationConfig into lib/main.dart');
-    }
-  }
-
-  /// Setup Android platform
-  Future<void> _setupAndroid(String appId) async {
-    if (!PlatformHelper.hasPlatform(projectRoot, 'android')) {
-      return;
-    }
-
-    final manifestPath = PlatformHelper.androidManifestPath(projectRoot);
-
-    if (!FileHelper.fileExists(manifestPath)) {
-      return;
-    }
-
-    XmlEditor.addAndroidPermission(
-      manifestPath,
-      'android.permission.POST_NOTIFICATIONS',
-    );
-  }
-
-  /// Setup iOS platform
-  Future<void> _setupIOS(String appId) async {
-    final infoPlistPath = PlatformHelper.infoPlistPath(projectRoot);
-
-    if (!FileHelper.fileExists(infoPlistPath)) {
-      return;
-    }
-
-    // iOS setup typically requires manual steps
-    // We can add comments or instructions here
-  }
-
-  /// Setup Web platform
-  ///
-  /// Only loads the SDK script - init is handled by Dart config via service provider.
-  Future<void> _setupWeb(
-    String appId, {
-    String? safariWebId,
-    bool notifyButtonEnabled = false,
-  }) async {
-    if (!PlatformHelper.hasPlatform(projectRoot, 'web')) {
-      return;
-    }
-
-    final webDir = '$projectRoot/web';
-
-    // Create OneSignal service worker
-    // IMPORTANT: Use OneSignalSDK.sw.js (Service Worker version), NOT .page.js
-    // The .page.js is for the main HTML page, .sw.js is for the Service Worker
-    final workerPath = '$webDir/OneSignalSDKWorker.js';
-    final workerContent = StubLoader.load(
-      'install/onesignal_worker',
+  /// Renders the notification config stub with the plan's placeholder values.
+  String _renderConfig(_InstallPlan plan) {
+    final stub = StubLoader.load(
+      'install/notification_config',
       searchPaths: getStubSearchPaths(),
     );
-    FileHelper.writeFile(workerPath, workerContent);
+    return StubLoader.replace(stub, {
+      'oneSignalAppId': plan.oneSignalAppId,
+      'safariWebIdLine': plan.safariWebId != null
+          ? "\n      'safari_web_id': '${plan.safariWebId}',"
+          : '',
+      'notifyButtonEnabled': plan.notifyButtonEnabled.toString(),
+      'softPromptEnabled': plan.enableSoftPrompt.toString(),
+    });
+  }
 
-    // Update index.html if needed
-    final indexPath = PlatformHelper.webIndexPath(projectRoot);
-    if (FileHelper.fileExists(indexPath)) {
-      if (!HtmlEditor.hasContent(indexPath, 'onesignalsdk')) {
-        // Add OneSignal SDK script to head (init handled by Dart config)
-        final scriptContent = StubLoader.load(
-          'install/onesignal_script',
-          searchPaths: getStubSearchPaths(),
+  /// Translates a [TransactionResult] into a process exit code and emits the
+  /// matching summary line.
+  int _renderResult(ArtisanContext ctx, TransactionResult result) {
+    switch (result) {
+      case Success():
+        ctx.output.success('Installation complete!');
+        return 0;
+      case DryRun(opCount: final n):
+        ctx.output.info('Dry-run: $n op(s) staged; no files were written.');
+        return 0;
+      case Conflict(conflicts: final list):
+        ctx.output.error(
+          'Conflict on ${list.length} file(s). Re-run with --force to overwrite.',
         );
-        HtmlEditor.injectBeforeClose(indexPath, '</head>', scriptContent);
-      }
+        return 1;
+      case Error(error: final msg, rolledBack: final ok):
+        ctx.output.error('Install failed: $msg (rolledBack: $ok)');
+        return 1;
     }
   }
 
-  /// Tries to resolve the package assets directory dynamically using package_config.json
-  String _resolvePluginStubsDir() {
+  /// Resolves the magic_notifications package root via the consumer's
+  /// `.dart_tool/package_config.json`. Returns `null` when the config or the
+  /// package entry is absent.
+  String? _resolvePluginRoot() {
     final packageConfigPath =
         '${Directory.current.path}/.dart_tool/package_config.json';
-    if (File(packageConfigPath).existsSync()) {
-      final content = File(packageConfigPath).readAsStringSync();
-      try {
-        final map = jsonDecode(content) as Map<String, dynamic>;
-        final packages = map['packages'] as List<dynamic>? ?? [];
-        for (final package in packages) {
-          if (package['name'] == 'magic_notifications') {
-            final rootUri = package['rootUri'] as String;
-            String parsedPath;
-            if (rootUri.startsWith('file://')) {
-              parsedPath = Uri.parse(rootUri).toFilePath();
-            } else if (rootUri.startsWith('../')) {
-              parsedPath = File(
-                packageConfigPath,
-              ).parent.uri.resolve(rootUri).toFilePath();
-            } else {
-              parsedPath = rootUri;
-            }
-            return '$parsedPath/assets/stubs'.replaceAll('//', '/');
-          }
-        }
-      } catch (_) {
-        // Fallback below
-      }
+    final file = File(packageConfigPath);
+    if (!file.existsSync()) {
+      return null;
     }
-    return '${Directory.current.path}/assets/stubs';
+    final map = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+    final packages = map['packages'] as List<dynamic>? ?? const [];
+    for (final package in packages) {
+      if (package['name'] != 'magic_notifications') {
+        continue;
+      }
+      final rootUri = package['rootUri'] as String;
+      if (rootUri.startsWith('file://')) {
+        return Uri.parse(rootUri).toFilePath();
+      }
+      return file.parent.uri.resolve(rootUri).toFilePath();
+    }
+    return null;
   }
 
-  /// Show success message after installation
-  void _showSuccessMessage(ArtisanContext ctx) {
-    ctx.output.writeln('');
-    ctx.output.success('Installation complete!\n');
-    ctx.output.info('Next steps:');
-    ctx.output.info(
-      '  1. Run: ${ConsoleStyle.cyan}flutter pub get${ConsoleStyle.reset}',
-    );
-    ctx.output.info('  2. Configure your OneSignal dashboard');
-    ctx.output.info(
-      '  3. Test: ${ConsoleStyle.cyan}artisan notifications:test --dry-run${ConsoleStyle.reset}',
-    );
-    ctx.output.info(
-      '  4. Check status: ${ConsoleStyle.cyan}artisan notifications:doctor${ConsoleStyle.reset}',
-    );
+  /// Resolves the plugin's `assets/stubs/` directory off [_resolvePluginRoot].
+  String _resolvePluginStubsDir() {
+    final pluginRoot = _resolvePluginRoot();
+    return pluginRoot == null
+        ? '${Directory.current.path}/assets/stubs'
+        : '$pluginRoot/assets/stubs';
   }
 }
