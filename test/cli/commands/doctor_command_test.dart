@@ -1,6 +1,8 @@
 import 'dart:io';
 
-import 'package:magic_cli/magic_cli.dart';
+// Import artisan without DoctorCommand to avoid collision with the
+// notifications-specific DoctorCommand below.
+import 'package:fluttersdk_artisan/artisan.dart' hide DoctorCommand;
 import 'package:magic_notifications/src/cli/commands/doctor_command.dart';
 import 'package:test/test.dart';
 
@@ -70,8 +72,8 @@ void main() {
   // ---------------------------------------------------------------------------
 
   group('DoctorCommand metadata', () {
-    test('name is "doctor"', () {
-      expect(command.name, equals('doctor'));
+    test('name is "notifications:doctor"', () {
+      expect(command.name, equals('notifications:doctor'));
     });
 
     test('description is not empty', () {
@@ -426,18 +428,29 @@ Map<String, dynamic> get notificationConfig => {
   });
 
   // ---------------------------------------------------------------------------
-  // --verbose flag via Kernel
+  // --verbose flag via ArtisanContext
   // ---------------------------------------------------------------------------
 
   group('--verbose flag', () {
-    test('verbose flag is registered on the parser', () {
-      // Verify that --verbose doesn't throw an "unknown flag" error
-      // by running --help (which exits early, no HTTP calls).
-      final kernel = Kernel()..register(command);
-      expect(
-        () => kernel.handle(['doctor', '--help']),
-        returnsNormally,
+    test('verbose flag produces a longer report than non-verbose', () async {
+      // Drive the command directly through an ArtisanContext so there is no
+      // stdin/stdout dependency. The verbose report includes per-check detail
+      // lines (file paths, package names); the default report omits them.
+      final verboseCtx = ArtisanContext.bare(
+        MapInput({'verbose': true}, signature: command.parsedSignature),
+        BufferedOutput(),
       );
+      final defaultCtx = ArtisanContext.bare(
+        MapInput({'verbose': false}, signature: command.parsedSignature),
+        BufferedOutput(),
+      );
+
+      await command.handle(verboseCtx);
+      await command.handle(defaultCtx);
+
+      final verboseOut = (verboseCtx.output as BufferedOutput).content;
+      final defaultOut = (defaultCtx.output as BufferedOutput).content;
+      expect(verboseOut.length, greaterThan(defaultOut.length));
     });
   });
 }

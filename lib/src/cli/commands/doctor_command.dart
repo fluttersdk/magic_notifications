@@ -1,4 +1,6 @@
-import 'package:fluttersdk_artisan/artisan.dart';
+// cli.dart re-exports fluttersdk_artisan/artisan.dart (hiding only the builtin
+// DoctorCommand that collides with this class), so a direct artisan.dart import
+// is redundant here.
 import 'package:magic_notifications/src/cli/cli.dart';
 
 /// Diagnostic command for checking Magic Notifications health.
@@ -11,8 +13,8 @@ import 'package:magic_notifications/src/cli/cli.dart';
 ///
 /// ## Usage
 /// ```bash
-/// artisan notifications:doctor
-/// artisan notifications:doctor --verbose
+/// dart run <app>:artisan notifications:doctor
+/// dart run <app>:artisan notifications:doctor --verbose
 /// ```
 class DoctorCommand extends ArtisanCommand {
   @override
@@ -51,8 +53,10 @@ class DoctorCommand extends ArtisanCommand {
     } else {
       ctx.output.writeln('');
       ctx.output.warning('Issues detected. Run the following to fix:');
-      ctx.output.writeln('  • Install: artisan notifications:install');
-      ctx.output.writeln('  • Configure: artisan notifications:configure');
+      ctx.output
+          .writeln('  • Install: dart run <app>:artisan notifications:install');
+      ctx.output.writeln(
+          '  • Configure: dart run <app>:artisan notifications:configure');
       return 1;
     }
   }

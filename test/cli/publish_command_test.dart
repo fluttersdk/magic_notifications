@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:magic_cli/magic_cli.dart';
+import 'package:fluttersdk_artisan/artisan.dart';
 import 'package:magic_notifications/src/cli/commands/publish_command.dart';
 import 'package:test/test.dart';
 
@@ -19,6 +19,19 @@ class _TestPublishCommand extends PublishCommand {
         '${Directory.current.path}/assets/stubs',
       ];
 }
+
+/// Builds an [ArtisanContext] for [cmd] with the given flag overrides.
+ArtisanContext _ctx(
+  _TestPublishCommand cmd, {
+  bool force = false,
+}) =>
+    ArtisanContext.bare(
+      MapInput(
+        {'force': force},
+        signature: cmd.parsedSignature,
+      ),
+      BufferedOutput(),
+    );
 
 void main() {
   late Directory tempDir;
@@ -44,8 +57,8 @@ dependencies:
   });
 
   group('PublishCommand', () {
-    test('has name "publish"', () {
-      expect(command.name, equals('publish'));
+    test('has name "notifications:publish"', () {
+      expect(command.name, equals('notifications:publish'));
     });
 
     test('has a non-empty description', () {
@@ -55,18 +68,14 @@ dependencies:
     test(
         'publishes notification_config.stub to lib/config/notifications.dart on empty project',
         () async {
-      final kernel = Kernel()..register(command);
-
-      await kernel.handle(['publish']);
+      await command.handle(_ctx(command));
 
       final configPath = '${tempDir.path}/lib/config/notifications.dart';
       expect(File(configPath).existsSync(), isTrue);
     });
 
     test('published file contains valid Dart map structure', () async {
-      final kernel = Kernel()..register(command);
-
-      await kernel.handle(['publish']);
+      await command.handle(_ctx(command));
 
       final configPath = '${tempDir.path}/lib/config/notifications.dart';
       final content = File(configPath).readAsStringSync();
@@ -76,9 +85,7 @@ dependencies:
 
     test('published file uses YOUR_ONESIGNAL_APP_ID as default placeholder',
         () async {
-      final kernel = Kernel()..register(command);
-
-      await kernel.handle(['publish']);
+      await command.handle(_ctx(command));
 
       final configPath = '${tempDir.path}/lib/config/notifications.dart';
       final content = File(configPath).readAsStringSync();
@@ -88,9 +95,7 @@ dependencies:
 
     test('published file has notify_button_enabled set to false by default',
         () async {
-      final kernel = Kernel()..register(command);
-
-      await kernel.handle(['publish']);
+      await command.handle(_ctx(command));
 
       final configPath = '${tempDir.path}/lib/config/notifications.dart';
       final content = File(configPath).readAsStringSync();
@@ -100,9 +105,7 @@ dependencies:
 
     test('published file has soft_prompt enabled set to true by default',
         () async {
-      final kernel = Kernel()..register(command);
-
-      await kernel.handle(['publish']);
+      await command.handle(_ctx(command));
 
       final configPath = '${tempDir.path}/lib/config/notifications.dart';
       final content = File(configPath).readAsStringSync();
@@ -111,9 +114,7 @@ dependencies:
     });
 
     test('creates lib/config directory if it does not exist', () async {
-      final kernel = Kernel()..register(command);
-
-      await kernel.handle(['publish']);
+      await command.handle(_ctx(command));
 
       final configDir = Directory('${tempDir.path}/lib/config');
       expect(configDir.existsSync(), isTrue);
@@ -125,8 +126,7 @@ dependencies:
       final configPath = '${tempDir.path}/lib/config/notifications.dart';
       File(configPath).writeAsStringSync('// sentinel-content');
 
-      final kernel = Kernel()..register(command);
-      await kernel.handle(['publish']);
+      await command.handle(_ctx(command));
 
       // File must remain unchanged
       expect(
@@ -139,8 +139,7 @@ dependencies:
       final configPath = '${tempDir.path}/lib/config/notifications.dart';
       File(configPath).writeAsStringSync('// sentinel-content');
 
-      final kernel = Kernel()..register(command);
-      await kernel.handle(['publish', '--force']);
+      await command.handle(_ctx(command, force: true));
 
       final content = File(configPath).readAsStringSync();
       // Content must have changed — stub was written

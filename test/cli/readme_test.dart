@@ -10,7 +10,7 @@ void main() {
 
     test('README documents install command', () {
       final readme = File('README.md').readAsStringSync();
-      expect(readme, contains('dart run magic_notifications install'));
+      expect(readme, contains('dart run <app>:artisan notifications:install'));
     });
 
     test('README documents configure command', () {

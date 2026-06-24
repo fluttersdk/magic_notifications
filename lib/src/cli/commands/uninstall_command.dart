@@ -13,8 +13,8 @@ import 'package:fluttersdk_artisan/artisan.dart';
 ///
 /// ## Usage
 /// ```bash
-/// artisan notifications:uninstall
-/// artisan notifications:uninstall --force
+/// dart run <app>:artisan notifications:uninstall
+/// dart run <app>:artisan notifications:uninstall --force
 /// ```
 class UninstallCommand extends ArtisanCommand {
   @override
@@ -35,6 +35,15 @@ class UninstallCommand extends ArtisanCommand {
   /// Resolved project root — delegates to [getProjectRoot].
   String get projectRoot => getProjectRoot();
 
+  /// Asks the operator to confirm the destructive uninstall.
+  ///
+  /// Returns `true` to proceed, `false` to cancel. Overridable in tests so the
+  /// confirmation can be decided without reading real stdin.
+  bool confirmRemoval() => Prompt.confirm(
+        'Are you sure you want to uninstall Magic Notifications?',
+        defaultValue: false,
+      );
+
   @override
   Future<int> handle(ArtisanContext ctx) async {
     ctx.output.info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
@@ -46,11 +55,7 @@ class UninstallCommand extends ArtisanCommand {
 
     // 2. Confirm unless --force is provided.
     if (!force) {
-      final confirmed = Prompt.confirm(
-        'Are you sure you want to uninstall Magic Notifications?',
-        defaultValue: false,
-      );
-      if (!confirmed) {
+      if (!confirmRemoval()) {
         ctx.output.info('Uninstall cancelled.');
         return 0;
       }
