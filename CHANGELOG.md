@@ -2,16 +2,18 @@
 
 ## [Unreleased]
 
+## [0.0.1] - 2026-06-24
+
 ### Breaking Changes
-- **Removed `bin/magic_notifications.dart` entrypoint** — CLI commands now surface via host app's artisan binary (`dart run <app>:artisan notifications:<cmd>`), not as a standalone `dart run magic_notifications <cmd>`. Update your scripts and CI workflows accordingly.
-- **Removed `magic_cli` dependency** — Install now uses `fluttersdk_artisan`'s manifest-driven model, not magic_cli's imperative Kernel.
+- **Removed `bin/magic_notifications.dart` entrypoint**: CLI commands now surface via host app's artisan binary (`dart run <app>:artisan notifications:<cmd>`), not as a standalone `dart run magic_notifications <cmd>`. Update your scripts and CI workflows accordingly.
+- **Removed `magic_cli` dependency**: Install now uses `fluttersdk_artisan`'s manifest-driven model, not magic_cli's imperative Kernel.
 
 ### Changed
-- **Install now manifest-driven** — `install.yaml` declares the static slice (provider injection only); dynamic logic (UUID validation, platform conditionals, placeholder-rendered config, arbitrary file writes) lives in `InstallCommand`'s fluent override.
-- **CLI architecture** — Commands contributed via `MagicNotificationsArtisanProvider` registered in host's `artisan.providers` config.
+- **Install now manifest-driven**: `install.yaml` declares the static slice (provider injection only); dynamic logic (UUID validation, platform conditionals, placeholder-rendered config, arbitrary file writes) lives in `InstallCommand`'s fluent override.
+- **CLI architecture**: Commands contributed via `MagicNotificationsArtisanProvider` registered in host's `artisan.providers` config.
 
 ### Added
-- **MCP tools** — `notifications_doctor` and `notifications_channels` are now read-only tools available to AI agents via MCP.
+- **MCP tools**: `notifications_doctor` and `notifications_channels` are now read-only tools available to AI agents via MCP.
 
 ### 📚 Documentation
 - **README**: Rewrite to match Magic ecosystem format
@@ -35,7 +37,7 @@
 - **Push subscription**: Permission state tracking, opt-in/opt-out
 
 ### 🔧 CLI Tools
-- **install**: Interactive wizard — config, pubspec, platform files, OneSignal setup
+- **install**: Interactive wizard, config, pubspec, platform files, OneSignal setup
 - **configure**: Show/update notification settings
 - **doctor**: Health check with exit codes
 - **test**: Send test notifications (dry-run, database, push, mail)
