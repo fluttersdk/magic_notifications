@@ -24,7 +24,7 @@ Commands are built on `fluttersdk_artisan` and surface via the host app's unifie
 
 ## MCP tools
 
-`NotificationsArtisanProvider.mcpTools()` exposes two read-only diagnostic tools:
+`MagicNotificationsArtisanProvider.mcpTools()` exposes two read-only diagnostic tools:
 - `notifications_doctor` — health check (config presence, OneSignal App ID format, polling interval, platform setup)
 - `notifications_channels` — list channel status and configuration
 

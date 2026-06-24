@@ -13,9 +13,12 @@
 #     dispatcher has no hasContent guard, so a re-install would double-inject).
 #
 # The provider injection IS static (the consumer's lib/config/app.dart provider
-# list is mutated unconditionally on every install), so it stays here as
-# `magic.provider`. The override appends its writeFile + helper ops AFTER the
-# manifest stages this provider inject, keeping helper-backed mutations last.
+# list is mutated unconditionally on every install), so its provider name stays
+# here as `magic.provider`. InstallCommand reads that name, then drives the whole
+# staging itself: it stages the transactional writeFile ops FIRST (so the atomic
+# .tmp swap covers them), and issues the helper-backed provider inject (plus the
+# other synchronous mutations) LAST. The provider inject is therefore the last
+# op, not a step the manifest stages before the override runs.
 #
 # See doc/install_yaml_schema.md (in fluttersdk_artisan) for the full schema.
 

@@ -43,7 +43,8 @@ class ConfigureCommand extends ArtisanCommand {
     // Check if config exists before proceeding with any operation.
     if (!configExists()) {
       ctx.output.error('Configuration file not found');
-      ctx.output.info('Run installation first: artisan notifications:install');
+      ctx.output.info(
+          'Run installation first: dart run <app>:artisan notifications:install');
       return 1;
     }
 

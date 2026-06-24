@@ -4,14 +4,20 @@ import 'package:fluttersdk_artisan/artisan.dart';
 import 'package:magic_notifications/src/cli/commands/uninstall_command.dart';
 import 'package:test/test.dart';
 
-/// Test double that overrides [getProjectRoot] to use a temp directory.
+/// Test double that overrides [getProjectRoot] to use a temp directory and
+/// [confirmRemoval] to decide the confirmation result without reading stdin.
 class _TestUninstallCommand extends UninstallCommand {
   final String _root;
+  final bool _confirm;
 
-  _TestUninstallCommand(this._root);
+  _TestUninstallCommand(this._root, {bool confirm = false})
+      : _confirm = confirm;
 
   @override
   String getProjectRoot() => _root;
+
+  @override
+  bool confirmRemoval() => _confirm;
 }
 
 /// Builds an [ArtisanContext] for [cmd] with the given flag overrides.
@@ -259,23 +265,31 @@ void main() {
     });
 
     group('without --force flag', () {
-      test('does NOT execute removal when --force is absent (no stdin)',
-          () async {
-        // Without --force the command calls Prompt.confirm, which reads stdin.
-        // In CI/test environments stdin is closed, so Prompt.confirm returns
-        // the defaultValue (false). The uninstall is cancelled and artifacts
-        // remain intact.
+      test('does NOT execute removal when confirmation is declined', () async {
+        // Without --force the command asks confirmRemoval(); the test double
+        // returns false (declined), so the uninstall is cancelled and every
+        // artifact remains intact.
         final configPath = '${tempDir.path}/lib/config/notifications.dart';
         final pubspecPath = '${tempDir.path}/pubspec.yaml';
         final originalPubspec = File(pubspecPath).readAsStringSync();
 
-        // Run without --force; confirm defaults to false in non-interactive env.
         await command.handle(_ctx(command, force: false));
 
         // Config file must still exist because uninstall was cancelled.
         expect(File(configPath).existsSync(), isTrue);
         // pubspec must be unchanged.
         expect(File(pubspecPath).readAsStringSync(), equals(originalPubspec));
+      });
+
+      test('executes removal when confirmation is accepted', () async {
+        // confirmRemoval() returns true (accepted), so the uninstall proceeds
+        // exactly as the --force path would, without reading stdin.
+        final confirmed = _TestUninstallCommand(tempDir.path, confirm: true);
+        final configPath = '${tempDir.path}/lib/config/notifications.dart';
+
+        await confirmed.handle(_ctx(confirmed, force: false));
+
+        expect(File(configPath).existsSync(), isFalse);
       });
     });
 

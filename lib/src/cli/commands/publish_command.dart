@@ -14,8 +14,8 @@ import 'package:fluttersdk_artisan/artisan.dart';
 /// ## Usage
 ///
 /// ```bash
-/// artisan notifications:publish
-/// artisan notifications:publish --force
+/// dart run <app>:artisan notifications:publish
+/// dart run <app>:artisan notifications:publish --force
 /// ```
 class PublishCommand extends ArtisanCommand {
   @override
@@ -86,7 +86,7 @@ class PublishCommand extends ArtisanCommand {
       "  1. Update 'YOUR_ONESIGNAL_APP_ID' with your actual OneSignal App ID",
     );
     ctx.output.info(
-      '  2. Run: ${ConsoleStyle.cyan}artisan notifications:install'
+      '  2. Run: ${ConsoleStyle.cyan}dart run <app>:artisan notifications:install'
       '${ConsoleStyle.reset}',
     );
     ctx.output.info('     to inject providers and platform setup');

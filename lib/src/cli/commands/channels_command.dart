@@ -7,7 +7,7 @@ import 'package:fluttersdk_artisan/artisan.dart';
 ///
 /// ## Usage
 /// ```bash
-/// artisan notifications:channels
+/// dart run <app>:artisan notifications:channels
 /// ```
 class ChannelsCommand extends ArtisanCommand {
   @override
@@ -39,7 +39,7 @@ class ChannelsCommand extends ArtisanCommand {
     if (!FileHelper.fileExists(configPath)) {
       ctx.output.error('Configuration file not found.');
       ctx.output.info(
-        'Run: ${ConsoleStyle.cyan}artisan notifications:install${ConsoleStyle.reset} to set up notifications.',
+        'Run: ${ConsoleStyle.cyan}dart run <app>:artisan notifications:install${ConsoleStyle.reset} to set up notifications.',
       );
       return 1;
     }

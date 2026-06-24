@@ -92,6 +92,9 @@ class InstallCommand extends ArtisanInstallCommand {
   String get description => 'Install and configure Magic Notifications';
 
   @override
+  CommandBoot get boot => CommandBoot.none;
+
+  @override
   String pluginName(ArtisanContext ctx) => 'magic_notifications';
 
   /// Absolute path to the Flutter project root, resolved on access.

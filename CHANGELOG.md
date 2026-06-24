@@ -7,8 +7,8 @@
 - **Removed `magic_cli` dependency** — Install now uses `fluttersdk_artisan`'s manifest-driven model, not magic_cli's imperative Kernel.
 
 ### Changed
-- **Install now manifest-driven** — `install.yaml` drives static scaffolding (provider injection, config publish); dynamic logic (UUID validation, platform conditionals) lives in `InstallCommand`'s fluent override.
-- **CLI architecture** — Commands contributed via `NotificationsArtisanProvider` registered in host's `artisan.providers` config.
+- **Install now manifest-driven** — `install.yaml` declares the static slice (provider injection only); dynamic logic (UUID validation, platform conditionals, placeholder-rendered config, arbitrary file writes) lives in `InstallCommand`'s fluent override.
+- **CLI architecture** — Commands contributed via `MagicNotificationsArtisanProvider` registered in host's `artisan.providers` config.
 
 ### Added
 - **MCP tools** — `notifications_doctor` and `notifications_channels` are now read-only tools available to AI agents via MCP.
