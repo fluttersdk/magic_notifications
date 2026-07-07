@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- **`magic` constraint bumped to `^0.0.4`.** Aligns with the magic 0.0.4 release (which requires `fluttersdk_wind ^1.2.0` for the design-first component/recipe layer). The previous `^0.0.3` excluded magic 0.0.4 under pub's `0.0.z` caret semantics, which would have made a shared resolution with `magic_starter` (now on `magic ^0.0.4`) unsolvable.
+
 ## [0.0.1] - 2026-06-24
 
 ### Breaking Changes

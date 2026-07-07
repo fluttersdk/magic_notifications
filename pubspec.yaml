@@ -20,7 +20,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  magic: ^0.0.3
+  magic: ^0.0.4
   fluttersdk_artisan: ^0.0.8
   onesignal_flutter: ^5.4.6
 
