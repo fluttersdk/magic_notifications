@@ -2,8 +2,10 @@
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-07-26
+
 ### Changed
-- **`magic` constraint bumped to `^0.0.4`.** Aligns with the magic 0.0.4 release (which requires `fluttersdk_wind ^1.2.0` for the design-first component/recipe layer). The previous `^0.0.3` excluded magic 0.0.4 under pub's `0.0.z` caret semantics, which would have made a shared resolution with `magic_starter` (now on `magic ^0.0.4`) unsolvable.
+- **`magic` constraint bumped to `^0.0.5`.** Tracks the magic 0.0.5 release (the `Model.save()` 422 validation-error surface and the auth-state redirect refresh). Under pub's `0.0.z` caret semantics every bump of magic's patch digit is an upper-bound break, so a plugin left on `^0.0.4` makes a shared resolution with any consumer on magic 0.0.5 unsolvable. This release exists to keep that graph solvable; there is no behavior change in this package.
 
 ## [0.0.1] - 2026-06-24
 
