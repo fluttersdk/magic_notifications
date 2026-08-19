@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-08-19
+
 ### Added
 - **Notification state can arrive over a socket instead of being polled for.** `Notify.startRealtime(channel: ...)` subscribes to the notifiable's private broadcast channel and applies each `notification.created` frame straight to the stream, so a new notification shows up when the server sends it rather than up to 30 seconds later. The frame carries the whole row in the same shape `GET /notifications` returns, so no HTTP follows it.
 - `Notify.stopRealtime()`, `Notify.isRealtime` and `Notify.isPolling`.
