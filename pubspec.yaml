@@ -20,7 +20,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  magic: ^0.0.5
+  # ^0.0.6 is the floor for `Echo.connection`, which the realtime notification
+  # path needs to avoid a second WebSocket on an already-open connection. A 0.0.x
+  # caret pins the patch, so ^0.0.5 resolves exactly 0.0.5 and that release has
+  # no public connection accessor.
+  magic: ^0.0.6
   fluttersdk_artisan: ^0.0.8
   onesignal_flutter: ^5.4.6
 

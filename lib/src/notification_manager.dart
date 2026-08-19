@@ -58,6 +58,17 @@ class NotificationManager {
   /// Notification poller for periodic fetching
   NotificationPoller? _poller;
 
+  /// The private channel notifications are being received on, or null when the
+  /// realtime path is not active.
+  BroadcastChannel? _realtimeChannel;
+
+  /// The channel NAME realtime was started for, retained so a repeat call for the
+  /// same channel is a no-op and a different one moves the subscription.
+  String? _realtimeChannelName;
+
+  /// The connection-state subscription that drives the polling fallback.
+  StreamSubscription<BroadcastConnectionState>? _realtimeConnection;
+
   factory NotificationManager() {
     return _instance;
   }
@@ -384,6 +395,16 @@ class NotificationManager {
   /// Creates and starts a poller if one doesn't exist.
   /// Safe to call multiple times (idempotent).
   void startPolling() {
+    // A live socket already delivers every new notification, so a 30-second HTTP
+    // timer on top of it asks the server for what it has just been told. The
+    // realtime path does its own single initial fetch and its own refetch on
+    // reconnect, so there is nothing left for the timer to cover.
+    //
+    // This is a NO-OP rather than an error: a consumer wires `startPolling()` to
+    // its auth state and should not have to know whether a socket happens to be
+    // up. `stopRealtime()` (or a dropped connection) restores the timer.
+    if (isRealtime) return;
+
     _poller ??= NotificationPoller(this);
     _poller!.start();
   }
@@ -408,5 +429,179 @@ class NotificationManager {
   /// Call when app comes to foreground.
   void resumePolling() {
     _poller?.resume();
+  }
+
+  /// Whether the periodic poller is currently armed and fetching.
+  bool get isPolling => _poller?.isActive ?? false;
+
+  // ========================================
+  // Realtime Notification Methods
+  // ========================================
+
+  /// The wire event name a new notification arrives as.
+  ///
+  /// The server side is a notification declaring `broadcastAs()`. Laravel's own
+  /// default is the fully-qualified `Illuminate\Notifications\Events\BroadcastNotificationCreated`,
+  /// which works but reads badly in a Dart listener and ties the client to a
+  /// framework internal, so the contract is this short name.
+  static const String realtimeEvent = 'notification.created';
+
+  /// Whether notification state is currently arriving over a socket.
+  bool get isRealtime => _realtimeChannel != null;
+
+  /// Receives notification state from a broadcast channel instead of polling for
+  /// it.
+  ///
+  /// [channel] is the private channel the backend publishes the notifiable's rows
+  /// on, `App.Models.User.{id}` for a Laravel `Notifiable` that has not overridden
+  /// `receivesBroadcastNotificationsOn()`. The name has to come from the caller:
+  /// this package has no user model and cannot know whose notifications these are.
+  ///
+  /// Returns false, changing nothing, when the app has no broadcast driver
+  /// configured. That is the case a `null` [BROADCAST_CONNECTION] deployment is
+  /// in, and reporting success there would stop the poller and leave the bell
+  /// permanently empty, which is strictly worse than polling.
+  ///
+  /// On success it:
+  ///
+  ///  1. connects only if no connection exists. `connect()` is not idempotent in
+  ///     magic's Reverb driver (it assigns a fresh channel without closing the
+  ///     previous one), so a second call opens a second WebSocket and leaks the
+  ///     first;
+  ///  2. subscribes and listens for [realtimeEvent] exactly once. A second
+  ///     `listen()` for one event REPLACES the earlier handler rather than adding
+  ///     to it, so registering anywhere else would silently drop this one;
+  ///  3. stops the poller, because the socket now covers it;
+  ///  4. fetches the existing list ONCE. A socket carries only what happens next,
+  ///     so the rows that already exist have to be read;
+  ///  5. watches the connection so a drop falls back to polling and a reconnect
+  ///     lifts the fallback and closes the replay gap.
+  ///
+  /// Idempotent per channel and safe to call on every auth-state change: the same
+  /// channel is a no-op, a different one moves the subscription.
+  Future<bool> startRealtime({
+    String? channel,
+    String event = realtimeEvent,
+  }) async {
+    if (channel == null || channel.isEmpty) return false;
+    if (!_broadcastingEnabled()) return false;
+    if (_realtimeChannelName == channel) return true;
+
+    // A move: drop the previous channel before the first await, so a failed
+    // connect leaves a clean unsubscribed state the next call retries rather than
+    // a marker pointing at a channel nothing is listening on.
+    if (_realtimeChannel != null) stopRealtime();
+
+    try {
+      if (!Echo.connection.isConnected) {
+        await Echo.connect();
+      }
+      final BroadcastChannel subscribed = Echo.private(channel);
+      subscribed.listen(event, _applyRealtimeFrame);
+      _realtimeChannel = subscribed;
+      _realtimeChannelName = channel;
+      _watchRealtimeConnection();
+    } catch (e) {
+      _safeLogError('Failed to start realtime notifications: $e');
+      stopRealtime();
+
+      return false;
+    }
+
+    stopPolling();
+    await fetchNotifications();
+
+    return true;
+  }
+
+  /// Stops receiving notification state over a socket.
+  ///
+  /// Leaves the channel and drops the connection watcher, but does NOT touch the
+  /// connection itself: it is shared with whatever else the app subscribes to.
+  /// Polling is not restarted here either, because only the caller knows whether
+  /// the user is still authenticated; a subsequent [startPolling] arms it.
+  void stopRealtime() {
+    final BroadcastChannel? channel = _realtimeChannel;
+    if (channel != null) {
+      Echo.leave(channel.name);
+    }
+    _realtimeChannel = null;
+    _realtimeChannelName = null;
+    _realtimeConnection?.cancel();
+    _realtimeConnection = null;
+  }
+
+  /// True when the app has a broadcast driver that can actually deliver a frame.
+  ///
+  /// Reads the configured driver rather than trying to subscribe and seeing what
+  /// happens: the null driver accepts a subscription and silently delivers
+  /// nothing, so an attempt-based probe would report success on the one
+  /// configuration that cannot work.
+  bool _broadcastingEnabled() {
+    final String? driver = Config.get<String>('broadcasting.default');
+
+    return driver != null && driver.isNotEmpty && driver != 'null';
+  }
+
+  /// Falls back to polling while the socket is away, and lifts the fallback with
+  /// a refetch when it returns.
+  ///
+  /// Only `connectionState` is watched, not `onReconnect` as well: a reconnect
+  /// necessarily transitions the state to `connected`, so listening to both would
+  /// fetch the same list twice for one event.
+  void _watchRealtimeConnection() {
+    _realtimeConnection?.cancel();
+    _realtimeConnection = Echo.connectionState.listen((
+      BroadcastConnectionState state,
+    ) {
+      if (state == BroadcastConnectionState.connected) {
+        // The socket is back. Reverb has no replay, so anything published while
+        // it was down is gone from the stream and only a fetch recovers it.
+        _poller?.stop();
+        _poller = null;
+        fetchNotifications();
+
+        return;
+      }
+
+      // Anything else (reconnecting, disconnected) means frames are not arriving.
+      // The subscription stays: realtime is still the intent, polling is the
+      // stand-in. Without it a socket that never comes back is a bell that never
+      // updates again.
+      _poller ??= NotificationPoller(this);
+      _poller!.start();
+    });
+  }
+
+  /// Applies one `notification.created` frame to the cached list and the stream.
+  ///
+  /// The frame carries the whole row in the same shape `GET /notifications`
+  /// returns, so it is decoded and applied rather than used as a signal to fetch:
+  /// asking the API for a row that just arrived in full is the round trip this
+  /// path exists to remove.
+  ///
+  /// Newest first, and keyed by id: a redelivery (a socket retry, or the same
+  /// notification broadcast twice) replaces the held row instead of appending a
+  /// duplicate the bell would count twice.
+  ///
+  /// A payload the decoder cannot read is logged and dropped. It must not throw
+  /// into the driver's listener, and it must not clear what is already held: a
+  /// backend one version ahead is a reason to miss one row, not to empty the
+  /// list.
+  void _applyRealtimeFrame(BroadcastEvent event) {
+    try {
+      final DatabaseNotification incoming = DatabaseNotification.fromMap(
+        event.data,
+      );
+      _notifications = <DatabaseNotification>[
+        incoming,
+        ..._notifications.where(
+          (DatabaseNotification n) => n.id != incoming.id,
+        ),
+      ];
+      _notificationController.add(_notifications);
+    } catch (e) {
+      _safeLogError('Failed to decode a realtime notification: $e');
+    }
   }
 }

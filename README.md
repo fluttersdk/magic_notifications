@@ -48,6 +48,7 @@ Managing notifications in Flutter means juggling multiple channels — database 
 | :bell: | **Multi-channel** | Database, Push, and Mail channels through one API |
 | :iphone: | **OneSignal Push** | iOS, Android, and Web push via `onesignal_flutter` |
 | :arrows_counterclockwise: | **Real-time Polling** | Background polling with pause/resume/stop lifecycle |
+| :satellite: | **Socket Delivery** | Take notification state from a broadcast channel instead, with polling as the fallback |
 | :dart: | **User Preferences** | Global and per-type channel preference management |
 | :hammer_and_wrench: | **CLI Tools** | Interactive install, configure, doctor, test, and more |
 | :gear: | **Config-Driven** | All settings in one Dart config file via `ConfigRepository` |
@@ -134,6 +135,10 @@ import 'package:magic_notifications/magic_notifications.dart';
 Future<void> onLoginSuccess(User user) async {
   await Notify.requestPushPermission();
   await Notify.initializePush('user_${user.id}');
+
+  // Prefer the socket; startPolling() is the fallback and no-ops when the
+  // socket is live, so both calls are safe in either order.
+  await Notify.startRealtime(channel: 'App.Models.User.${user.id}');
   Notify.startPolling();
 }
 ```
@@ -155,10 +160,38 @@ NotificationDropdownWithStream(
 
 ```dart
 Future<void> onLogout() async {
+  Notify.stopRealtime();
   Notify.stopPolling();
   await Notify.logoutPush();
 }
 ```
+
+### Receive Notifications Over a Socket
+
+`Notify.startRealtime()` subscribes to the notifiable's private broadcast channel
+and applies each `notification.created` frame directly to the stream, so a new
+notification appears when the server publishes it instead of up to one polling
+interval later. It returns `false` and changes nothing when the app has no
+broadcast driver configured, which is what keeps `startPolling()` meaningful on a
+deployment without a socket.
+
+```dart
+final bool live = await Notify.startRealtime(
+  channel: 'App.Models.User.${user.id}',
+);
+```
+
+Behaviour worth knowing:
+
+- The existing list is fetched ONCE on start. A socket only carries what happens
+  next, so the rows that already exist still have to be read.
+- A dropped connection falls back to polling; a reconnect drops the fallback and
+  refetches once, because Reverb has no replay.
+- A redelivered id replaces the held row rather than appending a duplicate.
+
+The server half (the `broadcast` channel on the notification, the event name, and
+the payload shape) is in
+[doc/basics/laravel-backend-setup.md](doc/basics/laravel-backend-setup.md).
 
 ---
 

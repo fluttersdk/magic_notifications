@@ -10,6 +10,7 @@
 - <a name="toc-api-controllers"></a>[API Controllers](#api-controllers)
 - <a name="toc-api-routes"></a>[API Routes](#api-routes)
 - <a name="toc-onesignal-push"></a>[OneSignal Push Integration](#onesignal-push)
+- <a name="toc-broadcast"></a>[Socket Delivery (Broadcast)](#broadcast)
 - <a name="toc-sending"></a>[Sending Notifications](#sending)
 - <a name="toc-api-contract"></a>[API Contract Reference](#api-contract)
 - <a name="toc-testing"></a>[Testing](#testing)
@@ -455,6 +456,104 @@ public function routeNotificationForOneSignal(): array
 
 > [!TIP]
 > The `user_` prefix is required to avoid OneSignal's blocked external_id values. Both Flutter and Laravel must use the same format: `user_{id}`.
+
+---
+
+## <a name="broadcast"></a>Socket Delivery (Broadcast)
+
+The client can take notification state off a socket instead of polling for it
+(`Notify.startRealtime`). That needs three things on this side: the `broadcast`
+channel on the notification, a payload the client's decoder can read, and channel
+authorisation.
+
+### 1. Add the channel and shape the frame
+
+```php
+use Illuminate\Notifications\Messages\BroadcastMessage;
+
+class MonitorDownNotification extends Notification
+{
+    public function via(object $notifiable): array
+    {
+        // Alongside `database`, never instead of it: the socket is delivery, the
+        // row is the record. A client that was offline reads the row over the API.
+        return ['database', 'broadcast'];
+    }
+
+    /**
+     * The wire event name.
+     *
+     * Laravel's default is the fully-qualified
+     * `Illuminate\Notifications\Events\BroadcastNotificationCreated`. Magic's
+     * Reverb channel matches a listener by EXACT string, so the client would have
+     * to hardcode a framework internal; this short name is the contract instead.
+     */
+    public function broadcastAs(): string
+    {
+        return 'notification.created';
+    }
+
+    /**
+     * The payload, in the SAME shape `GET /notifications` returns a row.
+     *
+     * This matters more than it looks. Laravel's default broadcast payload
+     * FLATTENS the notification data to the top level and adds `id` and `type`,
+     * while `DatabaseNotification.fromMap` on the client reads `data.title`,
+     * `data.body` and `data.action_url` from a NESTED `data` key, so the default
+     * decodes to nothing useful. Building the frame from `toArray()` keeps one
+     * serializer behind both the API and the socket, so the two cannot drift.
+     */
+    public function toBroadcast(object $notifiable): BroadcastMessage
+    {
+        return new BroadcastMessage([
+            'id' => $this->id,
+            'type' => static::class,
+            'data' => $this->toArray($notifiable),
+            'created_at' => now()->toIso8601String(),
+            'read_at' => null,
+        ]);
+    }
+}
+```
+
+### 2. Authorise the channel
+
+The default channel for a `Notifiable` is its class name with dots plus its key,
+so `App\Models\User` id `42` publishes on `App.Models.User.42`. Authorise it in
+`routes/channels.php`, scoped to the one user:
+
+```php
+use App\Models\User;
+use Illuminate\Support\Facades\Broadcast;
+
+Broadcast::channel('App.Models.User.{userId}', function (User $user, string $userId): bool {
+    // A notification is personal. Comparing as strings keeps a UUID key working.
+    return (string) $user->id === (string) $userId;
+}, ['guards' => ['sanctum']]);
+```
+
+The `guards` option matters for an API client: the channel-auth request arrives
+with a bearer token, not a session cookie, so the default `web` guard would deny
+every subscription.
+
+Override `receivesBroadcastNotificationsOn()` on the notifiable if you want a
+different name; the client is told the channel by its caller, so any name works as
+long as both sides agree.
+
+### 3. Point the client at it
+
+```dart
+await Notify.startRealtime(channel: 'App.Models.User.${user.id}');
+```
+
+Nothing else changes. `Notify.startPolling()` stays wired to auth state and
+becomes a no-op while the socket is live, so a deployment with
+`BROADCAST_CONNECTION=null` keeps polling and needs no client change at all.
+
+> **The row is still the record.** Keep `database` in `via()`. The socket delivers
+> to whoever is connected; a client that was closed when the notification fired
+> learns about it from the API on its next start, which is the fetch
+> `startRealtime()` does once.
 
 ---
 

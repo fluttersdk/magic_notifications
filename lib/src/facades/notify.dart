@@ -185,4 +185,47 @@ class Notify {
   static void resumePolling() {
     manager.resumePolling();
   }
+
+  /// Whether the periodic poller is currently armed.
+  static bool get isPolling => manager.isPolling;
+
+  // ========================================
+  // Realtime
+  // ========================================
+
+  /// Receive notification state over the app's broadcast socket instead of
+  /// polling for it.
+  ///
+  /// [channel] is the private channel the backend publishes the user's rows on,
+  /// `App.Models.User.{id}` by Laravel's default. Wire it to auth state next to
+  /// [startPolling], which becomes a no-op while this is live:
+  ///
+  /// ```dart
+  /// if (Auth.check()) {
+  ///   await Notify.startRealtime(channel: 'App.Models.User.' + User.current.id);
+  ///   Notify.startPolling(); // the fallback, if there is no socket
+  /// } else {
+  ///   Notify.stopRealtime();
+  ///   Notify.stopPolling();
+  /// }
+  /// ```
+  ///
+  /// Returns false when the app has no broadcast driver configured, so the caller
+  /// above keeps polling. See [NotificationManager.startRealtime].
+  static Future<bool> startRealtime({
+    String? channel,
+    String event = NotificationManager.realtimeEvent,
+  }) {
+    return manager.startRealtime(channel: channel, event: event);
+  }
+
+  /// Stop receiving notification state over the socket.
+  ///
+  /// Call on logout, next to [stopPolling].
+  static void stopRealtime() {
+    manager.stopRealtime();
+  }
+
+  /// Whether notification state is currently arriving over a socket.
+  static bool get isRealtime => manager.isRealtime;
 }
