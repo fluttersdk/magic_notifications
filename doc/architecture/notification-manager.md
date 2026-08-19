@@ -7,6 +7,7 @@
 - <a name="toc-push-driver"></a>[Push Driver Setup](#push-driver)
 - <a name="toc-send-flow"></a>[Send Dispatch Flow](#send-flow)
 - <a name="toc-polling"></a>[Polling Orchestration](#polling)
+- <a name="toc-realtime"></a>[Realtime Delivery](#realtime)
 - <a name="toc-streams"></a>[Stream Management](#streams)
 - <a name="toc-optimistic"></a>[Optimistic Updates with Rollback](#optimistic)
 
@@ -171,6 +172,89 @@ void resumePolling() {
 final poller = NotificationPoller(manager, interval: Duration(seconds: 60));
 poller.start();
 ```
+
+---
+
+## <a name="realtime"></a>Realtime Delivery
+
+Polling is the fallback, not the only path. When the app has a broadcast driver,
+the manager can take notification state off the socket instead:
+
+```dart
+final bool live = await Notify.startRealtime(
+  channel: 'App.Models.User.$userId',
+);
+```
+
+`startRealtime()` does five things in order, and each one answers a specific
+failure:
+
+1. **Refuses when there is no driver.** It reads `broadcasting.default` and
+   returns `false` for `null`, empty, or the literal `'null'` driver. It does NOT
+   try to subscribe and see what happens: the null driver accepts a subscription
+   and silently delivers nothing, so an attempt-based probe would report success
+   on the one configuration that cannot work, silence the poller, and leave the
+   bell permanently empty.
+2. **Connects only if nothing is connected.** `Echo.connect()` is not idempotent
+   in magic's Reverb driver: it assigns a fresh channel without closing the
+   previous one, so a redundant call opens a second WebSocket and leaks the first.
+   This is why `magic ^0.0.6` is the floor; `Echo.connection` is the accessor that
+   makes the check possible.
+3. **Listens for `notification.created` exactly once.** A second `listen()` for
+   one event name REPLACES the earlier handler rather than adding to it, so
+   registering the same event anywhere else would silently drop this one.
+4. **Stops the poller.** The socket now covers it.
+5. **Fetches the existing list once.** A socket carries only what happens next.
+
+### The frame is the state
+
+A `notification.created` frame carries the whole row in the same shape
+`GET /notifications` returns, so it is decoded and applied rather than treated as
+a signal to fetch:
+
+```dart
+void _applyRealtimeFrame(BroadcastEvent event) {
+  final incoming = DatabaseNotification.fromMap(event.data);
+  _notifications = [
+    incoming,
+    ..._notifications.where((n) => n.id != incoming.id),
+  ];
+  _notificationController.add(_notifications);
+}
+```
+
+Newest first, keyed by id, so a redelivery replaces the held row instead of
+appending a duplicate the bell would count twice. A payload the decoder cannot
+read is logged and dropped: it must not throw into the driver's listener, and it
+must not clear what is already held, because a backend one version ahead is a
+reason to miss one row and not to empty the list.
+
+### Both directions of degradation
+
+`connectionState` is watched (and `onReconnect` deliberately is not, since a
+reconnect necessarily transitions the state to `connected` and listening to both
+would fetch the same list twice for one event):
+
+| Transition | What happens |
+|------------|--------------|
+| anything but `connected` | the poller is armed as a stand-in; the subscription stays, because realtime is still the intent |
+| `connected` | the poller is dropped and the list is refetched once, because Reverb has no replay |
+
+Without the first row, a socket that never comes back is a bell that never
+updates again.
+
+### Lifecycle hooks
+
+| App Event | Call |
+|-----------|------|
+| User logged in | `Notify.startRealtime(channel: ...)` then `Notify.startPolling()` |
+| User switched account | `Notify.startRealtime(channel: ...)` with the new channel |
+| User logged out | `Notify.stopRealtime()` then `Notify.stopPolling()` |
+
+Both calls on the login row are safe in either order and are idempotent per
+channel, so wiring them to an auth-state listener that fires on every login,
+logout and restore is the intended shape. `startPolling()` is a no-op while
+realtime is live, so a consumer never has to branch on whether a socket is up.
 
 ---
 

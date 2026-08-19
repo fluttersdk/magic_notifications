@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added
+- **Notification state can arrive over a socket instead of being polled for.** `Notify.startRealtime(channel: ...)` subscribes to the notifiable's private broadcast channel and applies each `notification.created` frame straight to the stream, so a new notification shows up when the server sends it rather than up to 30 seconds later. The frame carries the whole row in the same shape `GET /notifications` returns, so no HTTP follows it.
+- `Notify.stopRealtime()`, `Notify.isRealtime` and `Notify.isPolling`.
+
+### Changed
+- **`startPolling()` is a no-op while realtime is live.** A consumer keeps wiring it to auth state and does not have to know whether a socket happens to be up: with one, the 30-second timer is waste on top of a connection that already delivers every row; without one, nothing changes. `stopRealtime()` or a dropped connection restores the timer.
+- **`magic` constraint bumped to `^0.0.6`.** `Echo.connection` (the public driver accessor) is the floor for the realtime path: without it there is no way to tell an already-open connection from a closed one, and magic's Reverb driver opens a SECOND WebSocket on a redundant `connect()` instead of refusing it. A `0.0.z` caret pins the patch digit, so `^0.0.5` resolved exactly 0.0.5, which has no such accessor.
+
+### Fixed
+- **A socket frame that arrived while `fetchNotifications()` was in flight was clobbered by the read.** The frame prepended to the cached list and the server's list was then assigned over the top, so the notification vanished until something fetched again. The window is small and entirely real, because `startRealtime()` subscribes and THEN fetches, which is the exact moment a backlog is most likely to be publishing. Frames received during a read are now merged back on top, keyed by id.
+- **`startRealtime()`'s idempotence key now includes the event name.** Keyed on the channel alone, a caller that changed the event for the same channel hit the early return, so the manager silently kept handling the old event name and delivered nothing, with no error.
+
+### Notes
+- Realtime is opt-in and degrades in both directions. `startRealtime()` returns `false` and changes nothing when no broadcast driver is configured (a `BROADCAST_CONNECTION=null` deployment), and a socket that drops falls back to polling until it returns, at which point the fallback is dropped and the list is refetched once to cover what Reverb cannot replay.
+- The channel name is the caller's to supply (`App.Models.User.{id}` by Laravel's default): this package has no user model and cannot know whose notifications it is receiving. See `doc/basics/laravel-backend-setup.md` for the server half.
+
 ## [0.0.2] - 2026-07-26
 
 ### Changed
