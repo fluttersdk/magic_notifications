@@ -69,6 +69,18 @@ class NotificationManager {
   /// The connection-state subscription that drives the polling fallback.
   StreamSubscription<BroadcastConnectionState>? _realtimeConnection;
 
+  /// The event name realtime was started for, part of the idempotence key so a
+  /// caller that changes the event for the same channel is not silently ignored.
+  String? _realtimeEventName;
+
+  /// Whether a [fetchNotifications] read is currently in flight.
+  bool _fetching = false;
+
+  /// Frames that arrived while a read was in flight, merged back on top of the
+  /// fetched list so the read cannot clobber them.
+  final List<DatabaseNotification> _framesDuringFetch =
+      <DatabaseNotification>[];
+
   factory NotificationManager() {
     return _instance;
   }
@@ -140,6 +152,8 @@ class NotificationManager {
   ///
   /// Updates the notification stream with fresh data from the API.
   Future<void> fetchNotifications() async {
+    _fetching = true;
+
     try {
       final response = await Http.get('/notifications');
 
@@ -147,16 +161,58 @@ class NotificationManager {
         final data = response.data;
         final List<dynamic> items = data['data'] ?? [];
 
-        _notifications = items.map((item) {
-          return DatabaseNotification.fromMap(item as Map<String, dynamic>);
-        }).toList();
+        _notifications = _withFramesReceivedDuringFetch(
+          items.map((item) {
+            return DatabaseNotification.fromMap(item as Map<String, dynamic>);
+          }).toList(),
+        );
 
         _notificationController.add(_notifications);
       }
     } catch (e) {
       _safeLogError('Failed to fetch notifications: $e');
       // Don't throw - just keep current state
+    } finally {
+      // Always cleared, including on a failed read: a frame received during the
+      // window was applied to `_notifications` as it arrived, so it is already
+      // held and must not be re-merged into the NEXT fetch as well.
+      _fetching = false;
+      _framesDuringFetch.clear();
     }
+  }
+
+  /// The fetched list with every frame received DURING the read merged back on
+  /// top, newest first and keyed by id.
+  ///
+  /// Without this the read clobbers a frame that landed mid-flight: the frame
+  /// prepends to the cached list, then the server's list is assigned over the top
+  /// and the notification is gone until something fetches again. The window is
+  /// small and entirely real, because [startRealtime] subscribes and THEN fetches,
+  /// which is the exact moment a backlog is most likely to be publishing.
+  ///
+  /// Merged in reverse arrival order, so successive prepends leave the newest
+  /// frame at the head.
+  List<DatabaseNotification> _withFramesReceivedDuringFetch(
+    List<DatabaseNotification> fetched,
+  ) {
+    List<DatabaseNotification> merged = fetched;
+    for (final DatabaseNotification frame in _framesDuringFetch.reversed) {
+      merged = _prependKeyedById(frame, merged);
+    }
+
+    return merged;
+  }
+
+  /// [incoming] at the head of [into], with any earlier row carrying the same id
+  /// removed, so a redelivery replaces rather than duplicates.
+  List<DatabaseNotification> _prependKeyedById(
+    DatabaseNotification incoming,
+    List<DatabaseNotification> into,
+  ) {
+    return <DatabaseNotification>[
+      incoming,
+      ...into.where((DatabaseNotification n) => n.id != incoming.id),
+    ];
   }
 
   /// Fetch paginated notifications from backend.
@@ -458,7 +514,7 @@ class NotificationManager {
   /// this package has no user model and cannot know whose notifications these are.
   ///
   /// Returns false, changing nothing, when the app has no broadcast driver
-  /// configured. That is the case a `null` [BROADCAST_CONNECTION] deployment is
+  /// configured. That is the case a `null` `BROADCAST_CONNECTION` deployment is
   /// in, and reporting success there would stop the poller and leave the bell
   /// permanently empty, which is strictly worse than polling.
   ///
@@ -485,7 +541,9 @@ class NotificationManager {
   }) async {
     if (channel == null || channel.isEmpty) return false;
     if (!_broadcastingEnabled()) return false;
-    if (_realtimeChannelName == channel) return true;
+    if (_realtimeChannelName == channel && _realtimeEventName == event) {
+      return true;
+    }
 
     // A move: drop the previous channel before the first await, so a failed
     // connect leaves a clean unsubscribed state the next call retries rather than
@@ -500,6 +558,7 @@ class NotificationManager {
       subscribed.listen(event, _applyRealtimeFrame);
       _realtimeChannel = subscribed;
       _realtimeChannelName = channel;
+      _realtimeEventName = event;
       _watchRealtimeConnection();
     } catch (e) {
       _safeLogError('Failed to start realtime notifications: $e');
@@ -527,6 +586,7 @@ class NotificationManager {
     }
     _realtimeChannel = null;
     _realtimeChannelName = null;
+    _realtimeEventName = null;
     _realtimeConnection?.cancel();
     _realtimeConnection = null;
   }
@@ -593,12 +653,12 @@ class NotificationManager {
       final DatabaseNotification incoming = DatabaseNotification.fromMap(
         event.data,
       );
-      _notifications = <DatabaseNotification>[
-        incoming,
-        ..._notifications.where(
-          (DatabaseNotification n) => n.id != incoming.id,
-        ),
-      ];
+      // Applied immediately either way, so the bell shows it without waiting;
+      // the buffer only exists so a read completing after this cannot drop it.
+      if (_fetching) {
+        _framesDuringFetch.add(incoming);
+      }
+      _notifications = _prependKeyedById(incoming, _notifications);
       _notificationController.add(_notifications);
     } catch (e) {
       _safeLogError('Failed to decode a realtime notification: $e');

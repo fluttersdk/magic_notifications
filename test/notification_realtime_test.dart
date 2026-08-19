@@ -128,6 +128,9 @@ void main() {
     manager.stopRealtime();
     manager.stopPolling();
     Config.forget('broadcasting.default');
+    // The recording driver owns a broadcast StreamController per test; leaving it
+    // open leaks a handle into every following test and hangs stricter runners.
+    echo.spy.states.close();
   });
 
   group('NotificationManager realtime', () {
@@ -235,6 +238,76 @@ void main() {
           await manager.notifications().first;
       expect(current, hasLength(1));
       expect(current.single.title, 'Corrected');
+    });
+
+    test('a frame that lands mid-fetch survives the fetch', () async {
+      Http.fake(<String, MagicResponse>{
+        'notifications': Http.response(<String, dynamic>{
+          'data': <dynamic>[row(id: 'old')],
+        }),
+      });
+      await manager.startRealtime(channel: 'App.Models.User.u1');
+      final _RecordingChannel channel =
+          echo.spy.channels['private-App.Models.User.u1']!;
+
+      // `fetchNotifications()` sets its in-flight flag synchronously and then
+      // suspends on the HTTP await, so emitting here lands the frame INSIDE the
+      // window. Unhandled, the read then assigns the server's list over the top
+      // and the notification is gone until something fetches again, which is
+      // exactly the window `startRealtime` opens by subscribing before it fetches.
+      final Future<void> reading = manager.fetchNotifications();
+      channel.emit(
+          'notification.created', row(id: 'fresh', title: 'Mid-flight'));
+      await reading;
+
+      final List<DatabaseNotification> current =
+          await manager.notifications().first;
+      expect(
+        current.map((DatabaseNotification n) => n.id),
+        <String>['fresh', 'old'],
+      );
+      expect(current.first.title, 'Mid-flight');
+    });
+
+    test('a second frame id from the same window is not duplicated', () async {
+      Http.fake(<String, MagicResponse>{
+        'notifications': Http.response(<String, dynamic>{
+          'data': <dynamic>[row(id: 'fresh', title: 'From the API')],
+        }),
+      });
+      await manager.startRealtime(channel: 'App.Models.User.u1');
+      final _RecordingChannel channel =
+          echo.spy.channels['private-App.Models.User.u1']!;
+
+      // The server's list already carries the row the frame announced, which is
+      // the common case once a backlog drains. Merging must not leave two.
+      final Future<void> reading = manager.fetchNotifications();
+      channel.emit(
+          'notification.created', row(id: 'fresh', title: 'From the socket'));
+      await reading;
+
+      final List<DatabaseNotification> current =
+          await manager.notifications().first;
+      expect(current, hasLength(1));
+      expect(current.single.title, 'From the socket');
+    });
+
+    test('changing the event for the same channel re-subscribes', () async {
+      await manager.startRealtime(channel: 'App.Models.User.u1');
+
+      await manager.startRealtime(
+        channel: 'App.Models.User.u1',
+        event: 'notification.pushed',
+      );
+
+      // The event is part of the idempotence key. Keyed on the channel alone, the
+      // early return skipped the re-listen and the manager silently kept handling
+      // the OLD event name, so a caller whose backend renamed it got nothing and
+      // no error.
+      expect(
+        echo.spy.channels['private-App.Models.User.u1']!.handlers.keys,
+        contains('notification.pushed'),
+      );
     });
   });
 
