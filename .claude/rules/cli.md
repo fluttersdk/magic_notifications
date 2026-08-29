@@ -1,5 +1,6 @@
 ---
-path: "{lib/src/cli/**/*.dart}"
+paths:
+  - "lib/src/cli/**/*.dart"
 ---
 
 # CLI Domain
