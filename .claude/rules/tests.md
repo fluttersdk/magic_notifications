@@ -1,5 +1,6 @@
 ---
-path: "test/**/*.dart"
+paths:
+  - "test/**/*.dart"
 ---
 
 # Testing Domain
