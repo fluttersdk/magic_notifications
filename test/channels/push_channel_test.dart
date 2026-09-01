@@ -4,12 +4,24 @@ import 'package:magic_notifications/magic_notifications.dart';
 
 import '../test_helper.dart';
 
+/// The config key gating the client-triggered self-addressed push send.
+const String _switchKey = 'notifications.push.self_test_enabled';
+
 void main() {
   setUpAll(() async {
     await initMagicForTests();
   });
 
   group('PushChannel', () {
+    // Every test below describes the channel of a deployment that has SWITCHED
+    // THE SURFACE ON. The switch ships off, so without this line each of them
+    // would assert against an inert channel and pass for the wrong reason: the
+    // preference test would stop testing preferences, and the recipient test
+    // would stop testing recipients. The off state has its own group.
+    setUp(() {
+      Config.set(_switchKey, true);
+    });
+
     test('name is "push"', () {
       final channel = PushChannel(MockPushDriver());
       expect(channel.name, 'push');
@@ -215,7 +227,105 @@ void main() {
 
       network.assertNothingSent();
     });
+
+    // The endpoint behind this channel makes the platform emit a push on a
+    // client's say-so, and nothing in this release asks it to. It therefore
+    // ships switched off, on both halves: a client that refuses locally still
+    // leaves the endpoint reachable by anything holding a token, and a server
+    // that refuses leaves the client posting requests that always fail.
+    //
+    // Off is a SKIP rather than a throw. An operator who has not switched a
+    // feature on has not made an error, which is the same shape as a disabled
+    // preference; naming a foreign recipient is an error, which is why that one
+    // throws. What must not happen is the third shape: reporting the channel
+    // available and then doing nothing.
+    group('the self-addressed send is switched off', () {
+      test('isAvailable is false while the switch is absent', () {
+        Config.forget(_switchKey);
+
+        final channel = PushChannel(MockPushDriver(supported: true));
+
+        expect(channel.isAvailable, isFalse);
+      });
+
+      test('isAvailable is false while the switch is explicitly false', () {
+        Config.set(_switchKey, false);
+
+        final channel = PushChannel(MockPushDriver(supported: true));
+
+        expect(channel.isAvailable, isFalse);
+      });
+
+      test('send() issues no request while the switch is absent', () async {
+        Config.forget(_switchKey);
+        final FakeNetworkDriver network = Http.fake();
+
+        final channel = PushChannel(MockPushDriver());
+
+        await expectLater(
+          channel.send(TestNotifiable('1'), _pushNotification()),
+          completes,
+        );
+        network.assertNothingSent();
+      });
+
+      test('send() issues no request while the switch is explicitly false',
+          () async {
+        Config.set(_switchKey, false);
+        final FakeNetworkDriver network = Http.fake();
+
+        final channel = PushChannel(MockPushDriver());
+
+        await channel.send(TestNotifiable('1'), _pushNotification());
+
+        network.assertNothingSent();
+      });
+
+      // A value this channel cannot read as a boolean is a configuration
+      // mistake, and the safe reading of a mistake on a switch that guards an
+      // outbound send is OFF.
+      test('a non-boolean switch value reads as off', () async {
+        Config.set(_switchKey, 'true');
+        final FakeNetworkDriver network = Http.fake();
+
+        final channel = PushChannel(MockPushDriver(supported: true));
+
+        expect(channel.isAvailable, isFalse);
+
+        await channel.send(TestNotifiable('1'), _pushNotification());
+
+        network.assertNothingSent();
+      });
+
+      // The switch is read FIRST, ahead of the recipient guard. A channel that
+      // is switched off cannot page anybody, so there is no mis-page to refuse
+      // and nothing to raise about.
+      test('send() skips a foreign notifiable instead of refusing it',
+          () async {
+        Config.set(_switchKey, false);
+        final FakeNetworkDriver network = Http.fake();
+        Auth.fake(user: _makeUser(1));
+        addTearDown(Auth.unfake);
+
+        final channel = PushChannel(MockPushDriver());
+
+        await expectLater(
+          channel.send(TestNotifiable('2'), _pushNotification()),
+          completes,
+        );
+        network.assertNothingSent();
+      });
+    });
   });
+}
+
+/// A notification carrying a push message, the shape every send test needs.
+TestNotification _pushNotification() {
+  return TestNotification(
+    pushMessage: PushMessage()
+      ..heading('Monitor Down')
+      ..content('api.example.com is not responding'),
+  );
 }
 
 /// A user model the fake auth guard can hold.

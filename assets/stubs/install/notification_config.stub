@@ -7,6 +7,24 @@ Map<String, dynamic> get notificationConfig => {
       'service_worker_scope': '{{ serviceWorkerScope }}',
       'app_id': '{{ oneSignalAppId }}',{{ safariWebIdLine }}
       'notify_button_enabled': {{ notifyButtonEnabled }},
+
+      // Whether this app may ask the backend to push to the signed-in
+      // person's OWN devices, so somebody can find out whether push reaches
+      // the phone in their hand before an incident rather than during one.
+      //
+      // OFF, and an absent key is off too. The send makes the platform emit a
+      // real push on a client's say-so, which is a capability worth switching
+      // on deliberately once something in the app actually needs it, not one
+      // worth having live from the day the package is installed. While it is
+      // off, PushChannel reports itself unavailable and sends nothing; a
+      // notification listing 'push' among its channels still reaches the
+      // others.
+      //
+      // TURNING IT ON TAKES BOTH HALVES. The backend carries the same switch
+      // (magic-starter.onesignal.self_test_enabled, also off by default) and
+      // answers 501 while it is off, so setting this alone only changes which
+      // side refuses. Set both, or neither.
+      'self_test_enabled': false,
     },
     'database': {
       'enabled': true,
