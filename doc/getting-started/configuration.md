@@ -31,7 +31,10 @@ Map<String, dynamic> get notificationConfig => {
       'driver': 'onesignal',
       'app_id': const String.fromEnvironment('ONESIGNAL_APP_ID'),
       // 'safari_web_id': 'web.onesignal.auto.xxx',  // web only, optional
+      'service_worker_path': 'OneSignalSDKWorker.js',
+      'service_worker_scope': '/onesignal/',
       'notify_button_enabled': false,
+      'self_test_enabled': false,
     },
     'database': {
       'enabled': true,
@@ -60,10 +63,13 @@ Controls the push notification channel and its driver.
 | `driver` | `String` | `'onesignal'` | Push driver identifier. `'onesignal'` is the only built-in driver. |
 | `app_id` | `String` | `''` | OneSignal App ID (UUID format). Must be non-empty for push to function. |
 | `safari_web_id` | `String?` | `null` | Safari Web Push ID for Safari browser support. Optional — omit for non-Safari targets. |
+| `service_worker_path` | `String?` | `'OneSignalSDKWorker.js'` | Web only. Path to the OneSignal service worker script. A Flutter web build already registers `flutter_service_worker.js` at the root scope, so OneSignal needs its own worker rather than sharing that one. |
+| `service_worker_scope` | `String?` | `'/onesignal/'` | Web only. The scope OneSignal registers its worker under. Whichever of the two registrations lands second wins the root scope, so pointing OneSignal at a scope of its own (rather than `/`) keeps it from silently losing to Flutter's worker. |
 | `notify_button_enabled` | `bool` | `false` | Whether to show the floating OneSignal notification bell widget on web. |
+| `self_test_enabled` | `bool` | `false` | Gates `PushChannel.send()`, the client-triggered surface that asks the backend to push a test notification to the caller's own devices. Ships off: it is a new authenticated capability whose only effect is making the platform emit a real push, and that is worth switching on deliberately once an app actually calls for it, not something worth having live from day one. Turning it on takes both halves: the backend carries the matching `magic-starter.onesignal.self_test_enabled` switch, also off by default, and answers `501` while it is off, so setting only this key changes which side refuses. |
 
 > [!NOTE]
-> `NotificationServiceProvider.boot()` reads `notifications.push.driver` first. If it equals `'onesignal'`, it calls `createOneSignalDriver()` (which returns `OneSignalWebDriver` on web, `OneSignalDriver` on iOS/Android) and initializes it with `app_id`, `safari_web_id`, and `notify_button_enabled`.
+> `NotificationServiceProvider.boot()` reads `notifications.push.driver` first. If it equals `'onesignal'`, it calls `createOneSignalDriver()` (which returns `OneSignalWebDriver` on web, `OneSignalDriver` on iOS/Android) and initializes it with `app_id`, `safari_web_id`, `service_worker_path`, `service_worker_scope`, and `notify_button_enabled`.
 
 > [!TIP]
 > Pass `app_id` via `String.fromEnvironment('ONESIGNAL_APP_ID')` so the value is injected at compile time from your `.env` file, keeping the App ID out of source control.
