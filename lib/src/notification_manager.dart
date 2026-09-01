@@ -63,7 +63,21 @@ class NotificationManager {
   String? _pushIntent;
 
   /// Whether [_pushIntent] has been read back from the vault yet.
+  ///
+  /// Answers "the read FINISHED", which is the only reading its two consumers
+  /// can use: [want] compares against the intent behind it, and
+  /// [_addressedToIntent] opens its escape hatch on it.
   bool _pushIntentLoaded = false;
+
+  /// The vault read currently in flight, or `null` when none is.
+  ///
+  /// The read has to be JOINABLE rather than skippable. A second caller that
+  /// walked past a read which had only STARTED would compare against an intent
+  /// the vault has not answered for yet: a sign-out arriving mid-read reads the
+  /// device as already subscribed to nobody, returns early, and is then
+  /// overtaken by the login the first caller resumes into, which leaves the
+  /// device subscribed as the person who just signed out.
+  Future<void>? _pushIntentLoad;
 
   /// Whether the device is known to carry [_pushIntent].
   bool _pushIdentityConverged = false;
@@ -127,12 +141,24 @@ class NotificationManager {
   final List<DatabaseNotification> _framesDuringFetch =
       <DatabaseNotification>[];
 
-  /// Bumped every time the cached list is dropped for a session that ended.
+  /// Bumped every time the rows held for a session that ended stop being this
+  /// device's rows: a sign-out, and the test-isolation reset.
   ///
   /// A read issued for the previous session answers with the previous person's
   /// rows, and it answers AFTER the clear; without a marker to compare against,
   /// assigning that answer puts their incident titles back on the bell.
   int _session = 0;
+
+  /// The session the realtime subscription was made for, or `null` when there
+  /// is no subscription.
+  ///
+  /// The socket needs its own copy because a frame is applied SYNCHRONOUSLY as
+  /// it arrives, so by then [_session] has already moved and there is nothing
+  /// left to compare it against. Leaving a channel is not instantaneous, and
+  /// the realtime path fires far more often than the fetch path, so a frame
+  /// published just before a sign-out is the likelier of the two to prepend the
+  /// previous person's incident title back onto the bell.
+  int? _realtimeSession;
 
   factory NotificationManager() {
     return _instance;
@@ -188,6 +214,12 @@ class NotificationManager {
   /// intent surviving into the next test would make the device claim a subject
   /// nothing ever gave it. Only the IN-MEMORY intent is dropped; the persisted
   /// one is left alone, because a test seam must not sign a real device out.
+  ///
+  /// Everything still IN FLIGHT is dropped with it. A reconcile pass or a vault
+  /// read left in a field is a future minted by the previous test that the next
+  /// test's caller joins and waits on, and a read left in the air lands on
+  /// whoever comes after it; leaking those through the one seam that exists to
+  /// stop exactly that is the worst place for them to hide.
   void forgetDrivers() {
     _channels.clear();
     _pushFactories.clear();
@@ -196,9 +228,25 @@ class NotificationManager {
     _detachPushDriver();
     _pushIntent = null;
     _pushIntentLoaded = false;
+    _pushIntentLoad = null;
     _pushIdentityConverged = false;
     _pushIdentityError = null;
     _reconciledIntent = null;
+    _reconcileInFlight = null;
+    _dropInFlightReads();
+  }
+
+  /// Drops the state a notification read still in the air owns.
+  ///
+  /// The session bump is what actually stops that read from landing: zeroing
+  /// the depth only stops the NEXT read from inheriting it, while the answer
+  /// itself is still on its way back and would otherwise be assigned to
+  /// whatever is holding the manager by then. The cached list is deliberately
+  /// left alone; this is a reset of the reading machinery, not a sign-out.
+  void _dropInFlightReads() {
+    _session++;
+    _fetchesInFlight = 0;
+    _framesDuringFetch.clear();
   }
 
   // ========================================
@@ -253,8 +301,16 @@ class NotificationManager {
       // fetch as well. Clearing it when the FIRST of two overlapping reads
       // finishes is what loses a frame: the buffer is shared, so the second
       // read then merges nothing and assigns its older snapshot over the top.
+      //
+      // Clamped rather than compared against zero exactly: [forgetDrivers]
+      // drops the depth while a read is still in the air, so that read comes
+      // back and decrements past zero, and a depth left negative would keep
+      // the NEXT read's buffer from ever being cleared.
       _fetchesInFlight--;
-      if (_fetchesInFlight == 0) _framesDuringFetch.clear();
+      if (_fetchesInFlight <= 0) {
+        _fetchesInFlight = 0;
+        _framesDuringFetch.clear();
+      }
     }
   }
 
@@ -816,16 +872,55 @@ class NotificationManager {
   Future<void> loadPushIntent() => _loadPushIntent();
 
   /// Reads the persisted intent once per process.
+  ///
+  /// Single-flight, and a caller arriving while the read is in the air JOINS it
+  /// rather than passing it. Marking the intent loaded on the way IN was the
+  /// same bug in two places: it defeated the load-before-compare in [want], and
+  /// it closed [_addressedToIntent]'s escape hatch for the whole read window,
+  /// which is exactly the window the SDK replays a cold-start tap into.
+  ///
+  /// A read that throws still counts as read and still completes. Leaving the
+  /// flag down there would re-read a vault that is failing on every later call,
+  /// and leave the subject guard un-judging for the rest of the process;
+  /// leaving the future in place would wedge every later caller on something
+  /// nothing completes.
   Future<void> _loadPushIntent() async {
     if (_pushIntentLoaded) return;
-    _pushIntentLoaded = true;
 
-    if (!Magic.bound('vault')) return;
+    final Future<void>? inFlight = _pushIntentLoad;
+    if (inFlight != null) return inFlight;
+
+    // Published before the first await, so a caller arriving in the same turn
+    // of the loop sees it and joins.
+    final Completer<void> read = Completer<void>();
+    _pushIntentLoad = read.future;
+
+    String? persisted;
+    bool answered = false;
 
     try {
-      _pushIntent = _blankToNull(await Vault.get(pushIntentKey));
+      // A build with no `VaultServiceProvider` has nothing to read, which is a
+      // finished read rather than an absent one: the in-memory intent is the
+      // whole truth there, and the guard has to be allowed to compare with it.
+      if (Magic.bound('vault')) {
+        persisted = _blankToNull(await Vault.get(pushIntentKey));
+      }
+      answered = true;
     } catch (e) {
       NotificationLog.error('Failed to read the persisted push intent: $e');
+    } finally {
+      // Written only while this is still the read the manager is waiting on: a
+      // [forgetDrivers] in the window took the handle to it, and an answer for
+      // a state that no longer exists must not land in the one that replaced
+      // it. Both flags are set before the joiners are woken, so none of them
+      // can see a half-finished read and start a second one, and the joiners
+      // are woken either way rather than left on a future nothing completes.
+      if (identical(_pushIntentLoad, read.future)) {
+        if (answered) _pushIntent = persisted;
+        _pushIntentLoaded = true;
+        _pushIntentLoad = null;
+      }
+      read.complete();
     }
   }
 
@@ -1050,6 +1145,13 @@ class NotificationManager {
     if (channel == null || channel.isEmpty) return false;
     if (!_broadcastingEnabled()) return false;
     if (_realtimeChannelName == channel && _realtimeEventName == event) {
+      // The no-op branch still adopts the session now in effect. A caller
+      // re-arming realtime after a sign-out is declaring this channel current
+      // for whoever is signed in now, and a marker left pointing at the ended
+      // session would leave the bell permanently deaf on a channel the manager
+      // believes it is subscribed to.
+      _realtimeSession = _session;
+
       return true;
     }
 
@@ -1067,6 +1169,7 @@ class NotificationManager {
       _realtimeChannel = subscribed;
       _realtimeChannelName = channel;
       _realtimeEventName = event;
+      _realtimeSession = _session;
       _watchRealtimeConnection();
     } catch (e) {
       NotificationLog.error('Failed to start realtime notifications: $e');
@@ -1095,6 +1198,7 @@ class NotificationManager {
     _realtimeChannel = null;
     _realtimeChannelName = null;
     _realtimeEventName = null;
+    _realtimeSession = null;
     _realtimeConnection?.cancel();
     _realtimeConnection = null;
   }
@@ -1156,7 +1260,14 @@ class NotificationManager {
   /// into the driver's listener, and it must not clear what is already held: a
   /// backend one version ahead is a reason to miss one row, not to empty the
   /// list.
+  ///
+  /// A frame for a session that has ended is dropped too, on the same reasoning
+  /// the fetch path already drops a read issued before a sign-out: it is the
+  /// previous person's row, and prepending it publishes their incident title to
+  /// whoever is holding the device now.
   void _applyRealtimeFrame(BroadcastEvent event) {
+    if (_realtimeSession != _session) return;
+
     try {
       final DatabaseNotification incoming = DatabaseNotification.fromMap(
         event.data,

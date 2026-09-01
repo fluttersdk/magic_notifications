@@ -148,6 +148,76 @@ void main() {
 
       expect(await manager.notifications().first, isEmpty);
     });
+
+    test('a read in flight at forgetDrivers cannot land after it', () async {
+      final Future<void> reading = manager.fetchNotifications();
+      await pumpEventQueue();
+
+      // The test-isolation seam runs between two tests with a read still in
+      // the air, which is the one thing it exists to stop: the answer belongs
+      // to whatever the previous test was doing, and it arrives inside the
+      // next one.
+      manager.forgetDrivers();
+
+      network.answer(<Map<String, dynamic>>[_row(id: 'theirs')]);
+      await reading;
+
+      expect(await manager.notifications().first, isEmpty);
+
+      // And the reset left the read path usable: a depth dropped under an
+      // in-flight read must not go negative behind it.
+      final Future<void> next = manager.fetchNotifications();
+      await pumpEventQueue();
+      network.answer(<Map<String, dynamic>>[_row(id: 'mine')]);
+      await next;
+
+      expect(
+        (await manager.notifications().first)
+            .map((DatabaseNotification n) => n.id),
+        <String>['mine'],
+      );
+    });
+
+    test('a frame for a session that ended cannot reach the bell', () async {
+      final _RecordingChannel channel = await startRealtime();
+
+      await manager.logoutPush();
+
+      // Leaving a channel is not instantaneous, so a frame published just
+      // before the sign-out still arrives on this socket. Applied, it prepends
+      // the previous person's incident title back onto the next person's bell
+      // and publishes it, which is the leak the fetch path already refuses.
+      channel.emit(
+        'notification.created',
+        _row(id: 'theirs', title: 'Checkout is down'),
+      );
+      await pumpEventQueue();
+
+      expect(await manager.notifications().first, isEmpty);
+    });
+
+    test('re-subscribing after a sign-out lets frames through again', () async {
+      final _RecordingChannel channel = await startRealtime();
+      await manager.logoutPush();
+
+      // The companion guard for the test above: a repeat call for the same
+      // channel is a no-op, so a session marker it does not adopt would leave
+      // the bell permanently deaf on a channel it believes it is subscribed
+      // to, which is a worse failure than the one being fixed.
+      expect(
+        await manager.startRealtime(channel: 'App.Models.User.u1'),
+        isTrue,
+      );
+
+      channel.emit('notification.created', _row(id: 'mine'));
+      await pumpEventQueue();
+
+      expect(
+        (await manager.notifications().first)
+            .map((DatabaseNotification n) => n.id),
+        <String>['mine'],
+      );
+    });
   });
 
   group('NotificationManager on sign-out', () {

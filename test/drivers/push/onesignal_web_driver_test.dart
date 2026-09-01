@@ -117,7 +117,8 @@ void main() {
       /// A foreground event shaped the way the web SDK reports one.
       ///
       /// The v16 event wraps the notification, and the custom object the server
-      /// sent arrives as its `additionalData`; that is where the subject lives.
+      /// sent arrives as its `additionalData`; that is where the subject and
+      /// the destination a consumer navigates to both live.
       Map<String, dynamic> webEvent(String subject) => <String, dynamic>{
             'notification': <String, dynamic>{
               'notificationId': 'n1',
@@ -125,6 +126,7 @@ void main() {
               'additionalData': <String, dynamic>{
                 'subject': subject,
                 'notification_id': 'row-1',
+                'deep_link': '/incidents/i-1',
               },
             },
           };
@@ -165,10 +167,32 @@ void main() {
         await Future<void>.delayed(Duration.zero);
 
         expect(prevented, isFalse);
-        // The republished payload is the whole event, as it has always been.
-        final notification =
-            received.single.data['notification'] as Map<String, dynamic>;
-        expect(notification['title'], 'API is down');
+        // The republished payload is the server's own map, the same shape the
+        // mobile driver publishes, not the SDK wrapper around it.
+        expect(received.single.data['notification_id'], 'row-1');
+        expect(received.single.data.containsKey('notification'), isFalse);
+
+        await subscription.cancel();
+      });
+
+      test('republishes the payload a consumer reads, not the SDK wrapper',
+          () async {
+        // The assertion that matters is what a CONSUMER receives, not what the
+        // guard reads internally: a subscriber to `Notify.onPushReceived` reads
+        // `event.data['deep_link']` FLAT, which is the shape the mobile driver
+        // publishes. Republishing the wrapper answers null for every one of
+        // those keys on web, and the manager's own subject re-check is vacuous
+        // there for the same reason.
+        final driver = OneSignalWebDriver();
+
+        final received = <PushNotificationEvent>[];
+        final subscription = driver.onNotificationReceived.listen(received.add);
+
+        driver.handleForegroundWillDisplay(webEvent('user_1'), () {});
+        await Future<void>.delayed(Duration.zero);
+
+        expect(received.single.data['deep_link'], '/incidents/i-1');
+        expect(received.single.data['subject'], 'user_1');
 
         await subscription.cancel();
       });
@@ -209,6 +233,7 @@ void main() {
         expect(judged, <String, dynamic>{
           'subject': 'user_2',
           'notification_id': 'row-1',
+          'deep_link': '/incidents/i-1',
         });
       });
 
@@ -244,6 +269,7 @@ void main() {
               'additionalData': <String, dynamic>{
                 'subject': subject,
                 'notification_id': 'row-1',
+                'deep_link': '/incidents/i-1',
               },
             },
           };
@@ -265,8 +291,7 @@ void main() {
         await subscription.cancel();
       });
 
-      test('republishes a clicked push addressed to this device, unchanged',
-          () async {
+      test('republishes a clicked push addressed to this device', () async {
         final driver = OneSignalWebDriver();
         driver.subjectGuard = (data) => data['subject'] == 'user_1';
 
@@ -277,11 +302,31 @@ void main() {
         await Future<void>.delayed(Duration.zero);
 
         expect(clicked, hasLength(1));
-        // The republished payload is the whole event, exactly as a consumer
-        // reading fields off the wrapper has always seen it.
-        final notification =
-            clicked.single.data['notification'] as Map<String, dynamic>;
-        expect(notification['title'], 'API is down');
+        // The republished payload is the server's own map: one shape on both
+        // platforms, which is what every consumer and the manager's subject
+        // re-check on this stream already expect.
+        expect(clicked.single.data['notification_id'], 'row-1');
+        expect(clicked.single.data.containsKey('notification'), isFalse);
+
+        await subscription.cancel();
+      });
+
+      test('republishes the payload the tap navigates from, not the wrapper',
+          () async {
+        // The one that was actually broken in production: the app's tap
+        // handler reads `event.data['deep_link']` off this stream, finds
+        // nothing on the wrapper, logs "names no in-app destination" and
+        // returns, so tap-to-navigate is dead on the browser.
+        final driver = OneSignalWebDriver();
+
+        final clicked = <PushNotificationEvent>[];
+        final subscription = driver.onNotificationClicked.listen(clicked.add);
+
+        driver.handleNotificationClicked(webEvent('user_1'));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(clicked.single.data['deep_link'], '/incidents/i-1');
+        expect(clicked.single.data['subject'], 'user_1');
 
         await subscription.cancel();
       });
@@ -315,6 +360,7 @@ void main() {
         expect(judged, <String, dynamic>{
           'subject': 'user_2',
           'notification_id': 'row-1',
+          'deep_link': '/incidents/i-1',
         });
       });
     });

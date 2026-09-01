@@ -219,13 +219,17 @@ class OneSignalWebDriver extends PushDriver {
   /// somebody who signed out is the leak, not the republish. See the class
   /// docblock for the half this cannot close.
   ///
-  /// An accepted push republishes the whole [event], as it always has; only the
-  /// judgement reads the nested payload.
+  /// An accepted push republishes the server's own payload, the map [_payloadOf]
+  /// reads out of the event, which is the map the mobile driver publishes:
+  /// `PushNotificationEvent.data` carries the same shape on both platforms, on
+  /// this stream and on the click one.
   void handleForegroundWillDisplay(
     Map<String, dynamic> event,
     void Function() preventDisplay,
   ) {
-    if (!mayDisplay(_payloadOf(event))) {
+    final Map<String, dynamic> payload = _payloadOf(event);
+
+    if (!mayDisplay(payload)) {
       preventDisplay();
 
       return;
@@ -233,7 +237,7 @@ class OneSignalWebDriver extends PushDriver {
 
     if (_receivedController.isClosed) return;
 
-    _receivedController.add(PushNotificationEvent(event));
+    _receivedController.add(PushNotificationEvent(payload));
   }
 
   /// Decides whether a tapped push notification is republished to the app.
@@ -246,23 +250,31 @@ class OneSignalWebDriver extends PushDriver {
   /// payload; [handleForegroundWillDisplay] applies the identical shape to
   /// the display path.
   ///
-  /// An accepted [event] republishes unchanged, whole, exactly as it always
-  /// has: only the judgement reads the nested payload, so a consumer already
-  /// reading fields off the wrapper keeps seeing the same shape.
+  /// An accepted [event] republishes the server's payload, not the SDK wrapper
+  /// around it, so `PushNotificationEvent.data` is the same shape here as on
+  /// mobile: the keys the server sent, flat. A consumer navigates off exactly
+  /// those keys (`data['deep_link']`), and handing it the wrapper answers null
+  /// for every one of them, which is a tap that silently goes nowhere.
   void handleNotificationClicked(Map<String, dynamic> event) {
-    if (!mayDisplay(_payloadOf(event))) return;
+    final Map<String, dynamic> payload = _payloadOf(event);
+
+    if (!mayDisplay(payload)) return;
 
     if (_clickedController.isClosed) return;
 
-    _clickedController.add(PushNotificationEvent(event));
+    _clickedController.add(PushNotificationEvent(payload));
   }
 
-  /// Reads the custom payload the SDK nests inside a foreground event.
+  /// Reads the custom payload the SDK nests inside a web event.
   ///
   /// The web event wraps the notification, and the object the server sent
   /// arrives as its `additionalData`, which is exactly the map the mobile
-  /// driver is handed. Reading it here is what lets the one guard on the
-  /// manager judge both platforms; the comparison itself is not made here.
+  /// driver is handed. It is what the manager's one guard judges AND what both
+  /// streams republish, because those two have to be the same map: a guard
+  /// reading the payload while the stream carried the wrapper made the
+  /// manager's own subject re-check on the click stream vacuous on web, and
+  /// left every consumer reading the server's keys off an object that does not
+  /// have them.
   ///
   /// An event nesting nothing answers empty, which is un-judgeable rather than
   /// addressed to nobody, and the guard passes it.

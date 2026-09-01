@@ -32,6 +32,12 @@ class _RecordingPushDriver extends PushDriver {
   /// mutates its local user: immediately, before any server round trip.
   String? _externalId;
 
+  /// Who this device is subscribed as right now.
+  ///
+  /// The outcome an identity race is judged on: a call list says which calls
+  /// were made, this says which person the device was left carrying.
+  String? get subscribedAs => _externalId;
+
   /// When set, the NEXT [currentExternalId] parks on it after reading the
   /// device, so a test can hold one reconcile pass open across the platform
   /// channel and drive a second caller into the window.
@@ -134,6 +140,30 @@ class _RecordingPushDriver extends PushDriver {
     received.close();
     clicked.close();
     identity.close();
+  }
+}
+
+/// A vault whose reads finish when the TEST says so.
+///
+/// The shipped [FakeVaultService] answers within a microtask, which cannot
+/// express a second caller arriving while the first one's read is still
+/// suspended. That interleaving is the whole defect these tests cover, so the
+/// read has to be holdable.
+class _GatedVaultService extends FakeVaultService {
+  _GatedVaultService([super.initialValues]);
+
+  /// When set, the NEXT [get] parks on it before answering.
+  Completer<void>? readGate;
+
+  @override
+  Future<String?> get(String key) async {
+    final Completer<void>? gate = readGate;
+    if (gate != null) {
+      readGate = null;
+      await gate.future;
+    }
+
+    return super.get(key);
   }
 }
 
@@ -361,6 +391,112 @@ void main() {
       expect(manager.pushIntent, isNull);
     });
 
+    test('a sign-out racing the first vault read is not overtaken by it',
+        () async {
+      final _GatedVaultService vault = _GatedVaultService(<String, String>{
+        NotificationManager.pushIntentKey: 'user_A',
+      });
+      Magic.app.setInstance('vault', vault);
+      addTearDown(Vault.unfake);
+
+      // The device came up still carrying the person the vault remembers.
+      final _RecordingPushDriver driver = use(
+        _RecordingPushDriver(subscribedAs: 'user_A'),
+      );
+
+      final Completer<void> read = Completer<void>();
+      vault.readGate = read;
+      addTearDown(() {
+        if (!read.isCompleted) read.complete();
+      });
+
+      // The restore path asks for the person it just re-authenticated ...
+      final Future<void> restoring = manager.initializePushWithUserId('user_A');
+      await pumpEventQueue();
+
+      // ... and the sign-out arrives while that vault read is still suspended.
+      final Future<void> signingOut = manager.logoutPush();
+      await pumpEventQueue();
+
+      read.complete();
+      await Future.wait(<Future<void>>[restoring, signingOut]);
+
+      // What is at stake is not a flag, it is which external id this device is
+      // left subscribed as. A second caller waved past a load that has only
+      // STARTED compares against an intent nothing has read, signs the device
+      // out, and is then overtaken by the first caller's login.
+      expect(
+        driver.subscribedAs,
+        isNull,
+        reason:
+            'the device must not stay subscribed as somebody who signed out',
+      );
+      expect(manager.pushIntent, isNull);
+    });
+
+    test('a pass in flight at forgetDrivers is not joined by the next one',
+        () async {
+      final FakeVaultService vault = Vault.fake(<String, String>{
+        NotificationManager.pushIntentKey: 'user_A',
+      });
+      addTearDown(Vault.unfake);
+
+      final _RecordingPushDriver stale = use(_RecordingPushDriver());
+      await manager.want('user_A');
+
+      final Completer<void> gate = Completer<void>();
+      stale.readGate = gate;
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete();
+      });
+      final Future<void> parked = manager.reconcilePushIdentity();
+      await pumpEventQueue();
+
+      manager.forgetDrivers();
+
+      // The seam deliberately leaves the PERSISTED intent alone: a test helper
+      // that signed a real device out would be worse than the leak it fixes.
+      vault.assertContains(NotificationManager.pushIntentKey);
+
+      final _RecordingPushDriver fresh = use(_RecordingPushDriver());
+      await manager.want('user_B');
+      final Future<void> next = manager.reconcilePushIdentity();
+      await pumpEventQueue();
+
+      // Held in a field the reset never cleared, the parked pass is still what
+      // a joiner awaits, so this one does nothing at all until a test that is
+      // already over releases it.
+      expect(fresh.identityCalls, <String>['login:user_B']);
+
+      gate.complete();
+      await Future.wait(<Future<void>>[parked, next]);
+    });
+
+    test('a vault read in flight at forgetDrivers lands nowhere', () async {
+      final _GatedVaultService vault = _GatedVaultService(<String, String>{
+        NotificationManager.pushIntentKey: 'user_A',
+      });
+      Magic.app.setInstance('vault', vault);
+      addTearDown(Vault.unfake);
+
+      final Completer<void> read = Completer<void>();
+      vault.readGate = read;
+      final Future<void> loading = manager.loadPushIntent();
+      await pumpEventQueue();
+
+      manager.forgetDrivers();
+
+      // The read was issued for a manager state the seam has since replaced,
+      // so its answer belongs to nobody: assigning it would hand the next test
+      // an intent nothing there ever asked for, which is the leak the seam
+      // exists to close.
+      read.complete();
+      await loading;
+
+      expect(manager.pushIntent, isNull);
+      vault.assertContains(NotificationManager.pushIntentKey);
+    });
+
     test('a reconcile with no driver at all is quiet', () async {
       await manager.want('user_A');
 
@@ -449,6 +585,55 @@ void main() {
         delivered.map((Map<String, dynamic> d) => d['incident_id']),
         <String>['i-1'],
       );
+    });
+
+    test('a push arriving while the vault read is still open is delivered',
+        () async {
+      final _GatedVaultService vault = _GatedVaultService(<String, String>{
+        NotificationManager.pushIntentKey: 'user_A',
+      });
+      Magic.app.setInstance('vault', vault);
+      addTearDown(Vault.unfake);
+
+      final _RecordingPushDriver driver = use(
+        _RecordingPushDriver(subscribedAs: 'user_A'),
+      );
+      expect(manager.pushDriverOrNull, isNotNull);
+
+      final List<Map<String, dynamic>> delivered = <Map<String, dynamic>>[];
+      final StreamSubscription<PushNotificationEvent> subscription =
+          manager.onPushReceived.listen(
+        (PushNotificationEvent event) => delivered.add(event.data),
+      );
+      addTearDown(subscription.cancel);
+
+      final Completer<void> read = Completer<void>();
+      vault.readGate = read;
+      addTearDown(() {
+        if (!read.isCompleted) read.complete();
+      });
+      final Future<void> loading = manager.loadPushIntent();
+      await pumpEventQueue();
+
+      // The read has STARTED and has not answered yet, which is precisely the
+      // window the SDK replays a cold-start tap into. Counting a read that
+      // started as one that finished closes the escape hatch there and drops a
+      // real page in silence.
+      driver.received.add(
+        const PushNotificationEvent(<String, dynamic>{
+          'subject': 'user_A',
+          'incident_id': 'i-1',
+        }),
+      );
+      await pumpEventQueue();
+
+      expect(
+        delivered.map((Map<String, dynamic> d) => d['incident_id']),
+        <String>['i-1'],
+      );
+
+      read.complete();
+      await loading;
     });
 
     test('drops a CLICK addressed to somebody else', () async {
