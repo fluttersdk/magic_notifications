@@ -32,6 +32,11 @@ class _RecordingPushDriver extends PushDriver {
   /// mutates its local user: immediately, before any server round trip.
   String? _externalId;
 
+  /// When set, the NEXT [currentExternalId] parks on it after reading the
+  /// device, so a test can hold one reconcile pass open across the platform
+  /// channel and drive a second caller into the window.
+  Completer<void>? readGate;
+
   final StreamController<PushNotificationEvent> received =
       StreamController<PushNotificationEvent>.broadcast();
   final StreamController<PushNotificationEvent> clicked =
@@ -80,7 +85,17 @@ class _RecordingPushDriver extends PushDriver {
     calls.add('currentExternalId');
     if (failRead) throw StateError('the SDK is not initialized');
 
-    return _externalId;
+    // The answer is what the device reported when it was ASKED, so a held read
+    // reports the pre-call state the way a slow platform channel does.
+    final String? reported = _externalId;
+
+    final Completer<void>? gate = readGate;
+    if (gate != null) {
+      readGate = null;
+      await gate.future;
+    }
+
+    return reported;
   }
 
   @override
@@ -273,6 +288,79 @@ void main() {
       expect(manager.pushIdentityError, isNotNull);
     });
 
+    test('two overlapping reconciles issue one login, not two', () async {
+      final _RecordingPushDriver driver = use(_RecordingPushDriver());
+      await manager.want('user_A');
+
+      final Completer<void> gate = Completer<void>();
+      driver.readGate = gate;
+
+      // The consumer fires this unawaited from two paths that overlap on a
+      // restore-then-bump, so both passes read `actual != intent` and both call
+      // login: the exact double-call the SDK's own single-flight patch exists to
+      // survive, re-created one layer above it.
+      final Future<void> first = manager.reconcilePushIdentity();
+      await pumpEventQueue();
+      final Future<void> second = manager.reconcilePushIdentity();
+      await pumpEventQueue();
+
+      gate.complete();
+      await Future.wait(<Future<void>>[first, second]);
+
+      expect(driver.identityCalls, <String>['login:user_A']);
+      expect(manager.isPushIdentityConverged, isTrue);
+    });
+
+    test('an intent that moved under an in-flight pass gets its own pass',
+        () async {
+      final _RecordingPushDriver driver = use(_RecordingPushDriver());
+      await manager.want('user_A');
+
+      final Completer<void> gate = Completer<void>();
+      driver.readGate = gate;
+
+      final Future<void> first = manager.reconcilePushIdentity();
+      await pumpEventQueue();
+
+      // The person on the device changed while the first pass was parked, so
+      // joining it and returning would leave this device subscribed as somebody
+      // who is no longer signed in. Single-flight is not "drop the second call".
+      await manager.want('user_B');
+      final Future<void> second = manager.reconcilePushIdentity();
+      await pumpEventQueue();
+
+      gate.complete();
+      await Future.wait(<Future<void>>[first, second]);
+
+      expect(driver.identityCalls, contains('login:user_B'));
+      expect(manager.pushIntent, 'user_B');
+      expect(manager.isPushIdentityConverged, isTrue);
+    });
+
+    test('a sign-out clears an intent this process never read', () async {
+      final FakeVaultService vault = Vault.fake();
+      addTearDown(Vault.unfake);
+      await Vault.put(NotificationManager.pushIntentKey, 'user_A');
+
+      // A cold boot: the vault holds the previous person, memory holds nobody,
+      // so the equality check inside `want` matches null against null.
+      manager.forgetDrivers();
+
+      await manager.logoutPush();
+
+      // Left behind, the stale id is read back on the next boot and LOGGED IN
+      // on a signed-out device, which is the wrong-recipient page this whole
+      // design exists to prevent.
+      vault.assertMissing(NotificationManager.pushIntentKey);
+
+      manager.forgetDrivers();
+      final _RecordingPushDriver driver = use(_RecordingPushDriver());
+      await manager.reconcilePushIdentity();
+
+      expect(driver.identityCalls, isEmpty);
+      expect(manager.pushIntent, isNull);
+    });
+
     test('a reconcile with no driver at all is quiet', () async {
       await manager.want('user_A');
 
@@ -329,6 +417,40 @@ void main() {
           <String>['i-2', 'i-3']);
     });
 
+    test('an intent nobody has read yet is not evidence of misaddressing',
+        () async {
+      final _RecordingPushDriver driver = use(
+        _RecordingPushDriver(subscribedAs: 'user_A'),
+      );
+      // Resolving a driver ATTACHES these listeners, and that happens before
+      // anything reads the persisted intent. A cold start from a notification
+      // tap replays into exactly this window.
+      expect(manager.pushDriverOrNull, isNotNull);
+
+      final List<Map<String, dynamic>> delivered = <Map<String, dynamic>>[];
+      final StreamSubscription<PushNotificationEvent> subscription =
+          manager.onPushReceived.listen(
+        (PushNotificationEvent event) => delivered.add(event.data),
+      );
+      addTearDown(subscription.cancel);
+
+      driver.received.add(
+        const PushNotificationEvent(<String, dynamic>{
+          'subject': 'user_A',
+          'incident_id': 'i-1',
+        }),
+      );
+      await pumpEventQueue();
+
+      // An UNREAD intent says nothing about who this device is subscribed as,
+      // which is the same reasoning that already delivers a payload carrying no
+      // subject at all. Dropping here loses a real page.
+      expect(
+        delivered.map((Map<String, dynamic> d) => d['incident_id']),
+        <String>['i-1'],
+      );
+    });
+
     test('drops a CLICK addressed to somebody else', () async {
       final _RecordingPushDriver driver = use(
         _RecordingPushDriver(subscribedAs: 'user_B'),
@@ -383,6 +505,35 @@ void main() {
       Notify.extend(driver.name, () => driver);
       addTearDown(Notify.forgetDrivers);
 
+      expect(identical(manager.pushDriver, driver), isTrue);
+    });
+
+    test('a configured driver name is never served by a different one', () {
+      Config.set('notifications.push.driver', 'onesignal');
+      addTearDown(() => Config.forget('notifications.push.driver'));
+
+      final _RecordingPushDriver driver = _RecordingPushDriver();
+      addTearDown(driver.dispose);
+      Notify.extend('fcm', () => driver);
+      addTearDown(Notify.forgetDrivers);
+
+      // Serving the only registered factory regardless of the name the config
+      // asked for hands the app a driver nobody selected, and it silences the
+      // provider's unservable-value error too: that check consults
+      // `pushDriverOrNull` first and reads a served value as "somebody supplied
+      // their own driver".
+      expect(manager.pushDriverOrNull, isNull);
+    });
+
+    test('the single-factory fallback still serves an ABSENT config value', () {
+      final _RecordingPushDriver driver = _RecordingPushDriver();
+      addTearDown(driver.dispose);
+      Notify.extend('fcm', () => driver);
+      addTearDown(Notify.forgetDrivers);
+
+      // The other half of the pair above. Without a configured name there is no
+      // instruction to contradict, and this is the path a test (or an app that
+      // registers exactly one driver in code) reaches the registry through.
       expect(identical(manager.pushDriver, driver), isTrue);
     });
 

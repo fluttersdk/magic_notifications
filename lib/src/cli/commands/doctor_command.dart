@@ -11,6 +11,12 @@ import 'package:magic_notifications/src/cli/cli.dart';
 ///
 /// Exits with code 0 when all checks pass, code 1 when any check fails.
 ///
+/// A third answer sits between those two: a WARNING, for a setting that is
+/// configured correctly and not provisioned yet (see [getWarnings]). It does
+/// not fail the command, because working before provisioning is a normal state
+/// and a doctor that always fails gets ignored, but it never prints a tick and
+/// it keeps the summary from claiming every requirement is met.
+///
 /// ## Usage
 /// ```bash
 /// dart run <app>:artisan notifications:doctor
@@ -25,6 +31,14 @@ class DoctorCommand extends ArtisanCommand {
 
   /// Build setting through which Xcode learns the entitlements file exists.
   static const String _entitlementsSetting = 'CODE_SIGN_ENTITLEMENTS';
+
+  /// The env file a project keeps its per-deployment values in.
+  ///
+  /// The doctor runs from a shell that is not the app's runtime, so it can
+  /// never read the environment a build will see. This file it CAN read, and
+  /// it is the one a Flutter app bundles as an asset, which is the whole
+  /// reason "configured but not provisioned" is a checkable state at all.
+  static const String envFileName = '.env';
 
   /// Matches an `app_id` whose value is a quoted string LITERAL.
   static final RegExp _literalAppId = RegExp(r"'app_id':\s*'([^']*)'");
@@ -67,13 +81,25 @@ class DoctorCommand extends ArtisanCommand {
     // 1. Collect missing requirements before printing — we need both for output.
     final verbose = ctx.input.option('verbose') as bool;
     final missing = getMissingRequirements();
+    final warnings = getWarnings();
 
     // 2. Print human-readable report.
     ctx.output.writeln(generateReport(verbose: verbose));
 
     // 3. Exit with appropriate code.
-    if (missing.isEmpty) {
+    if (missing.isEmpty && warnings.isEmpty) {
       ctx.output.success('All checks passed!');
+      ctx.output.writeln('');
+      return 0;
+    }
+
+    // A warning alone exits 0: a developer working before provisioning is a
+    // normal state, and a doctor that fails on it stops being read. What it
+    // must not do is claim everything passed.
+    if (missing.isEmpty) {
+      ctx.output.warning(
+        'Nothing failed, but push cannot send yet: see the warnings above.',
+      );
       ctx.output.writeln('');
       return 0;
     } else {
@@ -200,6 +226,92 @@ class DoctorCommand extends ArtisanCommand {
     }
 
     return _envResolvedAppId.firstMatch(content)?.group(1);
+  }
+
+  /// Whether the project has an env file at all.
+  bool hasEnvFile() => FileHelper.fileExists('$projectRoot/$envFileName');
+
+  /// The value [key] carries in the project's env file, or `null` when the file
+  /// is absent, the key is missing from it, or the key carries nothing.
+  ///
+  /// A blank value reads as absent deliberately: `ONESIGNAL_APP_ID=` is a key
+  /// nobody provisioned, and it initialises the SDK with an empty App ID just
+  /// as surely as a missing line does.
+  String? envFileValue(String key) {
+    final envPath = '$projectRoot/$envFileName';
+
+    if (!FileHelper.fileExists(envPath)) {
+      return null;
+    }
+
+    for (final rawLine in FileHelper.readFile(envPath).split('\n')) {
+      final line = rawLine.trim();
+      if (line.isEmpty || line.startsWith('#')) continue;
+
+      final separator = line.indexOf('=');
+      if (separator == -1) continue;
+
+      final name = line
+          .substring(0, separator)
+          .trim()
+          .replaceFirst(RegExp(r'^export\s+'), '');
+      if (name != key) continue;
+
+      final value = _unquoted(line.substring(separator + 1).trim());
+
+      return value.isEmpty ? null : value;
+    }
+
+    return null;
+  }
+
+  /// [value] with one layer of matching surrounding quotes removed.
+  String _unquoted(String value) {
+    if (value.length < 2) return value;
+
+    final quote = value[0];
+    if (quote != "'" && quote != '"') return value;
+    if (!value.endsWith(quote)) return value;
+
+    return value.substring(1, value.length - 1);
+  }
+
+  /// Everything that is configured correctly and still cannot work yet.
+  ///
+  /// Separate from [getMissingRequirements] because the two earn different
+  /// answers: a requirement is missing and the command fails, a warning is a
+  /// value nobody has provisioned yet and the command still exits 0. What a
+  /// warning must never do is print as a tick, which is how an env-resolved App
+  /// ID with a blank `.env` entry once certified a build that could not send a
+  /// single push.
+  List<String> getWarnings() {
+    final warnings = <String>[];
+
+    if (!checkConfigExists()) {
+      return warnings;
+    }
+
+    // A literal App ID is validated by [validateConfig] and has no env half.
+    final envKey = envResolvedAppIdKey();
+    if (envKey == null) {
+      return warnings;
+    }
+
+    if (envFileValue(envKey) != null) {
+      return warnings;
+    }
+
+    warnings.add(
+      hasEnvFile()
+          ? 'App ID is read from the $envKey environment variable, and '
+              '$envFileName carries no value for it, so push initialises with '
+              'an empty App ID'
+          : 'App ID is read from the $envKey environment variable, and there '
+              'is no $envFileName at the project root to confirm it is '
+              'provisioned',
+    );
+
+    return warnings;
   }
 
   /// Validate that [appId] matches the OneSignal UUID format (8-4-4-4-12 hex).
@@ -445,21 +557,28 @@ class DoctorCommand extends ArtisanCommand {
     if (!configExists) {
       buffer.writeln('  ✗ Skipped — config file missing');
     } else {
-      // An env-resolved App ID is configured, but only the environment knows
-      // its value, so name the key the deployment has to carry.
+      // An env-resolved App ID is configured, but only the runtime environment
+      // knows its value. The tick is earned by the env FILE carrying one; when
+      // it does not, [getWarnings] says so below and no tick is printed.
       final envKey = envResolvedAppIdKey();
-      if (envKey != null) {
+      if (envKey != null && envFileValue(envKey) != null) {
         buffer.writeln(
           '  ✓ App ID is resolved at runtime from the $envKey '
-          'environment variable',
+          'environment variable, which $envFileName carries a value for',
         );
       }
+
       final configIssues = validateConfig();
-      if (configIssues.isEmpty) {
+      final configWarnings = getWarnings();
+
+      if (configIssues.isEmpty && configWarnings.isEmpty) {
         buffer.writeln('  ✓ All config checks passed');
       } else {
         for (final issue in configIssues) {
           buffer.writeln('  ✗ $issue');
+        }
+        for (final warning in configWarnings) {
+          buffer.writeln('  ⚠ $warning');
         }
       }
     }
@@ -518,14 +637,26 @@ class DoctorCommand extends ArtisanCommand {
 
     buffer.writeln();
 
-    // 5. Summary.
+    // 5. Summary. A warning is not a failure, but it is also not a met
+    //    requirement, so it withholds the claim rather than the exit code.
     final missing = getMissingRequirements();
-    if (missing.isEmpty) {
+    final warnings = getWarnings();
+
+    if (missing.isEmpty && warnings.isEmpty) {
       buffer.writeln('✓ All requirements met!');
-    } else {
+    }
+
+    if (missing.isNotEmpty) {
       buffer.writeln('Missing Requirements:');
       for (final issue in missing) {
         buffer.writeln('  ✗ $issue');
+      }
+    }
+
+    if (warnings.isNotEmpty) {
+      buffer.writeln('Warnings:');
+      for (final warning in warnings) {
+        buffer.writeln('  ⚠ $warning');
       }
     }
 

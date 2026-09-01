@@ -12,6 +12,18 @@ import '../exceptions/notification_exception.dart';
 /// - Driver is available/supported
 /// - Notification defines toPush() message
 /// - User preferences allow push notifications
+///
+/// ## This channel is SELF-ADDRESSED
+///
+/// It POSTs to an endpoint that derives the recipient from the authenticated
+/// session, and the request carries no recipient field: a client-triggered send
+/// that could choose its target is a harassment vector, and that omission is
+/// what makes exposing this at all safe. So the only person this channel can
+/// page is the authenticated one.
+///
+/// The [Notifiable] in [send] therefore selects the preference matrix and the
+/// message, never the recipient. A notifiable that is not the authenticated
+/// user is refused; it cannot quietly become the caller.
 class PushChannel extends NotificationChannel {
   final PushDriver _driver;
 
@@ -26,6 +38,13 @@ class PushChannel extends NotificationChannel {
 
   @override
   Future<void> send(Notifiable notifiable, Notification notification) async {
+    // Refused rather than skipped, and refused first. Skipping is what a
+    // preference does, and it reads as "delivered elsewhere"; a caller that
+    // named a specific person has to hear that this did not reach them, or the
+    // only signal left is the caller's own device buzzing for somebody else's
+    // outage.
+    _refuseForeignRecipient(notifiable);
+
     // Get push message from notification
     final pushMessage = notification.toPush(notifiable);
     if (pushMessage == null) {
@@ -63,5 +82,27 @@ class PushChannel extends NotificationChannel {
         code: 'HTTP_${response.statusCode}',
       );
     }
+  }
+
+  /// Throws when [notifiable] is somebody other than the authenticated user.
+  ///
+  /// A build with no auth bound, and a session with nobody signed in, are both
+  /// un-answerable here rather than mismatches: there is no caller identity to
+  /// compare against, and the endpoint rejects the request on its own.
+  void _refuseForeignRecipient(Notifiable notifiable) {
+    if (!Magic.bound('auth')) return;
+
+    final Object? authenticated = Auth.id();
+    if (authenticated == null) return;
+    if (authenticated.toString() == notifiable.notifiableId) return;
+
+    throw NotificationException(
+      'The push channel can only reach the authenticated user: the endpoint '
+      'derives the recipient from the session, so a notification addressed to '
+      '"${notifiable.notifiableId}" would have paged "$authenticated" '
+      'instead. Send it through a channel that carries a recipient, or have '
+      'the backend send this push.',
+      code: 'PUSH_RECIPIENT_NOT_AUTHENTICATED_USER',
+    );
   }
 }

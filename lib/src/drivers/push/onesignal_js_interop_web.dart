@@ -467,8 +467,18 @@ void addNotificationClickListener(
 }
 
 /// Adds a listener for foreground notification display events.
+///
+/// The callback is handed the event's data AND a way to suppress the event it
+/// describes, because the data alone cannot suppress anything: the SDK's own
+/// `preventDefault` lives on the JS event, which stops existing the moment the
+/// event is converted to a Dart map. Whether to call it is the driver's
+/// decision, so the mechanism is all this offers.
+///
+/// The SDK reads the flag as soon as the listener returns, so [callback] must
+/// call `preventDisplay` synchronously; nothing later has any effect.
 void addNotificationForegroundListener(
-  void Function(Map<String, dynamic> event) callback,
+  void Function(Map<String, dynamic> event, void Function() preventDisplay)
+      callback,
 ) {
   try {
     final oneSignal = globalContext['OneSignal'] as JSObject?;
@@ -476,7 +486,10 @@ void addNotificationForegroundListener(
       final notifications = oneSignal['Notifications'] as JSObject?;
       if (notifications != null) {
         void jsCallback(JSObject event) {
-          callback(_jsObjectToMap(event));
+          callback(
+            _jsObjectToMap(event),
+            () => event.callMethod('preventDefault'.toJS),
+          );
         }
 
         notifications.callMethod(

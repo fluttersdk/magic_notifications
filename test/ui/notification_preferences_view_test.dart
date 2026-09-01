@@ -273,6 +273,75 @@ void main() {
     );
   });
 
+  testWidgets('the last channel row of a card carries no bottom border', (
+    tester,
+  ) async {
+    fakeMatrix(pushProvisioned: true);
+
+    await tester
+        .pumpWidget(wrap(Notify.view.make('notifications.preferences')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final List<WDiv> rows = tester
+        .widgetList<WDiv>(find.byType(WDiv))
+        .where((div) => div.className?.contains('px-6 py-4') ?? false)
+        .toList();
+
+    expect(rows, hasLength(2));
+
+    // Wind implements no structural pseudo-variants, so `last:` is read as a
+    // state name nothing activates: the class never fires, and because
+    // `border-b-0` is itself a recognised token no debug hint appears either.
+    // The card is `rounded-2xl overflow-hidden`, so the border the variant was
+    // meant to remove runs into the clipped corner.
+    for (final row in rows) {
+      expect(row.className, isNot(contains('last:')));
+    }
+
+    expect(rows.first.className, contains('border-b'));
+    expect(rows.last.className, isNot(contains('border-b')));
+  });
+
+  testWidgets('an enabled and a disabled channel chip resolve to one className',
+      (tester) async {
+    fakeMatrix(pushProvisioned: true);
+
+    await tester
+        .pumpWidget(wrap(Notify.view.make('notifications.preferences')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // The fixture ships mail enabled and push disabled, so the two chips
+    // differ in exactly the state this assertion is about.
+    final List<WDiv> chips = tester
+        .widgetList<WDiv>(find.byType(WDiv))
+        .where((div) => div.className?.contains('w-10 h-10') ?? false)
+        .toList();
+
+    expect(chips, hasLength(2));
+    expect(chips.first.className, chips.last.className);
+    expect(
+      chips.where((chip) => chip.states?.contains('enabled') ?? false),
+      hasLength(1),
+    );
+
+    // One className plus a state is only a fix if the state actually fires: a
+    // mistyped state name would satisfy every assertion above and paint both
+    // chips alike. Mail is enabled in the fixture and push is not, so their
+    // glyphs must still differ exactly as they did when the tint was
+    // interpolated into the string.
+    final Icon enabledGlyph = tester.widget<Icon>(
+      find.byIcon(Icons.mail_outline),
+    );
+    final Icon disabledGlyph = tester.widget<Icon>(
+      find.byIcon(Icons.notifications_outlined),
+    );
+
+    expect(enabledGlyph.color, isNotNull);
+    expect(enabledGlyph.color, isNot(disabledGlyph.color));
+  });
+
   testWidgets('a host override wins over the backend-reported flag', (
     tester,
   ) async {

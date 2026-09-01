@@ -3,15 +3,17 @@ import 'package:flutter/widgets.dart';
 import 'package:magic/magic.dart';
 
 import '../../facades/notify.dart';
+import '../../http/notifications_list_controller.dart';
 import '../../models/database_notification.dart';
-import '../../models/paginated_notifications.dart';
 
 /// The full notification list screen.
 ///
-/// Server-side paginated, with mark-as-read, mark-all-as-read, delete and
-/// tap-through to a notification's action URL. Registered as
-/// `notifications.list`, so a host replaces or wraps it through `Notify.view`.
-class NotificationsListView extends StatefulWidget {
+/// Server-side paginated through [NotificationsListController], with
+/// mark-as-read, mark-all-as-read, delete and tap-through to a notification's
+/// action URL. Registered as `notifications.list`, so a host replaces or wraps
+/// it through `Notify.view`.
+class NotificationsListView
+    extends MagicStatefulView<NotificationsListController> {
   /// Marks one notification read, or `null` to go through [Notify] directly.
   final Future<void> Function(String id)? onMarkAsRead;
 
@@ -41,7 +43,8 @@ class NotificationsListView extends StatefulWidget {
   State<NotificationsListView> createState() => _NotificationsListViewState();
 }
 
-class _NotificationsListViewState extends State<NotificationsListView> {
+class _NotificationsListViewState extends MagicStatefulViewState<
+    NotificationsListController, NotificationsListView> {
   /// The card shell every section renders in.
   ///
   /// Full-bleed (`overflow-hidden`, no body padding) because the rows span edge
@@ -55,48 +58,26 @@ class _NotificationsListViewState extends State<NotificationsListView> {
   static const IconData _defaultNotificationIcon =
       Icons.notifications_none_outlined;
 
-  PaginatedNotifications? _paginatedData;
-  bool _isLoading = true;
-  bool _hasError = false;
-  int _currentPage = 1;
-
   @override
   void initState() {
+    // Put the controller before `MagicStatefulViewState.initState` resolves it
+    // with `Magic.find`, which throws when nothing has put it. Doing it here
+    // rather than at the mount point keeps the view mountable from anywhere:
+    // the registry default, a host route, a test.
+    NotificationsListController.instance;
+
     super.initState();
-    _loadPage(1);
   }
 
-  Future<void> _loadPage(int page) async {
-    if (!mounted) return;
+  @override
+  void onInit() {
+    super.onInit();
 
-    setState(() {
-      _isLoading = true;
-      _hasError = false;
-    });
-
-    try {
-      final result = await Notify.fetchPaginatedNotifications(
-        page: page,
-        perPage: widget.perPage,
-      );
-
-      if (!mounted) return;
-
-      setState(() {
-        _paginatedData = result;
-        _currentPage = page;
-        _isLoading = false;
-      });
-    } catch (e, stackTrace) {
-      Log.error('[NotificationsListView._loadPage] $e\n$stackTrace');
-
-      if (!mounted) return;
-
-      setState(() {
-        _hasError = true;
-        _isLoading = false;
-      });
-    }
+    controller.perPage = widget.perPage;
+    // Re-read the page the controller is on rather than page 1: the singleton
+    // survives a remount, so a host shell rebuilding this screen puts the user
+    // back where they were instead of at the top of the list.
+    controller.refresh();
   }
 
   String _formatTime(DateTime dateTime) {
@@ -122,9 +103,20 @@ class _NotificationsListViewState extends State<NotificationsListView> {
 
   @override
   Widget build(BuildContext context) {
-    final notifications = _paginatedData?.data ?? [];
+    // The rows are published on their own notifier (the mixin's state is
+    // cleared by `setLoading()`), so the page rebuild has to listen to both:
+    // the state mixin through `MagicStatefulViewState`, the rows through here.
+    return ListenableBuilder(
+      listenable: controller.pageNotifier,
+      builder: (context, _) => _buildPage(context),
+    );
+  }
+
+  Widget _buildPage(BuildContext context) {
+    final page = controller.pageNotifier.value;
+    final notifications = page?.data ?? const <DatabaseNotification>[];
     final hasUnread = notifications.any((n) => !n.isRead);
-    final totalPages = _paginatedData?.lastPage ?? 1;
+    final totalPages = page?.lastPage ?? 1;
 
     final headerSlot = Notify.view.buildSlot(
       'notifications.list',
@@ -198,7 +190,7 @@ class _NotificationsListViewState extends State<NotificationsListView> {
               } else {
                 await Notify.markAllAsRead();
               }
-              _loadPage(_currentPage);
+              controller.refresh();
             },
             className: 'px-4 py-2 rounded-lg bg-primary hover:bg-primary/80 '
                 'text-white font-medium text-sm',
@@ -216,7 +208,7 @@ class _NotificationsListViewState extends State<NotificationsListView> {
     List<DatabaseNotification> notifications,
     int totalPages,
   ) {
-    if (_isLoading && notifications.isEmpty) {
+    if (controller.isLoading && notifications.isEmpty) {
       return const WDiv(
         className: 'w-full bg-surface-container border border-color-border '
             'rounded-2xl p-6 flex items-center justify-center',
@@ -224,15 +216,19 @@ class _NotificationsListViewState extends State<NotificationsListView> {
       );
     }
 
-    if (_hasError) {
-      return _buildEmptyState(
+    // Before the rows, and before the empty state: a read that failed leaves
+    // whatever it had last on the notifier, and showing that (or, worse, the
+    // "nothing here yet" copy) tells an on-call engineer they have no alerts
+    // when what happened is that nobody could be asked.
+    if (controller.isError) {
+      return _buildPlaceholder(
         icon: Icons.error_outline,
         message: trans('notifications.load_failed'),
       );
     }
 
     if (notifications.isEmpty) {
-      return _buildEmptyState(
+      return _buildPlaceholder(
         icon: Icons.notifications_off_outlined,
         message: trans('notifications.empty'),
       );
@@ -255,7 +251,13 @@ class _NotificationsListViewState extends State<NotificationsListView> {
     );
   }
 
-  Widget _buildEmptyState({required IconData icon, required String message}) {
+  /// The centred icon-plus-message card both the empty state and the failure
+  /// state render in.
+  ///
+  /// Named for the shape rather than for "empty": the failure path renders it
+  /// too, and calling that one an empty state is how the two got told as one
+  /// answer in the first place.
+  Widget _buildPlaceholder({required IconData icon, required String message}) {
     return WDiv(
       className: 'w-full bg-surface-container border border-color-border '
           'rounded-2xl p-6 flex flex-col gap-4',
@@ -300,7 +302,7 @@ class _NotificationsListViewState extends State<NotificationsListView> {
             MagicRoute.to(actionUrl);
           }
         } else {
-          _loadPage(_currentPage);
+          controller.refresh();
         }
       },
       child: WDiv(
@@ -316,11 +318,15 @@ class _NotificationsListViewState extends State<NotificationsListView> {
             child: WDiv(
               className: 'flex flex-col min-w-0',
               children: [
+                // One className with a state prefix rather than a ternary, for
+                // the reason the dropdown's row carries: an interpolated or
+                // branched className is a second parser cache key per row, so a
+                // page of twenty notifications parses two strings where it has
+                // one shape.
                 WText(
                   notification.title,
-                  className: notification.isRead
-                      ? 'text-sm text-fg'
-                      : 'text-sm text-fg font-semibold',
+                  states: {if (!notification.isRead) 'unread'},
+                  className: 'text-sm text-fg unread:font-semibold',
                 ),
                 const WSpacer(className: 'h-0.5'),
                 WText(notification.body, className: 'text-sm text-fg-muted'),
@@ -341,7 +347,7 @@ class _NotificationsListViewState extends State<NotificationsListView> {
             WAnchor(
               onTap: () async {
                 await widget.onDelete?.call(notification.id);
-                _loadPage(_currentPage);
+                controller.refresh();
               },
               child: WDiv(
                 className:
@@ -358,28 +364,32 @@ class _NotificationsListViewState extends State<NotificationsListView> {
   }
 
   Widget _buildPagination(int totalPages) {
+    final int currentPage = controller.currentPage;
+
     return WDiv(
       className: 'w-full flex flex-row items-center justify-center gap-2 mt-4',
       children: [
         WButton(
-          onTap: _currentPage > 1 ? () => _loadPage(_currentPage - 1) : null,
-          disabled: _currentPage <= 1,
+          onTap: currentPage > 1
+              ? () => controller.loadPage(currentPage - 1)
+              : null,
+          disabled: currentPage <= 1,
           className: 'px-3 py-2 rounded-lg bg-surface-container-high '
               'border border-color-border disabled:opacity-50',
           child: WIcon(Icons.chevron_left, className: 'text-fg-muted'),
         ),
         WText(
           trans('common.page_of', {
-            'current': _currentPage,
+            'current': currentPage,
             'total': totalPages,
           }),
           className: 'text-sm font-medium text-fg',
         ),
         WButton(
-          onTap: _currentPage < totalPages
-              ? () => _loadPage(_currentPage + 1)
+          onTap: currentPage < totalPages
+              ? () => controller.loadPage(currentPage + 1)
               : null,
-          disabled: _currentPage >= totalPages,
+          disabled: currentPage >= totalPages,
           className: 'px-3 py-2 rounded-lg bg-surface-container-high '
               'border border-color-border disabled:opacity-50',
           child: WIcon(Icons.chevron_right, className: 'text-fg-muted'),

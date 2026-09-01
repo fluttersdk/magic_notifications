@@ -40,6 +40,26 @@ abstract class PushDriver {
   /// The driver name (e.g., 'onesignal', 'fcm').
   String get name;
 
+  /// Answers whether a push payload is addressed to the identity this device is
+  /// currently subscribed as.
+  ///
+  /// Installed by the manager when it attaches a driver, so the subject
+  /// comparison keeps exactly one implementation and stays where the push
+  /// intent lives. A driver never matches subjects itself.
+  ///
+  /// `null` means nothing is judging, and [mayDisplay] then answers yes: a
+  /// driver used without the manager must not go silent.
+  bool Function(Map<String, dynamic> data)? subjectGuard;
+
+  /// Whether the platform may DRAW [data] as a notification.
+  ///
+  /// The one place the "un-judged means display" default lives, so no driver
+  /// can get it backwards. A driver that can suppress a notification before the
+  /// OS draws it (a foreground-display hook) asks this first; one that cannot
+  /// has nothing to ask.
+  bool mayDisplay(Map<String, dynamic> data) =>
+      subjectGuard?.call(data) ?? true;
+
   /// Whether push notifications are supported on this platform.
   bool get isSupported;
 

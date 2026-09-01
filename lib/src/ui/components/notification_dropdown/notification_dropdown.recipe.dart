@@ -42,15 +42,26 @@ const String kNotificationDropdownTriggerIconClassName =
 /// (`min-w-[14px]` plus `px-1`), so the pill grows sideways for a second digit
 /// but never grows taller. That asymmetry is what
 /// [kNotificationDropdownBadgeMaxTextScaleFactor] exists to protect.
+///
+/// The dark peer lightens the pill (`red-400`) because the panel it sits on is
+/// `dark:bg-gray-800`: a light-mode `red-500` against that surface loses most
+/// of the contrast step it has against white, and the unread count is the one
+/// element of this component that has to read at a glance. It matters more
+/// here than in the other defaults because an override REPLACES this string
+/// rather than appending to it, so an adopter who overrides the pill inherits
+/// nothing and this default is the only chance to ship the pair.
 const String kNotificationDropdownBadgeClassName = '''
   min-w-[14px] h-[14px] px-1 rounded-full
-  bg-red-500
+  bg-red-500 dark:bg-red-400
   flex items-center justify-center
 ''';
 
 /// The default className of the unread count inside the badge pill.
+///
+/// The dark peer follows the pill: on the lighter `dark:bg-red-400` fill a
+/// near-black red reads far better than white does.
 const String kNotificationDropdownBadgeTextClassName =
-    'text-[9px] font-bold text-white';
+    'text-[9px] font-bold text-white dark:text-red-950';
 
 /// The ceiling this component clamps the unread count's text scale to.
 ///

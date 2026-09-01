@@ -107,6 +107,218 @@ void main() {
       });
     });
 
+    // The browser draws a foreground push through the service worker, and the
+    // v16 SDK asks the page first: `foregroundWillDisplay` carries its own
+    // `preventDefault()`, and the worker skips `showNotification` when the page
+    // calls it. Answering "do not draw" is what keeps somebody else's incident
+    // title off this screen. The SDK effect is passed in rather than reached
+    // for, because it is a JS call no VM test can make.
+    group('foreground display', () {
+      /// A foreground event shaped the way the web SDK reports one.
+      ///
+      /// The v16 event wraps the notification, and the custom object the server
+      /// sent arrives as its `additionalData`; that is where the subject lives.
+      Map<String, dynamic> webEvent(String subject) => <String, dynamic>{
+            'notification': <String, dynamic>{
+              'notificationId': 'n1',
+              'title': 'API is down',
+              'additionalData': <String, dynamic>{
+                'subject': subject,
+                'notification_id': 'row-1',
+              },
+            },
+          };
+
+      test('suppresses the browser notification when the subject is not ours',
+          () async {
+        final driver = OneSignalWebDriver();
+        driver.subjectGuard = (data) => data['subject'] == 'user_1';
+
+        final received = <PushNotificationEvent>[];
+        final subscription = driver.onNotificationReceived.listen(received.add);
+
+        var prevented = false;
+        driver.handleForegroundWillDisplay(
+          webEvent('user_2'),
+          () => prevented = true,
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(prevented, isTrue, reason: 'the browser must not draw it');
+        expect(received, isEmpty, reason: 'and nothing may be republished');
+
+        await subscription.cancel();
+      });
+
+      test('draws and republishes a push addressed to this device', () async {
+        final driver = OneSignalWebDriver();
+        driver.subjectGuard = (data) => data['subject'] == 'user_1';
+
+        final received = <PushNotificationEvent>[];
+        final subscription = driver.onNotificationReceived.listen(received.add);
+
+        var prevented = false;
+        driver.handleForegroundWillDisplay(
+          webEvent('user_1'),
+          () => prevented = true,
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(prevented, isFalse);
+        // The republished payload is the whole event, as it has always been.
+        final notification =
+            received.single.data['notification'] as Map<String, dynamic>;
+        expect(notification['title'], 'API is down');
+
+        await subscription.cancel();
+      });
+
+      test('displays everything when no guard is installed', () async {
+        // A driver used without the manager judges nothing, and an unjudged
+        // push is displayed: a missing guard must not make the app go silent.
+        final driver = OneSignalWebDriver();
+
+        final received = <PushNotificationEvent>[];
+        final subscription = driver.onNotificationReceived.listen(received.add);
+
+        var prevented = false;
+        driver.handleForegroundWillDisplay(
+          webEvent('user_2'),
+          () => prevented = true,
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(prevented, isFalse);
+        expect(received, hasLength(1));
+
+        await subscription.cancel();
+      });
+
+      test('judges the nested payload, not the event that wraps it', () {
+        // The guard is the manager's, and it reads the same keys on both
+        // platforms; the mobile driver hands it `additionalData` directly.
+        final driver = OneSignalWebDriver();
+        Map<String, dynamic>? judged;
+        driver.subjectGuard = (data) {
+          judged = data;
+          return true;
+        };
+
+        driver.handleForegroundWillDisplay(webEvent('user_2'), () {});
+
+        expect(judged, <String, dynamic>{
+          'subject': 'user_2',
+          'notification_id': 'row-1',
+        });
+      });
+
+      test('hands the guard an empty payload when the event nests none', () {
+        // An event with nothing to judge is un-checkable, not a report that it
+        // belongs to nobody; the manager's guard passes an absent subject.
+        final driver = OneSignalWebDriver();
+        Map<String, dynamic>? judged;
+        driver.subjectGuard = (data) {
+          judged = data;
+          return true;
+        };
+
+        driver.handleForegroundWillDisplay(<String, dynamic>{}, () {});
+
+        expect(judged, isEmpty);
+      });
+    });
+
+    // A backgrounded or killed page draws the notification with no client
+    // code involved, so by the time a tap reaches the app the push has
+    // already been shown; nothing here can undraw it. What is at stake is
+    // whether the TAP navigates: `Notify.onPushClicked` drives a team switch
+    // off the payload, so a foreign subject must not be republished even
+    // though it was already, unavoidably, on screen.
+    group('notification click', () {
+      /// A clicked event shaped the way the web SDK reports one: same nested
+      /// `additionalData` shape as [webEvent] in the display group above.
+      Map<String, dynamic> webEvent(String subject) => <String, dynamic>{
+            'notification': <String, dynamic>{
+              'notificationId': 'n1',
+              'title': 'API is down',
+              'additionalData': <String, dynamic>{
+                'subject': subject,
+                'notification_id': 'row-1',
+              },
+            },
+          };
+
+      test('does not republish a clicked push addressed to a foreign subject',
+          () async {
+        final driver = OneSignalWebDriver();
+        driver.subjectGuard = (data) => data['subject'] == 'user_1';
+
+        final clicked = <PushNotificationEvent>[];
+        final subscription = driver.onNotificationClicked.listen(clicked.add);
+
+        driver.handleNotificationClicked(webEvent('user_2'));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(clicked, isEmpty,
+            reason: 'a foreign subject must not drive a navigation');
+
+        await subscription.cancel();
+      });
+
+      test('republishes a clicked push addressed to this device, unchanged',
+          () async {
+        final driver = OneSignalWebDriver();
+        driver.subjectGuard = (data) => data['subject'] == 'user_1';
+
+        final clicked = <PushNotificationEvent>[];
+        final subscription = driver.onNotificationClicked.listen(clicked.add);
+
+        driver.handleNotificationClicked(webEvent('user_1'));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(clicked, hasLength(1));
+        // The republished payload is the whole event, exactly as a consumer
+        // reading fields off the wrapper has always seen it.
+        final notification =
+            clicked.single.data['notification'] as Map<String, dynamic>;
+        expect(notification['title'], 'API is down');
+
+        await subscription.cancel();
+      });
+
+      test('republishes everything when no guard is installed', () async {
+        // A driver used without the manager judges nothing, and an unjudged
+        // click must not be silently dropped.
+        final driver = OneSignalWebDriver();
+
+        final clicked = <PushNotificationEvent>[];
+        final subscription = driver.onNotificationClicked.listen(clicked.add);
+
+        driver.handleNotificationClicked(webEvent('user_2'));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(clicked, hasLength(1));
+
+        await subscription.cancel();
+      });
+
+      test('judges the nested payload, not the wrapper that carries it', () {
+        final driver = OneSignalWebDriver();
+        Map<String, dynamic>? judged;
+        driver.subjectGuard = (data) {
+          judged = data;
+          return true;
+        };
+
+        driver.handleNotificationClicked(webEvent('user_2'));
+
+        expect(judged, <String, dynamic>{
+          'subject': 'user_2',
+          'notification_id': 'row-1',
+        });
+      });
+    });
+
     group('initialize', () {
       test('does not report initialized when the SDK never ran init', () async {
         // On the VM the js-interop conditional import resolves to the no-op

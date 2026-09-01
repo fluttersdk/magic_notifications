@@ -194,9 +194,17 @@ class OneSignalJsInterop {
 
   /// Adds a listener for foreground notification display events.
   ///
-  /// The callback receives the notification data as a map.
+  /// The callback receives the notification data as a map, plus the SDK's own
+  /// `preventDefault` as `preventDisplay`: the browser asks the page before the
+  /// service worker draws a foreground push, and this is the only way to answer
+  /// "do not draw". It must be called synchronously from inside the callback,
+  /// because the SDK reads the answer as soon as the listener returns.
+  ///
+  /// The decision belongs to the driver; this only carries the mechanism
+  /// across the interop boundary.
   static void addNotificationForegroundListener(
-    void Function(Map<String, dynamic> event) callback,
+    void Function(Map<String, dynamic> event, void Function() preventDisplay)
+        callback,
   ) =>
       impl.addNotificationForegroundListener(callback);
 

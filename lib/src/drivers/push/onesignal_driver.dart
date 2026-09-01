@@ -8,6 +8,19 @@ import '../../models/push_subscription.dart';
 import 'push_driver.dart';
 
 /// OneSignal push notification driver for mobile platforms (iOS/Android).
+///
+/// ## What the subject guard here can and cannot close
+///
+/// A push addressed to an identity this device is no longer reaches the SDK
+/// anyway, because a subscription the server believes is current takes minutes
+/// to stop being addressed. While the app is in the FOREGROUND the SDK asks
+/// before it draws, so [handleForegroundWillDisplay] can answer "do not draw"
+/// and keep somebody else's incident title off this lock screen.
+///
+/// Backgrounded or killed, that listener does not run at all: the OS draws the
+/// notification with no client code involved. That half cannot be closed from
+/// here. It needs the server to stop addressing a subscription it believes is
+/// stale.
 class OneSignalDriver extends PushDriver {
   final StreamController<PushNotificationEvent> _receivedController =
       StreamController<PushNotificationEvent>.broadcast();
@@ -102,8 +115,9 @@ class OneSignalDriver extends PushDriver {
 
     // Setup notification handlers
     OneSignal.Notifications.addForegroundWillDisplayListener((event) {
-      _receivedController.add(
-        PushNotificationEvent(event.notification.additionalData ?? {}),
+      handleForegroundWillDisplay(
+        event.notification.additionalData ?? {},
+        event.preventDefault,
       );
     });
 
@@ -142,6 +156,32 @@ class OneSignalDriver extends PushDriver {
     });
 
     _initialized = true;
+  }
+
+  /// Decides what happens to a push that arrived while the app is foregrounded.
+  ///
+  /// [preventDisplay] is the SDK's own `preventDefault`, taken as a parameter
+  /// rather than reached for through the event, because it is a
+  /// platform-channel call: passing it in is what lets the decision be
+  /// exercised without a device.
+  ///
+  /// A payload the subject guard rejects is suppressed on BOTH halves, the OS
+  /// draw and the in-app republish, because a notification drawn for somebody
+  /// who signed out is the leak, not the republish. See the class docblock for
+  /// the half this cannot close.
+  void handleForegroundWillDisplay(
+    Map<String, dynamic> data,
+    void Function() preventDisplay,
+  ) {
+    if (!mayDisplay(data)) {
+      preventDisplay();
+
+      return;
+    }
+
+    if (_receivedController.isClosed) return;
+
+    _receivedController.add(PushNotificationEvent(data));
   }
 
   @override

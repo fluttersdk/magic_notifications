@@ -31,6 +31,18 @@ import 'push_driver.dart';
 /// ```
 ///
 /// Or use [getWebInitScript] to generate this code programmatically.
+///
+/// ## What the subject guard here can and cannot close
+///
+/// A push addressed to an identity this browser no longer carries still
+/// arrives, because a subscription the server believes is current takes minutes
+/// to stop being addressed. The service worker asks a VISIBLE page before it
+/// draws, so [handleForegroundWillDisplay] can answer "do not draw" and keep
+/// somebody else's incident title off this screen.
+///
+/// With no visible page, the worker draws the notification with no client code
+/// involved. That half cannot be closed from here. It needs the server to stop
+/// addressing a subscription it believes is stale.
 class OneSignalWebDriver extends PushDriver {
   static const String _sdkUrl =
       'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
@@ -164,14 +176,13 @@ class OneSignalWebDriver extends PushDriver {
     });
 
     // Notification click listener
-    OneSignalJsInterop.addNotificationClickListener((event) {
-      _clickedController.add(PushNotificationEvent(event));
-    });
+    OneSignalJsInterop.addNotificationClickListener(handleNotificationClicked);
 
-    // Notification foreground display listener
-    OneSignalJsInterop.addNotificationForegroundListener((event) {
-      _receivedController.add(PushNotificationEvent(event));
-    });
+    // Notification foreground display listener. The interop hands over the
+    // event's own suppression, so the decision can be made here.
+    OneSignalJsInterop.addNotificationForegroundListener(
+      handleForegroundWillDisplay,
+    );
 
     // Identity listeners. The SDK reports the user and the subscription
     // separately, so each event carries only the half it knows.
@@ -193,6 +204,75 @@ class OneSignalWebDriver extends PushDriver {
         ),
       );
     });
+  }
+
+  /// Decides what happens to a push that arrived while the page is foregrounded.
+  ///
+  /// [preventDisplay] is the SDK's own `preventDefault`, taken as a parameter
+  /// rather than reached for through the event, because it lives on the JS
+  /// event the interop already converted away: passing it in is what lets the
+  /// decision be exercised without a browser. It must be called synchronously,
+  /// which is why nothing here awaits.
+  ///
+  /// A payload the subject guard rejects is suppressed on BOTH halves, the
+  /// browser draw and the in-app republish, because a notification drawn for
+  /// somebody who signed out is the leak, not the republish. See the class
+  /// docblock for the half this cannot close.
+  ///
+  /// An accepted push republishes the whole [event], as it always has; only the
+  /// judgement reads the nested payload.
+  void handleForegroundWillDisplay(
+    Map<String, dynamic> event,
+    void Function() preventDisplay,
+  ) {
+    if (!mayDisplay(_payloadOf(event))) {
+      preventDisplay();
+
+      return;
+    }
+
+    if (_receivedController.isClosed) return;
+
+    _receivedController.add(PushNotificationEvent(event));
+  }
+
+  /// Decides whether a tapped push notification is republished to the app.
+  ///
+  /// The tap already happened, foregrounded or not: nothing here can undraw a
+  /// notification the OS already showed. What is still at stake is the
+  /// navigation `Notify.onPushClicked` drives from the payload, which is why
+  /// a payload the subject guard rejects is dropped here rather than
+  /// republished. See [_payloadOf] for why the guard reads the nested
+  /// payload; [handleForegroundWillDisplay] applies the identical shape to
+  /// the display path.
+  ///
+  /// An accepted [event] republishes unchanged, whole, exactly as it always
+  /// has: only the judgement reads the nested payload, so a consumer already
+  /// reading fields off the wrapper keeps seeing the same shape.
+  void handleNotificationClicked(Map<String, dynamic> event) {
+    if (!mayDisplay(_payloadOf(event))) return;
+
+    if (_clickedController.isClosed) return;
+
+    _clickedController.add(PushNotificationEvent(event));
+  }
+
+  /// Reads the custom payload the SDK nests inside a foreground event.
+  ///
+  /// The web event wraps the notification, and the object the server sent
+  /// arrives as its `additionalData`, which is exactly the map the mobile
+  /// driver is handed. Reading it here is what lets the one guard on the
+  /// manager judge both platforms; the comparison itself is not made here.
+  ///
+  /// An event nesting nothing answers empty, which is un-judgeable rather than
+  /// addressed to nobody, and the guard passes it.
+  Map<String, dynamic> _payloadOf(Map<String, dynamic> event) {
+    final notification = event['notification'];
+    if (notification is! Map<String, dynamic>) return const {};
+
+    final additionalData = notification['additionalData'];
+
+    return additionalData is Map<String, dynamic> ? additionalData : const {};
   }
 
   /// Reads the `current` state out of an SDK change event.

@@ -193,6 +193,87 @@ void main() {
       });
     });
 
+    // Detection strips comments before it decides a project is wired, so
+    // removal has to read the file the same way. Cutting the text out of the
+    // middle of a comment left a dangling `//` in a project that was correctly
+    // judged "not wired" a moment earlier.
+    group('commented-out wiring is left in its comment', () {
+      test('a commented import is not cut out of the comment', () async {
+        File('${tempDir.path}/lib/main.dart').writeAsStringSync("""
+import 'package:magic/magic.dart';
+// import 'config/notifications.dart';
+
+void main() async {
+  await Magic.init(
+    configFactories: [
+      () => appConfig,
+    ],
+  );
+}
+""");
+
+        await command.handle(_ctx(command, force: true));
+
+        final content =
+            File('${tempDir.path}/lib/main.dart').readAsStringSync();
+        expect(content, contains("// import 'config/notifications.dart';"));
+      });
+
+      test('a commented factory entry is not cut out of the comment', () async {
+        File('${tempDir.path}/lib/main.dart').writeAsStringSync("""
+import 'package:magic/magic.dart';
+
+void main() async {
+  await Magic.init(
+    configFactories: [
+      () => appConfig,
+      // () => notificationConfig,
+    ],
+  );
+}
+""");
+
+        await command.handle(_ctx(command, force: true));
+
+        final content =
+            File('${tempDir.path}/lib/main.dart').readAsStringSync();
+        expect(content, contains('// () => notificationConfig,'));
+      });
+
+      test('real wiring still goes while a comment quoting it stays', () async {
+        File('${tempDir.path}/lib/main.dart').writeAsStringSync("""
+import 'package:magic/magic.dart';
+import 'config/notifications.dart';
+
+// Wiring reference: import 'config/notifications.dart'; then add
+// "() => notificationConfig," to configFactories.
+void main() async {
+  await Magic.init(
+    configFactories: [
+      () => appConfig,
+      () => notificationConfig,
+    ],
+  );
+}
+""");
+
+        await command.handle(_ctx(command, force: true));
+
+        final content =
+            File('${tempDir.path}/lib/main.dart').readAsStringSync();
+        expect(content, contains('// Wiring reference: '));
+        expect(content, contains('// "() => notificationConfig," to '));
+        expect(
+          content,
+          isNot(contains("\nimport 'config/notifications.dart';")),
+        );
+        expect(
+          content,
+          isNot(contains('      () => notificationConfig,')),
+        );
+      });
+    });
+
     group('platform files are NOT touched', () {
       test('does not touch AndroidManifest.xml when present', () async {
         final manifestDir = Directory(

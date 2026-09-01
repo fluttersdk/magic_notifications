@@ -236,7 +236,10 @@ class NotificationDropdown extends StatelessWidget {
             onTap: onMarkAllAsRead,
             child: WText(
               trans('notifications.mark_all_read'),
-              className: 'text-xs text-primary hover:text-green-600',
+              // Brand-relative on both ends: `text-primary` resolves to the
+              // ADOPTER's brand, so a hover jumping to a fixed palette green
+              // reads as deliberate only while that brand happens to be green.
+              className: 'text-xs text-primary hover:text-primary/80',
             ),
           ),
       ],
@@ -288,6 +291,13 @@ class NotificationDropdown extends StatelessWidget {
               className: 'text-lg text-blue-500 dark:text-blue-400',
             );
 
+    // One className for both row shapes, with the difference carried as a
+    // state: an interpolated variant is a second parser cache key per row, so a
+    // list of twenty notifications parsed two strings where it has one shape.
+    // The read row also had the tint ABSENT rather than overridden, which is
+    // exactly the case Wind's state prefixes exist to express.
+    final Set<String> rowStates = {if (!notification.isRead) 'unread'};
+
     return WAnchor(
       onTap: () async {
         await onMarkAsRead?.call(notification.id);
@@ -295,11 +305,12 @@ class NotificationDropdown extends StatelessWidget {
         close();
       },
       child: WDiv(
+        states: rowStates,
         className: '''
           flex flex-row items-start gap-3 px-4 py-3 w-full
           border-b border-gray-100 dark:border-gray-700
           hover:bg-gray-50 dark:hover:bg-gray-700
-          ${notification.isRead ? '' : 'bg-primary/5 dark:bg-primary/10'}
+          unread:bg-primary/5 dark:unread:bg-primary/10
         ''',
         children: [
           WDiv(
@@ -315,9 +326,10 @@ class NotificationDropdown extends StatelessWidget {
             children: [
               WText(
                 notification.title,
+                states: rowStates,
                 className: '''
                   text-sm text-gray-900 dark:text-white truncate
-                  ${notification.isRead ? '' : 'font-semibold'}
+                  unread:font-semibold
                 ''',
               ),
               const WSpacer(className: 'h-0.5'),
@@ -388,7 +400,10 @@ class NotificationDropdown extends StatelessWidget {
         className:
             'w-full py-12 flex flex-col items-center justify-center gap-3',
         children: [
-          WIcon(Icons.error_outline, className: 'text-4xl text-red-500'),
+          WIcon(
+            Icons.error_outline,
+            className: 'text-4xl text-red-500 dark:text-red-400',
+          ),
           WText(
             trans('notifications.load_failed'),
             className: 'text-sm text-gray-600 dark:text-gray-400',

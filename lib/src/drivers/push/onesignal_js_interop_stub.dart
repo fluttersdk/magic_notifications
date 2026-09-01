@@ -133,9 +133,12 @@ void addNotificationClickListener(
 
 /// Adds a listener for foreground notification display events.
 ///
-/// No-op on non-web platforms.
+/// No-op on non-web platforms: [callback] is never invoked, so the suppression
+/// it would be handed is never offered either. Nothing here can draw a
+/// notification, so there is nothing to suppress.
 void addNotificationForegroundListener(
-  void Function(Map<String, dynamic> event) callback,
+  void Function(Map<String, dynamic> event, void Function() preventDisplay)
+      callback,
 ) {}
 
 /// Adds a listener for user state changes.

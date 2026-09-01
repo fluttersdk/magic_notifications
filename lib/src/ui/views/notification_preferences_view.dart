@@ -239,6 +239,13 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
                 typeKey,
                 channelKeys[i],
                 channels[channelKeys[i]] as Map<String, dynamic>,
+                // Wind implements no structural pseudo-variants, so the row
+                // cannot answer "am I last?" from its className: an unknown
+                // prefix like `last:` is read as a state name nothing ever
+                // activates, the class silently never fires, and the card's
+                // `rounded-2xl overflow-hidden` then clips a hairline that was
+                // supposed to be gone. The index is the only thing that knows.
+                isLast: i == channelKeys.length - 1,
               ),
           ],
         ),
@@ -246,14 +253,42 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
     );
   }
 
+  /// The channel row shell, carrying the separator to the row below it.
+  static const String _rowClassName =
+      'px-6 py-4 flex items-center justify-between '
+      'border-b border-color-border-subtle';
+
+  /// The channel row shell for the last row of a card, which has no row below
+  /// it to be separated from.
+  static const String _lastRowClassName =
+      'px-6 py-4 flex items-center justify-between';
+
+  /// The channel icon chip, tinted through the `enabled:` state.
+  ///
+  /// One string for both tints rather than an interpolated pair: an
+  /// interpolation is a second parser cache key per row, and the state prefix
+  /// says what the row actually means. `enabled` is a custom state name here
+  /// deliberately, because `active:` is one of the three prefixes `WDiv` reads
+  /// as "this element is interactive" and wraps in a `WAnchor` for.
+  static const String _channelChipClassName =
+      'w-10 h-10 rounded-full flex items-center justify-center '
+      'bg-surface-container-high enabled:bg-primary/10 '
+      'dark:enabled:bg-primary/10';
+
+  /// The chip's glyph, tinted by the same state as the chip.
+  static const String _channelChipIconClassName =
+      'text-[18px] text-fg-muted enabled:text-primary';
+
   Widget _buildChannelToggle(
     String type,
     String channel,
-    Map<String, dynamic> channelData,
-  ) {
+    Map<String, dynamic> channelData, {
+    required bool isLast,
+  }) {
     final bool isEnabled = channelData['enabled'] as bool? ?? false;
     final bool isLocked = channelData['locked'] as bool? ?? false;
     final icon = _channelIcon(channel);
+    final Set<String> chipStates = {if (isEnabled && !isLocked) 'enabled'};
     // The push channel toggle cannot deliver until the app provisions its push
     // integration; surface a subtle heads-up beneath its label when it has not.
     // The backend-reported flag drives it, unless the host forced a value.
@@ -263,11 +298,7 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
         channel.toLowerCase() == 'push' && !pushProvisioned;
 
     return WDiv(
-      className: '''
-        px-6 py-4 flex items-center justify-between
-        border-b border-color-border-subtle
-        last:border-b-0
-      ''',
+      className: isLast ? _lastRowClassName : _rowClassName,
       children: [
         WDiv(
           // `flex-1 min-w-0` so the icon-plus-text half yields to the switch
@@ -278,16 +309,12 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
           className: 'flex-1 min-w-0 flex items-center gap-4',
           children: [
             WDiv(
-              className: '''
-                w-10 h-10 rounded-full flex items-center justify-center
-                ${isEnabled && !isLocked ? 'bg-primary/10 dark:bg-primary/10' : 'bg-surface-container-high'}
-              ''',
+              states: chipStates,
+              className: _channelChipClassName,
               child: WIcon(
                 isLocked ? _iconLocked : icon,
-                className: '''
-                  text-[18px]
-                  ${isEnabled && !isLocked ? 'text-primary' : 'text-fg-muted'}
-                ''',
+                states: chipStates,
+                className: _channelChipIconClassName,
               ),
             ),
             WDiv(

@@ -1,6 +1,7 @@
 import '../contracts/notifiable.dart';
 import '../contracts/notification.dart';
 import '../drivers/push/push_driver.dart';
+import '../exceptions/notification_exception.dart';
 import '../models/database_notification.dart';
 import '../models/paginated_notifications.dart';
 import '../notification_manager.dart';
@@ -108,6 +109,11 @@ class Notify {
   ///
   /// Returns [PaginatedNotifications] with data and pagination metadata.
   /// Useful for full-page notification lists with server-side pagination.
+  ///
+  /// Throws [NotificationException] when the read fails (a dropped connection,
+  /// a non-2xx answer, an undecodable body). A failure is not answered as an
+  /// empty page, because a caller cannot tell that apart from an empty inbox;
+  /// a caller that wants an empty page on failure catches this and says so.
   ///
   /// Example:
   /// ```dart

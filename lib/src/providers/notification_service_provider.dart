@@ -2,6 +2,7 @@ import 'package:magic/magic.dart';
 
 import '../channels/database_channel.dart';
 import '../channels/push_channel.dart';
+import '../drivers/push/onesignal_web_driver.dart';
 import '../drivers/push/push_driver.dart';
 import '../drivers/push_web/onesignal_factory.dart';
 import '../notification_manager.dart';
@@ -84,6 +85,14 @@ class NotificationServiceProvider extends ServiceProvider {
     //    dispatch to at all before this line.
     manager.registerChannel(DatabaseChannel());
 
+    // 3. The persisted push intent, BEFORE a driver is resolved. Resolving one
+    //    attaches the manager's push listeners, and the SDK replays a cold start
+    //    from a notification TAP while `initialize` runs, which is still inside
+    //    this method. Compared against an intent nothing has read yet, a push
+    //    for the person actually holding the phone reads as addressed to
+    //    somebody else and is dropped in silence.
+    await manager.loadPushIntent();
+
     final PushDriver? driver = _resolvePushDriver(manager);
 
     if (driver != null) {
@@ -91,7 +100,7 @@ class NotificationServiceProvider extends ServiceProvider {
       await _initializePush(driver);
     }
 
-    // 3. One unconditional reconcile, because the signed-out cold boot fires no
+    // 4. One unconditional reconcile, because the signed-out cold boot fires no
     //    auth event at all: magic's guards return from `restore()` before any
     //    `stateNotifier` bump when there is no cached token. Without this pass
     //    a device that was signed out while offline stays subscribed as the
@@ -147,6 +156,18 @@ class NotificationServiceProvider extends ServiceProvider {
 
   /// Hands [driver] the app id and the web options from the package's config.
   ///
+  /// The map is assembled by the driver's own
+  /// [OneSignalWebDriver.buildConfigFromEnv] rather than by hand here, and that
+  /// is the whole point: a hand-written map is how the two service-worker
+  /// options were lost. The driver reads five keys, this provider passed three,
+  /// and OneSignal then registered its worker at the ROOT scope, which a Flutter
+  /// web build already owns with `flutter_service_worker.js`. Whichever
+  /// registration lands second wins the scope, so when Flutter's does, web push
+  /// silently never arrives on a device the reconciler reports as converged.
+  /// Building through the driver's own list means the next option added beside
+  /// them cannot be dropped here again, and a key the config does not declare
+  /// stays out of the map rather than reaching the SDK as an empty string.
+  ///
   /// A failure is recorded on [pushInitializationError] and reported, never
   /// swallowed: the SDK is then up on nobody's device, and the only difference
   /// between that and a build with no push at all is this record.
@@ -161,15 +182,21 @@ class NotificationServiceProvider extends ServiceProvider {
     if (appId == null || appId.isEmpty) return;
 
     try {
-      await driver.initialize(<String, dynamic>{
-        'app_id': appId,
-        'safari_web_id': Config.get<String>(
-          'notifications.push.safari_web_id',
+      await driver.initialize(
+        OneSignalWebDriver.buildConfigFromEnv(
+          appId: appId,
+          safariWebId: Config.get<String>('notifications.push.safari_web_id'),
+          notifyButtonEnabled:
+              Config.get<bool>('notifications.push.notify_button_enabled') ??
+                  false,
+          serviceWorkerPath: Config.get<String>(
+            'notifications.push.service_worker_path',
+          ),
+          serviceWorkerScope: Config.get<String>(
+            'notifications.push.service_worker_scope',
+          ),
         ),
-        'notify_button_enabled':
-            Config.get<bool>('notifications.push.notify_button_enabled') ??
-                false,
-      });
+      );
     } catch (e) {
       _pushInitializationError = e;
       Log.error(

@@ -223,6 +223,11 @@ class UninstallCommand extends ArtisanCommand {
   /// the factory is called. Both edits are then skipped together, import
   /// included: removing the import while a factory still names the symbol it
   /// provided leaves a project that compiles less than the one we started with.
+  ///
+  /// Both edits skip comments, because [NotificationsConfigWiring] strips them
+  /// before it decides a project is wired at all: a project whose import is
+  /// commented out is correctly judged "not wired", and cutting that text out
+  /// of the middle of its comment anyway leaves a dangling `//`.
   void _removeFromMain(ArtisanContext ctx, String? configGetter) {
     final mainPath = '$projectRoot/lib/main.dart';
     if (!FileHelper.fileExists(mainPath)) {
@@ -241,12 +246,13 @@ class UninstallCommand extends ArtisanCommand {
     }
 
     final content = FileHelper.readFile(mainPath);
-    final updated = content
-        .replaceAll(NotificationsConfigWiring.configImportLine, '')
-        .replaceAll(
-          NotificationsConfigWiring.configFactoryLine(configGetter),
-          '',
-        );
+    final updated = _removeOutsideComments(
+      _removeOutsideComments(
+        content,
+        NotificationsConfigWiring.configImportLine,
+      ),
+      NotificationsConfigWiring.configFactoryLine(configGetter),
+    );
 
     if (updated == content) {
       ctx.output.comment(
@@ -259,6 +265,27 @@ class UninstallCommand extends ArtisanCommand {
     ctx.output.success(
       'Removed the config import and "() => $configGetter," from lib/main.dart',
     );
+  }
+
+  /// Dart line and block comments, matched exactly as
+  /// [NotificationsConfigWiring.withoutComments] strips them.
+  ///
+  /// Sharing the notion of "comment" with the DETECTION is the point: a
+  /// removal that reads the file differently from the check that authorised it
+  /// edits text the check never counted.
+  static final RegExp _comment = RegExp(r'/\*.*?\*/|//[^\n]*', dotAll: true);
+
+  /// [source] with every match of [pattern] that lies outside a comment gone.
+  String _removeOutsideComments(String source, RegExp pattern) {
+    final comments = _comment.allMatches(source).toList(growable: false);
+
+    return source.replaceAllMapped(pattern, (match) {
+      final insideComment = comments.any(
+        (comment) => match.start >= comment.start && match.start < comment.end,
+      );
+
+      return insideComment ? match[0]! : '';
+    });
   }
 
   /// Print manual cleanup instructions for platform-specific files.

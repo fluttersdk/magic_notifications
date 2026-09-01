@@ -510,6 +510,103 @@ Map<String, dynamic> get notificationsConfig => {
       );
       expect(command.envResolvedAppIdKey(), isNull);
     });
+
+    // The doctor cannot read runtime env, but `.env` is a readable file, which
+    // is the whole reason "configured but not provisioned" is checkable at all.
+    // Reporting it as a tick certified a deployment that cannot send a push.
+    group('the env file behind an env-resolved app id', () {
+      /// Writes a `.env` carrying [contents] verbatim into the temp project.
+      void writeEnvFile(String contents) {
+        File('${tempDir.path}/.env').writeAsStringSync(contents);
+      }
+
+      test('a blank value in .env is a warning, not a tick', () async {
+        writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+        writeEnvFile('APP_NAME=Uptizm\nONESIGNAL_APP_ID=\n');
+
+        final warnings = command.getWarnings();
+        expect(warnings, hasLength(1));
+        expect(warnings.single, contains('ONESIGNAL_APP_ID'));
+        expect(warnings.single, contains('.env'));
+
+        final report = command.generateReport();
+        expect(
+          report,
+          isNot(contains('✓ App ID is resolved')),
+          reason: 'a blank key must not read as resolved',
+        );
+        expect(report, isNot(contains('✓ All config checks passed')));
+        expect(report, isNot(contains('All requirements met')));
+      });
+
+      test('a key absent from .env is a warning naming the file', () {
+        writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+        writeEnvFile('APP_NAME=Uptizm\n');
+
+        expect(command.getWarnings().single, contains('ONESIGNAL_APP_ID'));
+        expect(command.getWarnings().single, contains('.env'));
+      });
+
+      test('no .env file at all is a warning naming the file it looked in', () {
+        writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+
+        expect(command.getWarnings().single, contains('.env'));
+      });
+
+      test('a provisioned value is green and names the key', () {
+        writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+        writeEnvFile(
+          '# push\nONESIGNAL_APP_ID="12345678-1234-1234-1234-123456789012"\n',
+        );
+
+        expect(command.getWarnings(), isEmpty);
+        expect(command.generateReport(), contains('✓ App ID is resolved'));
+        expect(command.generateReport(), contains('ONESIGNAL_APP_ID'));
+        expect(command.generateReport(), contains('All requirements met'));
+      });
+
+      test('a literal app id is unaffected by the env file', () {
+        writeConfigWithAppId("'12345678-1234-1234-1234-123456789012'");
+        writeEnvFile('APP_NAME=Uptizm\n');
+
+        expect(command.getWarnings(), isEmpty);
+        expect(command.generateReport(), contains('All requirements met'));
+      });
+
+      test('an unprovisioned key does not fail the command, but says so',
+          () async {
+        // A developer working before provisioning is a normal state, and a
+        // doctor that always fails gets ignored. The tick is what has to go.
+        writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+        writeEnvFile('ONESIGNAL_APP_ID=\n');
+
+        final output = BufferedOutput();
+        final ctx = ArtisanContext.bare(
+          MapInput({'verbose': false}, signature: command.parsedSignature),
+          output,
+        );
+
+        expect(await command.handle(ctx), 0);
+        expect(output.content, isNot(contains('All checks passed')));
+        expect(output.content, contains('ONESIGNAL_APP_ID'));
+      });
+
+      test('a warning never hides a real failure', () {
+        // The env warning rides alongside the existing failures; it does not
+        // replace them and it does not soften the exit code they earn.
+        writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+        writeEnvFile('ONESIGNAL_APP_ID=\n');
+        File('${tempDir.path}/pubspec.yaml').writeAsStringSync('''
+name: test_app
+dependencies:
+  flutter:
+    sdk: flutter
+''');
+
+        expect(command.getMissingRequirements(), isNotEmpty);
+        expect(command.getWarnings(), isNotEmpty);
+      });
+    });
   });
 
   // ---------------------------------------------------------------------------

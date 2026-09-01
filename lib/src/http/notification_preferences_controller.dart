@@ -31,7 +31,16 @@ class NotificationPreferencesController extends MagicController
   final pushProvisionedNotifier = ValueNotifier<bool>(true);
 
   bool _isFetching = false;
-  bool _isSaving = false;
+
+  /// The cells with a write in flight, keyed by type and channel.
+  ///
+  /// One flag across the whole matrix made a second toggle during an in-flight
+  /// PUT a tap that visibly does nothing: the early return neither queues the
+  /// edit nor reports it, and `WSwitch.value` reads the stored data the return
+  /// never touched, so there is no spinner, no snap-back and no message. An
+  /// operator silencing two noisy channels in a row keeps being paged by the
+  /// second one with nothing on screen saying why.
+  final Set<String> _saving = <String>{};
 
   /// Fetch the notification preference matrix from the API.
   Future<void> fetchPreferences() async {
@@ -97,44 +106,34 @@ class NotificationPreferencesController extends MagicController
 
   /// Update a single channel preference with an optimistic UI update.
   ///
-  /// 1. Snapshot the current matrix as rollback state.
-  /// 2. Apply the optimistic update locally.
-  /// 3. Send the PUT request to the backend.
-  /// 4. Revert to the snapshot on failure.
+  /// 1. Take the guard for THIS cell, so an edit to another one is not blocked.
+  /// 2. Snapshot the cell's current value as rollback state.
+  /// 3. Apply the optimistic update locally.
+  /// 4. Send the PUT request to the backend.
+  /// 5. Revert that one cell on failure.
   Future<void> updateTypePreference(
     String type,
     String channel,
     bool isEnabled,
   ) async {
-    if (_isSaving) return;
-    _isSaving = true;
+    final String cell = '$type.$channel';
+    if (!_saving.add(cell)) return;
 
-    // 1. Snapshot for rollback.
-    final oldMatrix = Map<String, dynamic>.from(matrixNotifier.value);
+    // 1. Snapshot the CELL, not the matrix: a neighbouring cell can now be
+    //    written at the same time, and restoring a whole-matrix snapshot taken
+    //    before that edit would undo a write the backend accepted, with nothing
+    //    re-applying it. The switch would then read enabled while the channel
+    //    is silenced, which is the failure this method exists to prevent.
+    final bool? previous = _channelEnabled(matrixNotifier.value, type, channel);
 
     try {
       // 2. Apply the optimistic update.
-      final newMatrix = Map<String, dynamic>.from(matrixNotifier.value);
-      if (newMatrix.containsKey(type)) {
-        final typeData = Map<String, dynamic>.from(
-          newMatrix[type] as Map<String, dynamic>,
-        );
-        if (typeData.containsKey('channels')) {
-          final channelsData = Map<String, dynamic>.from(
-            typeData['channels'] as Map<String, dynamic>,
-          );
-          if (channelsData.containsKey(channel)) {
-            final channelData = Map<String, dynamic>.from(
-              channelsData[channel] as Map<String, dynamic>,
-            );
-            channelData['enabled'] = isEnabled;
-            channelsData[channel] = channelData;
-          }
-          typeData['channels'] = channelsData;
-        }
-        newMatrix[type] = typeData;
-      }
-      matrixNotifier.value = newMatrix;
+      matrixNotifier.value = _withChannelEnabled(
+        matrixNotifier.value,
+        type,
+        channel,
+        isEnabled,
+      );
 
       // 3. Send to the backend.
       final response = await Http.put(
@@ -144,7 +143,7 @@ class NotificationPreferencesController extends MagicController
 
       // 4. Revert on failure.
       if (!response.successful) {
-        matrixNotifier.value = oldMatrix;
+        _revertChannel(type, channel, previous);
         Log.error(
           '[NotificationPreferencesController.updateTypePreference] '
           'PUT failed: ${response.statusCode}',
@@ -157,14 +156,85 @@ class NotificationPreferencesController extends MagicController
       // keeps the heads-up in sync without a second fetch.
       _publishPushProvisioned(response);
     } catch (e, stackTrace) {
-      matrixNotifier.value = oldMatrix;
+      _revertChannel(type, channel, previous);
       Log.error(
         '[NotificationPreferencesController.updateTypePreference] '
         '$e\n$stackTrace',
       );
     } finally {
-      _isSaving = false;
+      _saving.remove(cell);
     }
+  }
+
+  /// The `enabled` flag [type]'s [channel] currently carries, or `null` when
+  /// the matrix does not describe that cell.
+  bool? _channelEnabled(
+    Map<String, dynamic> matrix,
+    String type,
+    String channel,
+  ) {
+    final Object? typeData = matrix[type];
+    if (typeData is! Map) return null;
+
+    final Object? channelsData = typeData['channels'];
+    if (channelsData is! Map) return null;
+
+    final Object? channelData = channelsData[channel];
+    if (channelData is! Map) return null;
+
+    final Object? enabled = channelData['enabled'];
+
+    return enabled is bool ? enabled : null;
+  }
+
+  /// [matrix] with [type]'s [channel] carrying [isEnabled], and [matrix] itself
+  /// when it does not describe that cell.
+  ///
+  /// Rebuilt rather than mutated in place, because [matrixNotifier] only
+  /// notifies on a new instance.
+  Map<String, dynamic> _withChannelEnabled(
+    Map<String, dynamic> matrix,
+    String type,
+    String channel,
+    bool isEnabled,
+  ) {
+    final Object? typeData = matrix[type];
+    if (typeData is! Map) return matrix;
+
+    final Object? channelsData = typeData['channels'];
+    if (channelsData is! Map) return matrix;
+
+    final Object? channelData = channelsData[channel];
+    if (channelData is! Map) return matrix;
+
+    return <String, dynamic>{
+      ...matrix,
+      type: <String, dynamic>{
+        ..._normalizeMap(typeData),
+        'channels': <String, dynamic>{
+          ..._normalizeMap(channelsData),
+          channel: <String, dynamic>{
+            ..._normalizeMap(channelData),
+            'enabled': isEnabled,
+          },
+        },
+      },
+    };
+  }
+
+  /// Puts [previous] back on one cell after its write failed.
+  ///
+  /// A `null` [previous] is a cell the matrix never described, which the
+  /// optimistic update left untouched too, so there is nothing to put back.
+  void _revertChannel(String type, String channel, bool? previous) {
+    if (previous == null) return;
+
+    matrixNotifier.value = _withChannelEnabled(
+      matrixNotifier.value,
+      type,
+      channel,
+      previous,
+    );
   }
 
   @override

@@ -82,6 +82,20 @@ class NotificationManager {
   /// logged, because nothing retries and a caller has to be able to see it.
   Object? _pushIdentityError;
 
+  /// The reconcile pass currently in flight, or `null` when none is.
+  Future<void>? _reconcileInFlight;
+
+  /// The intent the most recent pass targeted.
+  ///
+  /// How a caller that joined a pass tells "it covered me" from "the intent
+  /// moved while it was running", which is the difference between a duplicate
+  /// login and a device left subscribed as somebody who signed out.
+  String? _reconciledIntent;
+
+  /// The driver the manager is currently listening to, held so its subject
+  /// guard can be taken back when it is detached.
+  PushDriver? _attachedPushDriver;
+
   /// The driver subscriptions the manager holds while a driver is attached.
   StreamSubscription<PushNotificationEvent>? _pushReceivedSubscription;
   StreamSubscription<PushNotificationEvent>? _pushClickedSubscription;
@@ -111,13 +125,24 @@ class NotificationManager {
   /// caller that changes the event for the same channel is not silently ignored.
   String? _realtimeEventName;
 
-  /// Whether a [fetchNotifications] read is currently in flight.
-  bool _fetching = false;
+  /// How many [fetchNotifications] reads are in flight right now.
+  ///
+  /// A DEPTH rather than a flag: two reads overlapping is the ordinary case,
+  /// because a push and the reconnect watcher each start one without awaiting
+  /// it, and two pushes in quick succession is what an incident looks like.
+  int _fetchesInFlight = 0;
 
   /// Frames that arrived while a read was in flight, merged back on top of the
   /// fetched list so the read cannot clobber them.
   final List<DatabaseNotification> _framesDuringFetch =
       <DatabaseNotification>[];
+
+  /// Bumped every time the cached list is dropped for a session that ended.
+  ///
+  /// A read issued for the previous session answers with the previous person's
+  /// rows, and it answers AFTER the clear; without a marker to compare against,
+  /// assigning that answer puts their incident titles back on the bell.
+  int _session = 0;
 
   factory NotificationManager() {
     return _instance;
@@ -183,6 +208,7 @@ class NotificationManager {
     _pushIntentLoaded = false;
     _pushIdentityConverged = false;
     _pushIdentityError = null;
+    _reconciledIntent = null;
   }
 
   // ========================================
@@ -205,7 +231,8 @@ class NotificationManager {
   ///
   /// Updates the notification stream with fresh data from the API.
   Future<void> fetchNotifications() async {
-    _fetching = true;
+    _fetchesInFlight++;
+    final int session = _session;
 
     try {
       final response = await Http.get('/notifications');
@@ -213,6 +240,10 @@ class NotificationManager {
       if (response.successful) {
         final data = response.data;
         final List<dynamic> items = data['data'] ?? [];
+
+        // Rows read for a session that has since ended belong to the person who
+        // signed out, and assigning them would undo the clear that dropped them.
+        if (session != _session) return;
 
         _notifications = _withFramesReceivedDuringFetch(
           items.map((item) {
@@ -226,11 +257,14 @@ class NotificationManager {
       _safeLogError('Failed to fetch notifications: $e');
       // Don't throw - just keep current state
     } finally {
-      // Always cleared, including on a failed read: a frame received during the
-      // window was applied to `_notifications` as it arrived, so it is already
-      // held and must not be re-merged into the NEXT fetch as well.
-      _fetching = false;
-      _framesDuringFetch.clear();
+      // Cleared when the LAST read finishes, including a failed one: a frame
+      // received during the window was applied to `_notifications` as it
+      // arrived, so it is already held and must not be re-merged into the NEXT
+      // fetch as well. Clearing it when the FIRST of two overlapping reads
+      // finishes is what loses a frame: the buffer is shared, so the second
+      // read then merges nothing and assigns its older snapshot over the top.
+      _fetchesInFlight--;
+      if (_fetchesInFlight == 0) _framesDuringFetch.clear();
     }
   }
 
@@ -272,22 +306,61 @@ class NotificationManager {
   ///
   /// Returns a [PaginatedNotifications] wrapper with meta info
   /// (current_page, last_page, per_page, total) for server-side pagination.
+  ///
+  /// Throws [NotificationException] when the read did not land: a dropped
+  /// connection, an expired token, a 500, or a body this package cannot
+  /// decode. It deliberately does NOT answer an empty page there. An empty
+  /// page is exactly what an empty inbox looks like, so a caller handed one
+  /// cannot tell "you have no alerts" from "we could not ask", and on an
+  /// on-call product those two answers send a person to sleep or to the phone.
+  ///
+  /// A caller that genuinely wants an empty page on failure catches this and
+  /// says so at its own call site, where the choice is visible.
   Future<PaginatedNotifications> fetchPaginatedNotifications({
     int page = 1,
     int perPage = 15,
   }) async {
+    // 1. Read the page. A throw from the transport is handled, not swallowed:
+    //    logged here where the driver detail still exists, then raised as this
+    //    package's own failure.
+    final MagicResponse response;
     try {
-      final response = await Http.get('/notifications', query: {
+      response = await Http.get('/notifications', query: {
         'page': page.toString(),
         'perPage': perPage.toString(),
       });
-      if (response.successful) {
-        return PaginatedNotifications.fromMap(response.data);
-      }
     } catch (e) {
-      _safeLogError('Failed to fetch paginated notifications: $e');
+      _failedPageRead(page, '$e', code: 'NOTIFICATIONS_FETCH_FAILED');
     }
-    return PaginatedNotifications.empty();
+
+    // 2. A non-2xx answer is a failed read too, and the one the old empty page
+    //    hid best: nothing throws on a 500, so the screen rendered it as calm.
+    if (!response.successful) {
+      _failedPageRead(
+        page,
+        'the backend answered ${response.statusCode}',
+        code: 'NOTIFICATIONS_FETCH_FAILED',
+      );
+    }
+
+    // 3. A 200 carrying a body this package cannot read is a failed read as
+    //    well; answering it as an empty page tells the same lie.
+    try {
+      return PaginatedNotifications.fromMap(response.data);
+    } catch (e) {
+      _failedPageRead(page, '$e', code: 'NOTIFICATIONS_DECODE_FAILED');
+    }
+  }
+
+  /// Logs a failed page read and raises it as a [NotificationException].
+  ///
+  /// Returns [Never], so each call site reads as the end of that path and the
+  /// success path stays the only one that produces a page.
+  Never _failedPageRead(int page, String reason, {required String code}) {
+    final String message = 'Failed to read notifications page $page: $reason.';
+    _safeLogError(message);
+
+    throw NotificationException(message, code: code);
   }
 
   /// Alias for fetchNotifications() for convenience.
@@ -443,20 +516,27 @@ class NotificationManager {
     if (_pushDriver == null) _detachPushDriver();
   }
 
-  /// The factory `notifications.push.driver` names, or the only one there is.
+  /// The factory `notifications.push.driver` names, or, when it names none, the
+  /// only one there is.
   ///
-  /// The fallback is what makes the registry reachable without a boot: a test
-  /// registers one double and never runs the provider that would have
-  /// registered the built-in the config names, so a strictly-by-name lookup
-  /// would answer nothing at all. With two or more registered there is no
-  /// unambiguous answer and the caller gets none.
+  /// A PRESENT config value is an instruction, and the only thing that can
+  /// serve it is a factory registered under that name. Falling back to "the
+  /// only one there is" would hand the app a driver nobody selected, and it
+  /// would silence the provider's unservable-value error too: that check reads
+  /// a served driver as a consumer having supplied their own.
+  ///
+  /// With no value configured there is no instruction to contradict, and one
+  /// registered factory is an unambiguous answer. That fallback is what makes
+  /// the registry reachable without a boot: a test registers one double and
+  /// never runs the provider that would have registered the built-in. With two
+  /// or more registered there is no unambiguous answer and the caller gets none.
   PushDriver Function()? _pushFactory() {
     if (_pushFactories.isEmpty) return null;
 
     final String? configured = Config.get<String>('notifications.push.driver');
-    final PushDriver Function()? named =
-        configured == null ? null : _pushFactories[configured];
-    if (named != null) return named;
+    if (configured != null && configured.isNotEmpty) {
+      return _pushFactories[configured];
+    }
 
     if (_pushFactories.length == 1) return _pushFactories.values.first;
 
@@ -474,8 +554,16 @@ class NotificationManager {
   }
 
   /// Listens to everything [driver] reports, replacing any earlier attachment.
+  ///
+  /// The subject guard is handed to the driver here, rather than reimplemented
+  /// there: [_addressedToIntent] is the only comparison in this package, and a
+  /// driver that can refuse to DRAW a notification needs the same answer the
+  /// republish path uses.
   void _attachPushDriver(PushDriver driver) {
     _detachPushDriver();
+
+    _attachedPushDriver = driver;
+    driver.subjectGuard = _addressedToIntent;
 
     _pushReceivedSubscription =
         driver.onNotificationReceived.listen(_onPushReceived);
@@ -487,6 +575,9 @@ class NotificationManager {
 
   /// Stops listening to the attached driver.
   void _detachPushDriver() {
+    _attachedPushDriver?.subjectGuard = null;
+    _attachedPushDriver = null;
+
     _pushReceivedSubscription?.cancel();
     _pushReceivedSubscription = null;
     _pushClickedSubscription?.cancel();
@@ -530,9 +621,14 @@ class NotificationManager {
   Future<void> want(String? externalId) async {
     final String? wanted = _blankToNull(externalId);
 
-    // A `want` before the first reconcile is fresher than whatever the vault
-    // holds, so the load is marked done rather than allowed to overwrite it.
-    _pushIntentLoaded = true;
+    // The vault is read BEFORE the equality check, and the check is what makes
+    // that load load-bearing: on a signed-out cold boot `logoutPush()` calls
+    // this with null while the in-memory intent is still null and the vault
+    // still holds the previous person, so an early return here would skip the
+    // delete and leave that id to be read back, and logged in, on the next
+    // boot. The load is a no-op once it has run, so a `want` that follows one
+    // still overwrites what the vault held.
+    await _loadPushIntent();
 
     if (_pushIntent == wanted) return;
 
@@ -554,13 +650,55 @@ class NotificationManager {
   /// Safe to call with no driver, and safe to call on every auth-state change.
   /// It does not retry: OneSignal retries the network call itself, and the job
   /// here is proving the call was issued against the right id.
+  ///
+  /// Single-flight. A caller arriving while a pass is running JOINS it instead
+  /// of starting a second one: the consumer fires this unawaited from more than
+  /// one lifecycle path, those paths overlap on a restore-then-bump, and two
+  /// passes both reading `actual != intent` both call `login()`. That is the
+  /// double call the SDK's own single-flight patch exists to survive, and
+  /// re-creating it one layer above the SDK is not a thing to leave in place.
+  /// Joining is not dropping, either: the intent can move while a pass runs, so
+  /// a joiner whose intent the pass did not cover runs its own afterwards.
   Future<void> reconcilePushIdentity() async {
+    // 1. Join whatever is already running, and keep joining: a caller that woke
+    //    up behind another joiner's fresh pass has to join THAT one too, or the
+    //    two run side by side and the duplicate login is back.
+    while (true) {
+      final Future<void>? inFlight = _reconcileInFlight;
+      if (inFlight == null) break;
+
+      await inFlight;
+
+      // Not a retry, which was deliberately refused: only an intent that MOVED
+      // under the pass earns another one. A pass that failed on the intent this
+      // caller wants stays failed, and [pushIdentityError] carries the reason.
+      if (_pushIntent == _reconciledIntent) return;
+    }
+
+    // 2. Publish the pass before the first await, so a caller arriving in the
+    //    same turn of the loop sees it and joins.
+    final Completer<void> pass = Completer<void>();
+    _reconcileInFlight = pass.future;
+
+    try {
+      await _runPushIdentityPass();
+    } finally {
+      // Cleared BEFORE the joiners are woken, so one of them can start the next
+      // pass rather than joining a future that has already completed.
+      _reconcileInFlight = null;
+      pass.complete();
+    }
+  }
+
+  /// One reconcile pass, with no single-flight of its own.
+  Future<void> _runPushIdentityPass() async {
     await _loadPushIntent();
 
     final PushDriver? driver = pushDriverOrNull;
-    if (driver == null) return;
-
     final String? intent = _pushIntent;
+    _reconciledIntent = intent;
+
+    if (driver == null) return;
 
     try {
       final String? actual = _blankToNull(await driver.currentExternalId());
@@ -644,16 +782,29 @@ class NotificationManager {
 
   /// Whether a payload is addressed to the person this device is subscribed as.
   ///
-  /// The receive-side half of the identity guard, and the half that actually
-  /// prevents the leak: convergence is unachievable offline, so the
-  /// un-converged window has to be SAFE rather than short.
+  /// The receive-side half of the identity guard: convergence is unachievable
+  /// offline, so the un-converged window has to be SAFE rather than short.
+  ///
+  /// What it makes safe is bounded, and the bound is worth stating plainly. It
+  /// covers the in-app republish, and, through [PushDriver.subjectGuard], the
+  /// OS notification a FOREGROUNDED app is asked about before it is drawn.
+  /// Backgrounded or killed, no client code runs at all and the OS draws
+  /// whatever arrives; only the server can close that half, by not addressing
+  /// a subscription it believes is stale.
   ///
   /// A payload carrying NO subject is un-checkable and is delivered, because a
   /// server older than that payload key must not silence the client.
+  ///
+  /// An intent nothing has READ yet is un-checkable for the same reason: it is
+  /// not a report that this device carries nobody, and comparing against it
+  /// drops a real page. Resolving a driver attaches this listener, and the SDK
+  /// replays a cold start from a notification TAP while it initialises, which
+  /// is before anything has been near the vault.
   bool _addressedToIntent(Map<String, dynamic> data) {
     final Object? subject = data['subject'];
     if (subject == null) return true;
     if (subject is String && subject.isEmpty) return true;
+    if (!_pushIntentLoaded) return true;
 
     if (subject.toString() == _pushIntent) return true;
 
@@ -664,6 +815,15 @@ class NotificationManager {
 
     return false;
   }
+
+  /// Reads the persisted intent into memory, once per process.
+  ///
+  /// Public because the ORDER matters and only the caller controls it: the
+  /// service provider runs this before it resolves a driver, because resolving
+  /// one attaches the push listeners and the SDK replays a cold-start tap while
+  /// it initialises. Called again later it is free, so wiring it early costs
+  /// nothing anywhere else.
+  Future<void> loadPushIntent() => _loadPushIntent();
 
   /// Reads the persisted intent once per process.
   Future<void> _loadPushIntent() async {
@@ -770,9 +930,34 @@ class NotificationManager {
   /// Call it on sign-out. The intent goes to `null` first and is persisted
   /// there, so a `logout()` that fails, or an app killed before it finished,
   /// still leaves a device that knows it should be subscribed as nobody.
+  ///
+  /// It also drops the rows held for the session that just ended, because this
+  /// is the sign-out call: it runs on a build with no push driver at all, and
+  /// it is unconditional, where `want(null)` returns early on a device whose
+  /// intent is already null.
   Future<void> logoutPush() async {
+    // Here rather than in [stopPolling], which is NOT a sign-out: [startRealtime]
+    // calls it on its way in, so clearing there would empty the bell every time
+    // a socket comes up.
+    _clearCachedNotifications();
+
     await want(null);
     await reconcilePushIdentity();
+  }
+
+  /// Drops the notifications held for the session that just ended and publishes
+  /// the empty state.
+  ///
+  /// [notifications] hands its cached list to every new listener immediately,
+  /// so without this the next person on a shared device reads the previous
+  /// person's incident titles and monitor names off the bell until the first
+  /// fetch lands. Bumping [_session] is the other half: a read issued for the
+  /// previous session is still in flight and answers with their rows.
+  void _clearCachedNotifications() {
+    _session++;
+    _notifications = <DatabaseNotification>[];
+    _framesDuringFetch.clear();
+    _notificationController.add(_notifications);
   }
 
   // ========================================
@@ -988,7 +1173,7 @@ class NotificationManager {
       );
       // Applied immediately either way, so the bell shows it without waiting;
       // the buffer only exists so a read completing after this cannot drop it.
-      if (_fetching) {
+      if (_fetchesInFlight > 0) {
         _framesDuringFetch.add(incoming);
       }
       _notifications = _prependKeyedById(incoming, _notifications);

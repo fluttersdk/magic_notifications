@@ -6,6 +6,7 @@ import 'package:magic/magic.dart';
 import 'package:magic_notifications/src/models/database_notification.dart';
 import 'package:magic_notifications/src/ui/components/notification_dropdown/notification_dropdown.dart';
 import 'package:magic_notifications/src/ui/components/notification_dropdown/notification_dropdown.preview.dart';
+import 'package:magic_notifications/src/ui/components/notification_dropdown/notification_dropdown.recipe.dart';
 
 import '../../test_helper.dart';
 
@@ -233,6 +234,172 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('a read and an unread row resolve to one className', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(NotificationDropdown(notificationStream: streamController.stream)),
+    );
+
+    streamController.add([
+      makeNotification(),
+      makeNotification(isRead: true),
+    ]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.byIcon(Icons.notifications_outlined));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final List<WDiv> rows = tester
+        .widgetList<WDiv>(find.byType(WDiv))
+        .where((div) => div.className?.contains('items-start') ?? false)
+        .toList();
+
+    expect(rows, hasLength(2));
+
+    // Two classNames for one row shape is two parser cache keys per row, so a
+    // list of twenty notifications parses twice as many variants as it has
+    // shapes. The unread difference belongs in `states:`, which the parser
+    // resolves against ONE cached string.
+    expect(rows.first.className, rows.last.className);
+    expect(
+      rows.where((row) => row.states?.contains('unread') ?? false),
+      hasLength(1),
+    );
+
+    // One className plus a state is only a fix if the state actually fires; a
+    // mistyped state name would satisfy every assertion above and render both
+    // rows identically. The unread title is the one that paints heavier, as it
+    // did when the weight was interpolated into the string.
+    final List<FontWeight?> weights = tester
+        .widgetList<Text>(find.text('Test Notification'))
+        .map((text) => text.style?.fontWeight)
+        .toList();
+
+    expect(weights, hasLength(2));
+    expect(weights.toSet(), hasLength(2));
+    expect(weights, contains(FontWeight.w600));
+  });
+
+  testWidgets('the unread row tint carries its dark peer', (tester) async {
+    await tester.pumpWidget(
+      wrap(NotificationDropdown(notificationStream: streamController.stream)),
+    );
+
+    streamController.add([makeNotification()]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.byIcon(Icons.notifications_outlined));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final WDiv row = tester
+        .widgetList<WDiv>(find.byType(WDiv))
+        .firstWhere((div) => div.className?.contains('items-start') ?? false);
+
+    // A structural check over the className string, not a rendered colour: the
+    // widget test runs in one brightness, so the dark half of every pair is
+    // unreachable by rendering and only the string can carry the assertion.
+    expect(row.className, contains('unread:bg-primary/5'));
+    expect(row.className, contains('dark:unread:bg-primary/10'));
+  });
+
+  testWidgets('the mark-all-as-read hover stays on the adopter brand', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(
+        NotificationDropdown(
+          notificationStream: streamController.stream,
+          onMarkAllAsRead: () async {},
+        ),
+      ),
+    );
+
+    streamController.add([makeNotification()]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.byIcon(Icons.notifications_outlined));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final WText action = tester.widget<WText>(
+      find.byWidgetPredicate(
+        (widget) => widget is WText && widget.data == 'Mark all as read',
+      ),
+    );
+
+    // `text-primary` resolves to the ADOPTER's brand, so a hover jumping to a
+    // fixed palette green reads as deliberate only while the adopter happens to
+    // be green. Structural again: hover is a rendered state this test does not
+    // enter, so the assertion is over the token, not over a painted colour.
+    expect(action.className, contains('hover:text-primary'));
+    expect(action.className, isNot(contains('green')));
+  });
+
+  group('NotificationDropdown defaults — dark-mode pairing', () {
+    /// Asserts every colour [families] in [className] declares both a light
+    /// token and a `dark:` peer of the same family.
+    ///
+    /// This is a structural check over the default string rather than a
+    /// rendered one: a widget test paints in a single brightness, so the dark
+    /// half of a pair can only be asserted as a token.
+    void expectDarkPeers(String className, {required Set<String> families}) {
+      final List<String> tokens = className
+          .split(RegExp(r'\s+'))
+          .where((token) => token.isNotEmpty)
+          .toList();
+
+      for (final family in families) {
+        expect(
+          tokens.where(
+            (token) => token.startsWith('$family-'),
+          ),
+          isNotEmpty,
+          reason: 'expected a light-mode $family- token',
+        );
+        expect(
+          tokens.where((token) => token.startsWith('dark:$family-')),
+          isNotEmpty,
+          reason: 'expected a dark: peer for the $family- token',
+        );
+      }
+    }
+
+    test('the badge pill pairs its background', () {
+      expectDarkPeers(
+        kNotificationDropdownBadgeClassName,
+        families: <String>{'bg'},
+      );
+    });
+
+    test('the badge count pairs its text colour', () {
+      expectDarkPeers(
+        kNotificationDropdownBadgeTextClassName,
+        families: <String>{'text'},
+      );
+    });
+
+    test('the panel, trigger and glyph keep the pairing they already had', () {
+      expectDarkPeers(
+        kNotificationDropdownPanelClassName,
+        families: <String>{'bg', 'border'},
+      );
+      expectDarkPeers(
+        kNotificationDropdownTriggerClassName,
+        families: <String>{'hover:bg'},
+      );
+      expectDarkPeers(
+        kNotificationDropdownTriggerIconClassName,
+        families: <String>{'text'},
+      );
+    });
   });
 
   testWidgets('the dropdown preview renders without error', (tester) async {

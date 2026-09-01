@@ -125,6 +125,78 @@ void main() {
       );
     });
 
+    // The endpoint derives the recipient from the authenticated session, so
+    // this channel can only ever page the CALLER. A notifiable naming somebody
+    // else used to page the caller instead, silently.
+    group('the recipient is the authenticated user, or nobody', () {
+      tearDown(Auth.unfake);
+
+      test('send() refuses a notifiable that is not the authenticated user',
+          () async {
+        final FakeNetworkDriver network = Http.fake(<String, MagicResponse>{
+          'notifications/push-test': Http.response(
+            <String, dynamic>{'delivered': true},
+            202,
+          ),
+        });
+        Auth.fake(user: _makeUser(1));
+
+        final channel = PushChannel(MockPushDriver());
+        final message = PushMessage()
+          ..heading('Monitor Down')
+          ..content('api.example.com is not responding');
+        final notification = TestNotification(pushMessage: message);
+
+        await expectLater(
+          channel.send(TestNotifiable('2'), notification),
+          throwsA(isA<NotificationException>()),
+        );
+        network.assertNothingSent();
+      });
+
+      test('send() sends for the authenticated user', () async {
+        final FakeNetworkDriver network = Http.fake(<String, MagicResponse>{
+          'notifications/push-test': Http.response(
+            <String, dynamic>{'delivered': true},
+            202,
+          ),
+        });
+        Auth.fake(user: _makeUser(1));
+
+        final channel = PushChannel(MockPushDriver());
+        final message = PushMessage()
+          ..heading('Monitor Down')
+          ..content('api.example.com is not responding');
+        final notification = TestNotification(pushMessage: message);
+
+        await channel.send(TestNotifiable('1'), notification);
+
+        network.assertSentCount(1);
+      });
+
+      test('send() sends when nobody is authenticated', () async {
+        // Nothing here can tell whose device this is, so the check has no
+        // answer to give and the endpoint answers 401 instead.
+        final FakeNetworkDriver network = Http.fake(<String, MagicResponse>{
+          'notifications/push-test': Http.response(
+            <String, dynamic>{'delivered': true},
+            202,
+          ),
+        });
+        Auth.fake();
+
+        final channel = PushChannel(MockPushDriver());
+        final message = PushMessage()
+          ..heading('Monitor Down')
+          ..content('api.example.com is not responding');
+        final notification = TestNotification(pushMessage: message);
+
+        await channel.send(TestNotifiable('7'), notification);
+
+        network.assertSentCount(1);
+      });
+    });
+
     test('send() respects the preference matrix and makes no request',
         () async {
       final FakeNetworkDriver network = Http.fake();
@@ -144,6 +216,27 @@ void main() {
       network.assertNothingSent();
     });
   });
+}
+
+/// A user model the fake auth guard can hold.
+class _User extends Model with Authenticatable {
+  @override
+  String get table => 'users';
+
+  @override
+  String get resource => 'users';
+
+  @override
+  List<String> get fillable => ['id'];
+}
+
+/// Builds a persisted [_User] carrying [id].
+_User _makeUser(int id) {
+  final user = _User();
+  user.fill({'id': id});
+  user.exists = true;
+
+  return user;
 }
 
 class MockPushDriver extends PushDriver {

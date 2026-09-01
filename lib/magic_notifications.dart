@@ -34,6 +34,7 @@ export 'src/ui/views/notifications_list_view.dart';
 export 'src/ui/views/notification_preferences_view.dart';
 export 'src/ui/components/notification_dropdown/index.dart';
 export 'src/http/notification_preferences_controller.dart';
+export 'src/http/notifications_list_controller.dart';
 
 // Exceptions
 export 'src/exceptions/notification_exception.dart';
