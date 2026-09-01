@@ -13,14 +13,24 @@ import 'dart:js_interop_unsafe';
 ///
 /// This should be called once during app startup. Config options:
 /// - `appId` (required): Your OneSignal App ID
-/// - `safariWebId` (optional): Safari Web ID for Safari browser support
+/// - `safariWebId` (optional): Safari Web ID for the legacy Safari path
 /// - `notifyButtonEnabled` (optional): Show floating bell widget (default: false)
-Future<void> init({
+/// - `serviceWorkerPath` (optional): Path to `OneSignalSDKWorker.js`
+/// - `serviceWorkerScope` (optional): Scope to register that worker under
+/// - `timeout` (optional): How long to wait for the SDK's own init callback
+///
+/// Returns `true` only when the SDK ran the init callback we queued. A page
+/// that never loads the OneSignal script answers `false` after [timeout]
+/// rather than pretending the SDK came up.
+Future<bool> init({
   required String appId,
   String? safariWebId,
   bool notifyButtonEnabled = false,
+  String? serviceWorkerPath,
+  String? serviceWorkerScope,
+  Duration timeout = const Duration(seconds: 10),
 }) async {
-  // Build the init config object
+  // 1. Build the init config object.
   final initConfig = JSObject();
   initConfig['appId'] = appId.toJS;
 
@@ -28,24 +38,56 @@ Future<void> init({
     initConfig['safari_web_id'] = safariWebId.toJS;
   }
 
+  // A Flutter web build already registers its own worker at the root scope,
+  // which OneSignal's docs name as a conflict; a path plus a narrower scope is
+  // the resolution they recommend.
+  if (serviceWorkerPath != null && serviceWorkerPath.isNotEmpty) {
+    initConfig['serviceWorkerPath'] = serviceWorkerPath.toJS;
+  }
+  if (serviceWorkerScope != null && serviceWorkerScope.isNotEmpty) {
+    final serviceWorkerParam = JSObject();
+    serviceWorkerParam['scope'] = serviceWorkerScope.toJS;
+    initConfig['serviceWorkerParam'] = serviceWorkerParam;
+  }
+
   // NotifyButton config
   final notifyButton = JSObject();
   notifyButton['enable'] = notifyButtonEnabled.toJS;
   initConfig['notifyButton'] = notifyButton;
 
-  // Push the init call to OneSignalDeferred
-  final oneSignalDeferred = globalContext['OneSignalDeferred'] as JSArray?;
-  if (oneSignalDeferred != null) {
-    // Create callback function that will be called with OneSignal object
-    void initCallback(JSObject oneSignal) {
-      oneSignal.callMethod('init'.toJS, initConfig);
-    }
-
-    oneSignalDeferred.callMethod('push'.toJS, initCallback.toJS);
+  // 2. Queue the init call on OneSignalDeferred, creating the queue when the
+  //    page did not: the SDK script drains whatever array it finds under that
+  //    name, so one we create is still the one it reads.
+  var deferred = globalContext['OneSignalDeferred'];
+  if (deferred == null || deferred.isUndefinedOrNull) {
+    deferred = JSArray();
+    globalContext['OneSignalDeferred'] = deferred;
   }
 
-  // Wait a bit for init to complete
-  await Future.delayed(const Duration(milliseconds: 500));
+  // 3. Complete from INSIDE the callback, so a resolved future means the SDK
+  //    really initialized rather than that a fixed delay elapsed.
+  final completer = Completer<bool>();
+
+  void initCallback(JSObject oneSignal) {
+    final result = oneSignal.callMethod('init'.toJS, initConfig);
+    if (result == null || result.isUndefinedOrNull) {
+      if (!completer.isCompleted) completer.complete(true);
+      return;
+    }
+
+    (result as JSPromise).toDart.then(
+      (_) {
+        if (!completer.isCompleted) completer.complete(true);
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!completer.isCompleted) completer.completeError(error, stackTrace);
+      },
+    );
+  }
+
+  (deferred as JSArray).callMethod('push'.toJS, initCallback.toJS);
+
+  return completer.future.timeout(timeout, onTimeout: () => false);
 }
 
 /// Whether the OneSignal SDK is available and initialized.
@@ -186,6 +228,21 @@ bool getPermission() {
     // Ignore errors
   }
   return false;
+}
+
+/// Gets the browser's own notification permission.
+///
+/// Returns `granted`, `denied` or `default`, or `null` when the browser has no
+/// Notification API at all. The OneSignal Web SDK only exposes a bare boolean,
+/// which cannot tell a blocked browser from one that was never asked.
+String? getBrowserPermission() {
+  final notification = globalContext['Notification'];
+  if (notification == null || notification.isUndefinedOrNull) return null;
+
+  final permission = (notification as JSObject)['permission'];
+  if (permission == null || permission.isUndefinedOrNull) return null;
+
+  return (permission as JSString).toDart;
 }
 
 /// Gets the current opt-in state.

@@ -13,6 +13,27 @@ enum PushPermissionState {
   provisional,
 }
 
+/// Whether push can actually reach a device right now.
+///
+/// This answers a different question from [PushPermissionState]: a device can
+/// be permitted and still unreachable, so a soft-prompt policy reads this
+/// rather than the permission enum. It is derived from the permission, the
+/// opt-in flag and the presence of a subscription id.
+enum PushReachability {
+  /// No push driver exists on this build, so nothing can be reached.
+  unavailable,
+
+  /// Permission was denied and the platform will not prompt again.
+  blocked,
+
+  /// Reachable in principle but off today: never asked, not opted in, or with
+  /// no subscription yet.
+  off,
+
+  /// Permitted, opted in, and holding a subscription the server can address.
+  on,
+}
+
 /// Represents a push notification subscription.
 class PushSubscription {
   /// The OneSignal subscription ID.

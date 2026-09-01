@@ -34,6 +34,44 @@ void main() {
       }
     });
 
+    // The mobile driver talks to the static OneSignal SDK directly and has no
+    // seam a VM test can substitute, so everything below covers the guard
+    // clauses that run BEFORE any SDK call. Anything past initialize() needs a
+    // device or an emulator.
+    group('before initialization', () {
+      test('isInitialized is false', () {
+        expect(OneSignalDriver().isInitialized, isFalse);
+      });
+
+      test('permissionState is notDetermined, never denied', () async {
+        // A device that was never asked must not read as denied, or a prompt
+        // gated on "not denied" never shows.
+        expect(
+          await OneSignalDriver().permissionState(),
+          PushPermissionState.notDetermined,
+        );
+      });
+
+      test('currentExternalId is null without reaching the SDK', () async {
+        expect(await OneSignalDriver().currentExternalId(), isNull);
+      });
+
+      test('currentSubscriptionId is null without reaching the SDK', () async {
+        expect(await OneSignalDriver().currentSubscriptionId(), isNull);
+      });
+
+      test('onIdentityChanged is a broadcast stream', () {
+        expect(OneSignalDriver().onIdentityChanged.isBroadcast, isTrue);
+      });
+
+      test('reachability is unavailable off iOS and Android', () async {
+        final driver = OneSignalDriver();
+        if (!driver.isSupported) {
+          expect(await driver.reachability(), PushReachability.unavailable);
+        }
+      });
+    });
+
     // Note: Full OneSignal integration tests require real device/emulator
     // These tests verify the driver interface, not OneSignal SDK behavior
   });

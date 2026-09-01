@@ -35,17 +35,26 @@ class OneSignalJsInterop {
   ///
   /// This should be called once during app startup. Config options:
   /// - `appId` (required): Your OneSignal App ID
-  /// - `safariWebId` (optional): Safari Web ID for Safari browser support
+  /// - `safariWebId` (optional): Safari Web ID for the legacy Safari path
   /// - `notifyButtonEnabled` (optional): Show floating bell widget (default: false)
-  static Future<void> init({
+  /// - `serviceWorkerPath` (optional): Path to `OneSignalSDKWorker.js`
+  /// - `serviceWorkerScope` (optional): Scope to register that worker under
+  ///
+  /// Returns `true` only when the SDK's own init callback ran, so a page
+  /// without the OneSignal script answers `false` instead of a false success.
+  static Future<bool> init({
     required String appId,
     String? safariWebId,
     bool notifyButtonEnabled = false,
+    String? serviceWorkerPath,
+    String? serviceWorkerScope,
   }) =>
       impl.init(
         appId: appId,
         safariWebId: safariWebId,
         notifyButtonEnabled: notifyButtonEnabled,
+        serviceWorkerPath: serviceWorkerPath,
+        serviceWorkerScope: serviceWorkerScope,
       );
 
   /// Whether the OneSignal SDK is available in the current environment.
@@ -110,6 +119,13 @@ class OneSignalJsInterop {
   ///
   /// Returns `true` if permission is granted, `false` otherwise.
   static bool getPermission() => impl.getPermission();
+
+  /// Gets the browser's own notification permission.
+  ///
+  /// Returns `granted`, `denied`, `default`, or `null` when the browser has no
+  /// Notification API. [getPermission] cannot distinguish a blocked browser
+  /// from one that was never asked; this can.
+  static String? getBrowserPermission() => impl.getBrowserPermission();
 
   /// Gets the current opt-in state.
   ///

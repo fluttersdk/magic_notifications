@@ -46,7 +46,8 @@ class MockPushDriver extends PushDriver {
   @override
   bool get isSupported => supported;
   @override
-  PushPermissionState get permissionState => PushPermissionState.notDetermined;
+  Future<PushPermissionState> permissionState() async =>
+      PushPermissionState.notDetermined;
   @override
   bool get isOptedIn => false;
   @override
@@ -55,6 +56,10 @@ class MockPushDriver extends PushDriver {
   Future<void> login(String externalId) async {}
   @override
   Future<void> logout() async {}
+  @override
+  Future<String?> currentExternalId() async => null;
+  @override
+  Future<String?> currentSubscriptionId() async => null;
   @override
   Future<bool> requestPermission() async => true;
   @override
@@ -71,6 +76,8 @@ class MockPushDriver extends PushDriver {
   Stream<PushNotificationEvent> get onNotificationClicked => Stream.empty();
   @override
   Stream<PushPermissionState> get onPermissionChanged => Stream.empty();
+  @override
+  Stream<PushIdentityChange> get onIdentityChanged => Stream.empty();
 }
 
 class TestNotifiable with Notifiable {

@@ -41,6 +41,8 @@ class OneSignalWebDriver extends PushDriver {
       StreamController<PushNotificationEvent>.broadcast();
   final StreamController<PushPermissionState> _permissionController =
       StreamController<PushPermissionState>.broadcast();
+  final StreamController<PushIdentityChange> _identityController =
+      StreamController<PushIdentityChange>.broadcast();
 
   bool _initialized = false;
 
@@ -50,16 +52,29 @@ class OneSignalWebDriver extends PushDriver {
   @override
   bool get isSupported => kIsWeb;
 
+  /// Whether [initialize] saw the SDK's own init callback run.
+  bool get isInitialized => _initialized;
+
   @override
-  PushPermissionState get permissionState {
+  Future<PushPermissionState> permissionState() async {
     if (!_initialized) return PushPermissionState.notDetermined;
 
-    // Query actual permission state from JS SDK
-    final hasPermission = OneSignalJsInterop.getPermission();
-    if (hasPermission) {
-      return PushPermissionState.authorized;
-    }
-    return PushPermissionState.notDetermined;
+    // The SDK's own `Notifications.permission` is a bare boolean, so a blocked
+    // browser and one that was never asked look identical through it. The
+    // browser's own tri-state is the only source that separates them.
+    return permissionStateFor(OneSignalJsInterop.getBrowserPermission());
+  }
+
+  /// Maps a browser `Notification.permission` value onto the permission enum.
+  ///
+  /// `null` means the browser has no Notification API, so nothing has been
+  /// asked and nothing can be.
+  static PushPermissionState permissionStateFor(String? browserPermission) {
+    return switch (browserPermission) {
+      'granted' => PushPermissionState.authorized,
+      'denied' => PushPermissionState.denied,
+      _ => PushPermissionState.notDetermined,
+    };
   }
 
   @override
@@ -68,18 +83,14 @@ class OneSignalWebDriver extends PushDriver {
     return OneSignalJsInterop.getOptedIn();
   }
 
-  /// Gets the current subscription ID from the OneSignal SDK.
-  ///
-  /// Returns `null` if not initialized or no subscription exists.
-  String? get subscriptionId {
+  @override
+  Future<String?> currentSubscriptionId() async {
     if (!_initialized) return null;
     return OneSignalJsInterop.getSubscriptionId();
   }
 
-  /// Gets the current external user ID from the OneSignal SDK.
-  ///
-  /// Returns `null` if not initialized or no external ID is set.
-  String? get externalId {
+  @override
+  Future<String?> currentExternalId() async {
     if (!_initialized) return null;
     return OneSignalJsInterop.getExternalId();
   }
@@ -113,13 +124,27 @@ class OneSignalWebDriver extends PushDriver {
     final safariWebId = config['safari_web_id'] as String?;
     final notifyButtonEnabled =
         config['notify_button_enabled'] as bool? ?? false;
+    final serviceWorkerPath = config['service_worker_path'] as String?;
+    final serviceWorkerScope = config['service_worker_scope'] as String?;
 
     // Initialize OneSignal via JS interop with all config values
-    await OneSignalJsInterop.init(
+    final initialized = await OneSignalJsInterop.init(
       appId: appId,
       safariWebId: safariWebId,
       notifyButtonEnabled: notifyButtonEnabled,
+      serviceWorkerPath: serviceWorkerPath,
+      serviceWorkerScope: serviceWorkerScope,
     );
+
+    // A page without the OneSignal script queues our callback and nothing ever
+    // runs it. Refuse rather than report a readiness this driver never reached.
+    if (!initialized) {
+      throw NotificationException(
+        'OneSignal Web SDK did not initialize. Check that the SDK script is '
+        'loaded in web/index.html.',
+        code: 'SDK_NOT_AVAILABLE',
+      );
+    }
 
     _initialized = true;
 
@@ -129,12 +154,12 @@ class OneSignalWebDriver extends PushDriver {
 
   /// Sets up event listeners for OneSignal SDK events.
   void _setupEventListeners() {
-    // Permission change listener
+    // Permission change listener. The event carries a bare bool, so re-read the
+    // browser's tri-state rather than collapsing it onto denied.
     OneSignalJsInterop.addPermissionChangeListener((permission) {
+      if (_permissionController.isClosed) return;
       _permissionController.add(
-        permission
-            ? PushPermissionState.authorized
-            : PushPermissionState.denied,
+        permissionStateFor(OneSignalJsInterop.getBrowserPermission()),
       );
     });
 
@@ -147,6 +172,36 @@ class OneSignalWebDriver extends PushDriver {
     OneSignalJsInterop.addNotificationForegroundListener((event) {
       _receivedController.add(PushNotificationEvent(event));
     });
+
+    // Identity listeners. The SDK reports the user and the subscription
+    // separately, so each event carries only the half it knows.
+    OneSignalJsInterop.addUserStateChangeListener((event) {
+      if (_identityController.isClosed) return;
+      final current = _currentOf(event);
+      _identityController.add(
+        PushIdentityChange(externalId: current['externalId'] as String?),
+      );
+    });
+
+    OneSignalJsInterop.addSubscriptionChangeListener((event) {
+      if (_identityController.isClosed) return;
+      final current = _currentOf(event);
+      _identityController.add(
+        PushIdentityChange(
+          subscriptionId: current['id'] as String?,
+          optedIn: current['optedIn'] as bool?,
+        ),
+      );
+    });
+  }
+
+  /// Reads the `current` state out of an SDK change event.
+  ///
+  /// Both web change events wrap their state in a `current` object; an event
+  /// without one carries nothing this driver can report.
+  Map<String, dynamic> _currentOf(Map<String, dynamic> event) {
+    final current = event['current'];
+    return current is Map<String, dynamic> ? current : const {};
   }
 
   @override
@@ -213,6 +268,10 @@ class OneSignalWebDriver extends PushDriver {
   Stream<PushPermissionState> get onPermissionChanged =>
       _permissionController.stream;
 
+  @override
+  Stream<PushIdentityChange> get onIdentityChanged =>
+      _identityController.stream;
+
   /// Generates the HTML/JavaScript code needed to initialize OneSignal on web.
   ///
   /// Add this to your `web/index.html` `<head>` section.
@@ -223,15 +282,27 @@ class OneSignalWebDriver extends PushDriver {
   ///   appId: '4573490d-2dfa-44c3-b211-8e04e2e96bdd',
   ///   safariWebId: 'web.onesignal.auto.abc123',
   ///   notifyButtonEnabled: true,
+  ///   serviceWorkerPath: 'push/OneSignalSDKWorker.js',
+  ///   serviceWorkerScope: '/push/',
   /// );
   /// ```
   static String getWebInitScript({
     required String appId,
     String? safariWebId,
     bool notifyButtonEnabled = false,
+    String? serviceWorkerPath,
+    String? serviceWorkerScope,
   }) {
     final safariLine =
         safariWebId != null ? '\n      safari_web_id: "$safariWebId",' : '';
+    // A Flutter build owns the root scope with its own service worker, so the
+    // OneSignal worker needs its own path and scope to avoid the collision.
+    final workerPathLine = serviceWorkerPath != null
+        ? '\n      serviceWorkerPath: "$serviceWorkerPath",'
+        : '';
+    final workerScopeLine = serviceWorkerScope != null
+        ? '\n      serviceWorkerParam: { scope: "$serviceWorkerScope" },'
+        : '';
 
     return '''
 <script src="$_sdkUrl" defer></script>
@@ -239,7 +310,7 @@ class OneSignalWebDriver extends PushDriver {
   window.OneSignalDeferred = window.OneSignalDeferred || [];
   OneSignalDeferred.push(async function(OneSignal) {
     await OneSignal.init({
-      appId: "$appId",$safariLine
+      appId: "$appId",$safariLine$workerPathLine$workerScopeLine
       notifyButton: {
         enable: $notifyButtonEnabled,
       },
@@ -255,10 +326,15 @@ class OneSignalWebDriver extends PushDriver {
     required String appId,
     String? safariWebId,
     bool notifyButtonEnabled = false,
+    String? serviceWorkerPath,
+    String? serviceWorkerScope,
   }) {
     return {
       'app_id': appId,
       if (safariWebId != null) 'safari_web_id': safariWebId,
+      if (serviceWorkerPath != null) 'service_worker_path': serviceWorkerPath,
+      if (serviceWorkerScope != null)
+        'service_worker_scope': serviceWorkerScope,
       'notify_button_enabled': notifyButtonEnabled,
     };
   }
@@ -268,5 +344,6 @@ class OneSignalWebDriver extends PushDriver {
     _receivedController.close();
     _clickedController.close();
     _permissionController.close();
+    _identityController.close();
   }
 }

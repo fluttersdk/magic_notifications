@@ -7,12 +7,17 @@ library;
 
 /// Initialize OneSignal with configuration.
 ///
-/// No-op on non-web platforms.
-Future<void> init({
+/// Always reports `false` on non-web platforms: there is no SDK here, so no
+/// init callback can ever have run.
+Future<bool> init({
   required String appId,
   String? safariWebId,
   bool notifyButtonEnabled = false,
-}) async {}
+  String? serviceWorkerPath,
+  String? serviceWorkerScope,
+  Duration timeout = const Duration(seconds: 10),
+}) async =>
+    false;
 
 /// Whether the OneSignal SDK is available.
 ///
@@ -63,6 +68,11 @@ Future<void> removeTags(List<String> keys) async {}
 ///
 /// Always returns `false` on non-web platforms.
 bool getPermission() => false;
+
+/// Gets the browser's own notification permission.
+///
+/// Always returns `null` on non-web platforms: there is no browser to ask.
+String? getBrowserPermission() => null;
 
 /// Gets the current opt-in state.
 ///

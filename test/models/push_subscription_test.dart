@@ -15,6 +15,25 @@ void main() {
     });
   });
 
+  group('PushReachability', () {
+    test('has all expected values', () {
+      expect(
+          PushReachability.values,
+          containsAll([
+            PushReachability.unavailable,
+            PushReachability.blocked,
+            PushReachability.off,
+            PushReachability.on,
+          ]));
+    });
+
+    test('separates a blocked device from one that was never asked', () {
+      // The whole point of the enum: both are unreachable today, but only one
+      // of them can still be turned on by a prompt.
+      expect(PushReachability.blocked, isNot(PushReachability.off));
+    });
+  });
+
   group('PushSubscription', () {
     test('defaults to not opted in', () {
       final sub = PushSubscription();
