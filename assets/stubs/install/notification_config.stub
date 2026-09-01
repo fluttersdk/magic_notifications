@@ -3,6 +3,8 @@ Map<String, dynamic> get notificationConfig => {
   'notifications': {
     'push': {
       'driver': 'onesignal',
+      'service_worker_path': '{{ serviceWorkerPath }}',
+      'service_worker_scope': '{{ serviceWorkerScope }}',
       'app_id': '{{ oneSignalAppId }}',{{ safariWebIdLine }}
       'notify_button_enabled': {{ notifyButtonEnabled }},
     },

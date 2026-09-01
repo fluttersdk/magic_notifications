@@ -102,15 +102,33 @@ Controls the mail notification channel.
 
 ## <a name="soft-prompt"></a>notifications.soft_prompt
 
-Controls the pre-permission soft prompt dialog rendered by `PushPromptDialog`.
+The package does not ship a soft-prompt dialog. It ships the reachability
+read the dialog would need to decide whether to show itself at all:
+`PushDriver.reachability()` on the resolved driver (see
+[Drivers](../basics/drivers.md#abstract)) answers `unavailable`, `blocked`,
+`off`, or `on` without triggering the OS permission dialog. Build the actual
+prompt UI in the host app, gated on that read, using these config values for
+its copy:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | `bool` | `true` | Whether to show the soft prompt before the OS permission dialog. |
-| `title` | `String` | `'Stay Updated'` | Dialog title text. |
-| `message` | `String` | `'Get notified about important events.'` | Dialog body text. |
+| `enabled` | `bool` | `true` | Whether the host app's own soft prompt should show before `Notify.requestPushPermission()`. Read at the call site; the package does not act on it. |
+| `title` | `String` | `'Stay Updated'` | Suggested dialog title text. |
+| `message` | `String` | `'Get notified about important events.'` | Suggested dialog body text. |
 
-When `enabled` is `true`, show `PushPromptDialog` before calling `Notify.requestPushPermission()`. The dialog gives the user context before the non-dismissable OS prompt appears.
+A typical call site checks `reachability()` before deciding what to show:
+
+```dart
+final reachability = await NotificationManager().pushDriver.reachability();
+
+if (reachability == PushReachability.blocked) {
+  // The OS will not re-prompt. Point at the platform setting instead.
+} else if (reachability == PushReachability.off &&
+    Config.get<bool>('notifications.soft_prompt.enabled') == true) {
+  // Show your own dialog using soft_prompt.title / soft_prompt.message,
+  // then call Notify.requestPushPermission() on confirm.
+}
+```
 
 ---
 

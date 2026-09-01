@@ -74,12 +74,13 @@ dart run magic_notifications install --no-soft-prompt
 1. Creates `lib/config/notifications.dart` with your App ID and preferences
 2. Adds `magic_notifications` to `pubspec.yaml`
 3. Android: adds `POST_NOTIFICATIONS` permission to `AndroidManifest.xml`
-4. Web: writes `web/OneSignalSDKWorker.js`, injects SDK `<script>` into `web/index.html`
-5. Injects `NotificationServiceProvider` into `lib/config/app.dart`
-6. Injects `() => notificationConfig` into `lib/main.dart`
+4. iOS: adds `remote-notification` to `UIBackgroundModes` in `ios/Runner/Info.plist`, declares `aps-environment` in `ios/Runner/Runner.entitlements` (creating the file when the project has never had one), and points `CODE_SIGN_ENTITLEMENTS` at it in `ios/Runner.xcodeproj/project.pbxproj`
+5. Web: writes `web/OneSignalSDKWorker.js`, injects SDK `<script>` into `web/index.html`
+6. Injects `NotificationServiceProvider` into `lib/config/app.dart`
+7. Injects `() => notificationConfig` into `lib/main.dart`
 
 > [!NOTE]
-> iOS setup cannot be automated — the wizard prints instructions but does not modify Xcode project files.
+> The APNs key upload to the OneSignal Dashboard and the Apple Developer Portal steps still cannot be automated; the CLI only wires the project-file side.
 
 ---
 
@@ -156,7 +157,7 @@ dart run magic_notifications doctor --verbose
 | Polling interval | Integer in range 5–600 |
 | `soft_prompt` section | Present in config file |
 | Android | `POST_NOTIFICATIONS` in `AndroidManifest.xml` |
-| iOS | `Info.plist` present (manual Xcode steps noted) |
+| iOS | Three real reads: `UIBackgroundModes` in `Info.plist` lists `remote-notification`, `aps-environment` is declared in `Runner.entitlements`, and `CODE_SIGN_ENTITLEMENTS` is set in `project.pbxproj` so Xcode actually reads that entitlements file |
 | Web | `web/OneSignalSDKWorker.js` present |
 
 ---

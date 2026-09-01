@@ -160,4 +160,186 @@ void main() {
 
     expect(find.byIcon(Icons.chevron_left), findsOneWidget);
   });
+
+  testWidgets('renders the loading state before the fetch resolves', (
+    tester,
+  ) async {
+    // Faked so onInit()'s fetch has somewhere real to land instead of hitting
+    // the network; set loading explicitly first so the assertion reads the
+    // state the spinner actually gates on, not a race against that fetch.
+    fakeMatrix(pushProvisioned: true);
+    NotificationPreferencesController.instance.setLoading();
+
+    await tester.pumpWidget(wrap(const NotificationPreferencesView()));
+
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+  });
+
+  testWidgets('renders the empty-matrix state when the backend has nothing', (
+    tester,
+  ) async {
+    Http.fake((request) {
+      return MagicResponse(
+        data: <String, dynamic>{'data': <String, dynamic>{}},
+        statusCode: 200,
+      );
+    });
+
+    await tester.pumpWidget(wrap(const NotificationPreferencesView()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('Nothing to configure'), findsOneWidget);
+  });
+
+  testWidgets('disables the switch for a locked channel', (tester) async {
+    Http.fake((request) {
+      return MagicResponse(
+        data: <String, dynamic>{
+          'data': <String, dynamic>{
+            'incident_opened': <String, dynamic>{
+              'label': 'Incident opened',
+              'channels': <String, dynamic>{
+                'mail': <String, dynamic>{'enabled': true, 'locked': true},
+              },
+            },
+          },
+        },
+        statusCode: 200,
+      );
+    });
+
+    await tester.pumpWidget(wrap(const NotificationPreferencesView()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final switchWidget = tester.widget<WSwitch>(find.byType(WSwitch));
+    expect(switchWidget.disabled, isTrue);
+  });
+
+  testWidgets('a push row with its hint fits a phone width', (tester) async {
+    // Every other case in this file runs at the wrap() helper's fixed size,
+    // which is why an overflow here never showed at that width: the row only
+    // broke at a phone width on a channel carrying the two-line push hint.
+    Http.fake((request) {
+      return MagicResponse(
+        data: <String, dynamic>{
+          'data': <String, dynamic>{
+            'incident_opened': <String, dynamic>{
+              'label': 'Incident opened',
+              'channels': <String, dynamic>{
+                'mail': <String, dynamic>{'enabled': true, 'locked': false},
+                'push': <String, dynamic>{'enabled': true, 'locked': false},
+              },
+            },
+          },
+        },
+        statusCode: 200,
+      );
+    });
+
+    tester.view.physicalSize = const Size(430, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: WindTheme(
+          data: WindThemeData(),
+          child: MediaQuery(
+            data: const MediaQueryData(size: Size(430, 900)),
+            child: const Scaffold(
+              body: SizedBox(
+                width: 430,
+                height: 900,
+                child: NotificationPreferencesView(pushProvisioned: false),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('Push is not set up yet'), findsOneWidget);
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'the preference row must not overflow at a phone width',
+    );
+  });
+
+  testWidgets('a host override wins over the backend-reported flag', (
+    tester,
+  ) async {
+    fakeMatrix(pushProvisioned: false);
+
+    await tester.pumpWidget(
+      wrap(const NotificationPreferencesView(pushProvisioned: true)),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('Push is not set up yet'), findsNothing);
+  });
+
+  testWidgets('renders no hint when the payload carries no provisioning flag', (
+    tester,
+  ) async {
+    // No 'meta' key at all: a backend that predates the flag, not a claim
+    // that push became unconfigured, so the optimistic default must stand.
+    Http.fake((request) {
+      return MagicResponse(
+        data: <String, dynamic>{
+          'data': <String, dynamic>{
+            'incident_opened': <String, dynamic>{
+              'label': 'Incident opened',
+              'channels': <String, dynamic>{
+                'push': <String, dynamic>{'enabled': false, 'locked': false},
+              },
+            },
+          },
+        },
+        statusCode: 200,
+      );
+    });
+
+    await tester.pumpWidget(wrap(const NotificationPreferencesView()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('Push is not set up yet'), findsNothing);
+  });
+
+  testWidgets('keeps the push hint out of the label semantics exclusion', (
+    tester,
+  ) async {
+    fakeMatrix(pushProvisioned: false);
+
+    await tester.pumpWidget(wrap(const NotificationPreferencesView()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // The channel label is excluded from semantics (the switch carries it as
+    // its own semanticLabel), but the hint says something the switch label
+    // does not, so it must stay announceable.
+    expect(
+      find.descendant(
+        of: find.byType(ExcludeSemantics),
+        matching: find.text('Push'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(ExcludeSemantics),
+        matching: find.text('Push is not set up yet'),
+      ),
+      findsNothing,
+    );
+  });
 }

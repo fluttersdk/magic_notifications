@@ -471,36 +471,10 @@ class InstallCommand extends ArtisanInstallCommand {
           : '',
       'notifyButtonEnabled': plan.notifyButtonEnabled.toString(),
       'softPromptEnabled': plan.enableSoftPrompt.toString(),
+      'serviceWorkerPath': _serviceWorkerPath,
+      'serviceWorkerScope': _serviceWorkerScope,
     });
-    return _withScopedServiceWorker(rendered);
-  }
-
-  /// Adds the scoped service-worker keys to a rendered push config.
-  ///
-  /// A Flutter web build registers `flutter_service_worker.js` at the root
-  /// scope and OneSignal's default registration claims the same scope, so the
-  /// two replace each other. Naming the worker and narrowing its scope is the
-  /// arrangement OneSignal documents for that collision. The script itself
-  /// stays at the web root, which the service-worker spec allows: a scope
-  /// narrower than the script's own directory is always permitted, only a
-  /// wider one needs a `Service-Worker-Allowed` header.
-  ///
-  /// @throws [StateError] when the stub carries no push `driver` line to
-  ///         anchor the keys to. A config that silently lost them collides at
-  ///         runtime, with nothing in the project pointing at why.
-  String _withScopedServiceWorker(String config) {
-    const anchor = "'driver': 'onesignal',";
-    if (!config.contains(anchor)) {
-      throw StateError(
-        'The install/notification_config stub has no "$anchor" line to anchor '
-        'the service-worker keys to.',
-      );
-    }
-    return config.replaceFirst(
-      anchor,
-      "$anchor\n      'service_worker_path': '$_serviceWorkerPath',"
-      "\n      'service_worker_scope': '$_serviceWorkerScope',",
-    );
+    return rendered;
   }
 
   /// The `UIBackgroundModes` values [infoPlistPath] already declares.
