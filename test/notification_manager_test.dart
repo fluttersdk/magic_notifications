@@ -6,7 +6,7 @@ void main() {
 
   setUp(() {
     manager = NotificationManager();
-    manager.forgetChannels(); // Reset for tests
+    manager.forgetDrivers(); // Reset for tests
   });
 
   group('NotificationManager', () {

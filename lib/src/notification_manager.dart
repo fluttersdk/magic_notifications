@@ -52,8 +52,46 @@ class NotificationManager {
   // ignore: prefer_final_fields
   List<DatabaseNotification> _notifications = [];
 
-  /// Push notification driver (OneSignal, FCM, etc.)
+  /// Push notification driver set explicitly through [setPushDriver].
   PushDriver? _pushDriver;
+
+  /// Registry of push driver factories, keyed by the name a consumer registered
+  /// them under and the name `notifications.push.driver` selects between.
+  final Map<String, PushDriver Function()> _pushFactories =
+      <String, PushDriver Function()>{};
+
+  /// The driver built from [_pushFactories], held so a second read does not
+  /// wrap the platform SDK twice.
+  PushDriver? _resolvedPushDriver;
+
+  /// The external id this device SHOULD be subscribed as, and `null` when it
+  /// should be subscribed as nobody.
+  ///
+  /// The INTENT, never a report of what the device carries: those two disagree
+  /// for as long as the network is down, and every decision here turns on
+  /// knowing which of the two it is holding.
+  String? _pushIntent;
+
+  /// Whether [_pushIntent] has been read back from the vault yet.
+  bool _pushIntentLoaded = false;
+
+  /// Whether the device is known to carry [_pushIntent].
+  bool _pushIdentityConverged = false;
+
+  /// The failure of the last identity operation, retained rather than only
+  /// logged, because nothing retries and a caller has to be able to see it.
+  Object? _pushIdentityError;
+
+  /// The driver subscriptions the manager holds while a driver is attached.
+  StreamSubscription<PushNotificationEvent>? _pushReceivedSubscription;
+  StreamSubscription<PushNotificationEvent>? _pushClickedSubscription;
+  StreamSubscription<PushIdentityChange>? _pushIdentitySubscription;
+
+  /// Push events that passed the subject guard, republished for the app.
+  final StreamController<PushNotificationEvent> _pushReceivedController =
+      StreamController<PushNotificationEvent>.broadcast();
+  final StreamController<PushNotificationEvent> _pushClickedController =
+      StreamController<PushNotificationEvent>.broadcast();
 
   /// Notification poller for periodic fetching
   NotificationPoller? _poller;
@@ -127,9 +165,24 @@ class NotificationManager {
     }
   }
 
-  /// Clear all registered channels (for testing).
-  void forgetChannels() {
+  /// Drops every channel, every registered push factory, and every resolved
+  /// push driver, so each of them answers from its factory again.
+  ///
+  /// The test-isolation seam, and it clears the push identity state with them:
+  /// this manager is a `static final` that outlives a container reset, so an
+  /// intent surviving into the next test would make the device claim a subject
+  /// nothing ever gave it. Only the IN-MEMORY intent is dropped; the persisted
+  /// one is left alone, because a test seam must not sign a real device out.
+  void forgetDrivers() {
     _channels.clear();
+    _pushFactories.clear();
+    _pushDriver = null;
+    _resolvedPushDriver = null;
+    _detachPushDriver();
+    _pushIntent = null;
+    _pushIntentLoaded = false;
+    _pushIdentityConverged = false;
+    _pushIdentityError = null;
   }
 
   // ========================================
@@ -325,25 +378,335 @@ class NotificationManager {
   // Push Notification Methods
   // ========================================
 
+  /// The vault key the push identity intent is persisted under.
+  ///
+  /// Persisted rather than held in memory because an app kill between a sign-out
+  /// and its retry would otherwise leave the device carrying the previous
+  /// person's external id with nothing anywhere saying so.
+  static const String pushIntentKey = 'magic_notifications.push_intent';
+
   /// Get the configured push driver.
   ///
-  /// Throws [NotificationException] if no driver is configured.
+  /// Resolution order: the instance [setPushDriver] was given, then the one
+  /// already built from the registry, then the registry itself. Throws
+  /// [NotificationException] when the build has no driver at all.
   PushDriver get pushDriver {
-    if (_pushDriver == null) {
+    final PushDriver? driver = pushDriverOrNull;
+
+    if (driver == null) {
       throw NotificationException(
-        'Push driver not configured. Call setPushDriver() first.',
+        'Push driver not configured. Register one with Notify.extend(name, '
+        'factory), or set one explicitly with setPushDriver().',
         code: 'PUSH_DRIVER_NOT_CONFIGURED',
       );
     }
-    return _pushDriver!;
+
+    return driver;
   }
 
-  /// Set the push notification driver.
+  /// The push driver when this build has one, and `null` when it does not.
   ///
-  /// This should be called during app initialization, typically in a
-  /// service provider's boot() method.
+  /// The quiet read: an app with no push configured is a supported state, and
+  /// the reconciler runs on every boot including that one.
+  PushDriver? get pushDriverOrNull {
+    if (_pushDriver != null) return _pushDriver;
+    if (_resolvedPushDriver != null) return _resolvedPushDriver;
+
+    final PushDriver Function()? factory = _pushFactory();
+    if (factory == null) return null;
+
+    final PushDriver created = factory();
+    _resolvedPushDriver = created;
+    _attachPushDriver(created);
+
+    return created;
+  }
+
+  /// Registers [factory] as the driver named [name].
+  ///
+  /// Registering a factory does not call it; the driver is built when something
+  /// first reads [pushDriver], and the resolved instance is evicted here so a
+  /// registration made after a read still takes effect. That path is not an
+  /// edge case: a test registers its double after whatever already resolved one.
+  ///
+  /// ```dart
+  /// Notify.extend('fcm', () => FcmPushDriver());
+  /// ```
+  void extend(String name, PushDriver Function() factory) {
+    _pushFactories[name] = factory;
+    _resolvedPushDriver = null;
+
+    // The evicted instance takes its subscriptions with it, but only when it is
+    // the one in use: an explicit [setPushDriver] outranks the registry and is
+    // still attached, so detaching here would leave the app deaf to a driver it
+    // is still holding.
+    if (_pushDriver == null) _detachPushDriver();
+  }
+
+  /// The factory `notifications.push.driver` names, or the only one there is.
+  ///
+  /// The fallback is what makes the registry reachable without a boot: a test
+  /// registers one double and never runs the provider that would have
+  /// registered the built-in the config names, so a strictly-by-name lookup
+  /// would answer nothing at all. With two or more registered there is no
+  /// unambiguous answer and the caller gets none.
+  PushDriver Function()? _pushFactory() {
+    if (_pushFactories.isEmpty) return null;
+
+    final String? configured = Config.get<String>('notifications.push.driver');
+    final PushDriver Function()? named =
+        configured == null ? null : _pushFactories[configured];
+    if (named != null) return named;
+
+    if (_pushFactories.length == 1) return _pushFactories.values.first;
+
+    return null;
+  }
+
+  /// Set the push notification driver explicitly.
+  ///
+  /// Outranks the registry, so it stays the escape hatch for a consumer holding
+  /// an already-built driver. Prefer [extend], which lets the manager own the
+  /// driver's lifetime.
   void setPushDriver(PushDriver driver) {
     _pushDriver = driver;
+    _attachPushDriver(driver);
+  }
+
+  /// Listens to everything [driver] reports, replacing any earlier attachment.
+  void _attachPushDriver(PushDriver driver) {
+    _detachPushDriver();
+
+    _pushReceivedSubscription =
+        driver.onNotificationReceived.listen(_onPushReceived);
+    _pushClickedSubscription =
+        driver.onNotificationClicked.listen(_onPushClicked);
+    _pushIdentitySubscription =
+        driver.onIdentityChanged.listen(_onPushIdentityChanged);
+  }
+
+  /// Stops listening to the attached driver.
+  void _detachPushDriver() {
+    _pushReceivedSubscription?.cancel();
+    _pushReceivedSubscription = null;
+    _pushClickedSubscription?.cancel();
+    _pushClickedSubscription = null;
+    _pushIdentitySubscription?.cancel();
+    _pushIdentitySubscription = null;
+  }
+
+  /// Push notifications that arrived in the foreground and are addressed to the
+  /// person this device is currently subscribed as.
+  Stream<PushNotificationEvent> get onPushReceived =>
+      _pushReceivedController.stream;
+
+  /// Push notifications the user tapped that are addressed to the person this
+  /// device is currently subscribed as.
+  Stream<PushNotificationEvent> get onPushClicked =>
+      _pushClickedController.stream;
+
+  /// The external id this device should be subscribed as, `null` for nobody.
+  String? get pushIntent => _pushIntent;
+
+  /// Whether the device is known to carry [pushIntent].
+  ///
+  /// False is the honest answer while a login or a sign-out has not landed, and
+  /// it is a state the app is expected to spend real time in: the network is
+  /// the thing that fails here. [onPushReceived] is what makes that state safe.
+  bool get isPushIdentityConverged => _pushIdentityConverged;
+
+  /// The failure of the last identity operation, or `null` when the last one
+  /// succeeded.
+  Object? get pushIdentityError => _pushIdentityError;
+
+  /// Records who this device should be subscribed as, and persists it.
+  ///
+  /// Recording the intent is the whole point: the SDK call can fail, and when
+  /// it does the difference between "this device wants nobody" and "this device
+  /// carries user_A" is the only thing standing between the next person on it
+  /// and somebody else's outage page.
+  ///
+  /// Nothing is sent to the SDK here; [reconcilePushIdentity] does that.
+  Future<void> want(String? externalId) async {
+    final String? wanted = _blankToNull(externalId);
+
+    // A `want` before the first reconcile is fresher than whatever the vault
+    // holds, so the load is marked done rather than allowed to overwrite it.
+    _pushIntentLoaded = true;
+
+    if (_pushIntent == wanted) return;
+
+    _pushIntent = wanted;
+    _pushIdentityConverged = false;
+    _pushIdentityError = null;
+
+    await _persistPushIntent(wanted);
+  }
+
+  /// Brings the device's subscribed identity in line with [pushIntent].
+  ///
+  /// Reads the device back first and returns without touching the SDK when the
+  /// two already agree. That is what makes a team switch structurally free:
+  /// `Auth.stateNotifier` bumps on login, on every cold-boot restore and on
+  /// every team switch, and a notification belongs to the person, so the same
+  /// user id produces zero SDK calls.
+  ///
+  /// Safe to call with no driver, and safe to call on every auth-state change.
+  /// It does not retry: OneSignal retries the network call itself, and the job
+  /// here is proving the call was issued against the right id.
+  Future<void> reconcilePushIdentity() async {
+    await _loadPushIntent();
+
+    final PushDriver? driver = pushDriverOrNull;
+    if (driver == null) return;
+
+    final String? intent = _pushIntent;
+
+    try {
+      final String? actual = _blankToNull(await driver.currentExternalId());
+
+      if (actual == intent) {
+        _pushIdentityConverged = true;
+        _pushIdentityError = null;
+
+        return;
+      }
+
+      if (intent == null) {
+        await driver.logout();
+      } else {
+        await driver.login(intent);
+      }
+
+      // The read-back. `login` and `logout` mutate the SDK's LOCAL user
+      // immediately and queue the server half, so agreement here rules out a
+      // call that never landed at all and nothing more; the SDK's own
+      // observers, in [_onPushIdentityChanged], are the confirmation that it
+      // reached the server.
+      final String? readBack = _blankToNull(await driver.currentExternalId());
+      _pushIdentityConverged = readBack == intent;
+      _pushIdentityError = null;
+
+      if (!_pushIdentityConverged) {
+        _safeLogError(
+          'Push identity did not take: wanted "${intent ?? 'nobody'}", '
+          'the device reports "${readBack ?? 'nobody'}".',
+        );
+      }
+    } catch (e) {
+      // Recorded on the manager, not only logged: nothing retries, so a caller
+      // and `notifications:doctor` both have to be able to see that this device
+      // is not carrying the intent. A false [isPushIdentityConverged] with a
+      // null [pushIdentityError] is the other case, where the call was issued
+      // and simply did not take.
+      _pushIdentityConverged = false;
+      _pushIdentityError = e;
+      _safeLogError(
+        'Push identity operation failed for '
+        '"${intent ?? 'sign-out'}": $e',
+      );
+    }
+  }
+
+  /// Applies what the SDK itself reports about the device's identity.
+  ///
+  /// A null [PushIdentityChange.externalId] means the event did not REPORT one
+  /// (a subscription change carries only the subscription half), never that the
+  /// device carries none, so it is not evidence in either direction.
+  void _onPushIdentityChanged(PushIdentityChange change) {
+    final String? reported = _blankToNull(change.externalId);
+    if (reported == null) return;
+
+    _pushIdentityConverged = reported == _pushIntent;
+  }
+
+  /// Republishes a foreground push and refreshes the list behind it.
+  void _onPushReceived(PushNotificationEvent event) {
+    if (!_addressedToIntent(event.data)) return;
+
+    if (!_pushReceivedController.isClosed) {
+      _pushReceivedController.add(event);
+    }
+
+    // The push says a row exists that the bell has not read yet, and the next
+    // poll tick is up to 30 seconds away.
+    unawaited(fetchNotifications());
+  }
+
+  /// Republishes a tapped push.
+  void _onPushClicked(PushNotificationEvent event) {
+    if (!_addressedToIntent(event.data)) return;
+
+    if (!_pushClickedController.isClosed) {
+      _pushClickedController.add(event);
+    }
+  }
+
+  /// Whether a payload is addressed to the person this device is subscribed as.
+  ///
+  /// The receive-side half of the identity guard, and the half that actually
+  /// prevents the leak: convergence is unachievable offline, so the
+  /// un-converged window has to be SAFE rather than short.
+  ///
+  /// A payload carrying NO subject is un-checkable and is delivered, because a
+  /// server older than that payload key must not silence the client.
+  bool _addressedToIntent(Map<String, dynamic> data) {
+    final Object? subject = data['subject'];
+    if (subject == null) return true;
+    if (subject is String && subject.isEmpty) return true;
+
+    if (subject.toString() == _pushIntent) return true;
+
+    _safeLogError(
+      'Dropped a push addressed to "$subject" on a device subscribed as '
+      '"${_pushIntent ?? 'nobody'}".',
+    );
+
+    return false;
+  }
+
+  /// Reads the persisted intent once per process.
+  Future<void> _loadPushIntent() async {
+    if (_pushIntentLoaded) return;
+    _pushIntentLoaded = true;
+
+    if (!Magic.bound('vault')) return;
+
+    try {
+      _pushIntent = _blankToNull(await Vault.get(pushIntentKey));
+    } catch (e) {
+      _safeLogError('Failed to read the persisted push intent: $e');
+    }
+  }
+
+  /// Writes the intent to the vault, or removes it for a signed-out device.
+  ///
+  /// A build with no `VaultServiceProvider` registered has no vault to write
+  /// to; that is an absent capability rather than a failure, and the in-memory
+  /// intent still governs this process.
+  Future<void> _persistPushIntent(String? externalId) async {
+    if (!Magic.bound('vault')) return;
+
+    try {
+      if (externalId == null) {
+        await Vault.delete(pushIntentKey);
+      } else {
+        await Vault.put(pushIntentKey, externalId);
+      }
+    } catch (e) {
+      _safeLogError('Failed to persist the push intent: $e');
+    }
+  }
+
+  /// [value] with an empty string read as absent.
+  ///
+  /// The SDK answers a device with no external id as `''` on one platform and
+  /// `null` on the other, and an intent comparison that told those apart would
+  /// issue a login the device does not need.
+  String? _blankToNull(String? value) {
+    if (value == null || value.isEmpty) return null;
+
+    return value;
   }
 
   /// Initialize push notifications.
@@ -364,9 +727,13 @@ class NotificationManager {
   }) async {
     await pushDriver.initialize(config);
 
-    if (externalId != null) {
-      await pushDriver.login(externalId);
-    }
+    if (externalId == null) return;
+
+    // Through the intent, not straight to `login`: one path reaches the SDK's
+    // identity, so an initialisation that fails to log in is recorded in the
+    // same place a later reconcile reads.
+    await want(externalId);
+    await reconcilePushIdentity();
   }
 
   /// Request push notification permission from the user.
@@ -376,70 +743,36 @@ class NotificationManager {
     return await pushDriver.requestPermission();
   }
 
-  /// Clear push driver (for testing).
-  void forgetPushDriver() {
-    _pushDriver = null;
-  }
-
   // ========================================
   // Push Initialization Helper
   // ========================================
 
-  /// Initialize push notifications with user ID.
+  /// Subscribes this device as [userId].
   ///
-  /// Logs in the user with the push driver. The driver should already be
-  /// initialized by the NotificationServiceProvider during boot.
+  /// [userId] is the external id the SERVER addresses, which for a Laravel
+  /// backend is `user_<id>` including the prefix; it is forwarded unchanged.
   ///
-  /// Call this after user login to associate their device with their account.
+  /// Recording the intent and reconciling it, rather than calling the SDK and
+  /// hoping: a login that fails leaves the intent set and the manager reporting
+  /// un-converged, so the next reconcile issues it again and, until then,
+  /// [onPushReceived] drops anything addressed to anybody else.
   ///
-  /// Note: This may fail silently if:
-  /// - User hasn't granted push notification permission yet
-  /// - There's no active push subscription
-  /// - Network/API issues
-  ///
-  /// The external ID will be set once the user grants permission and a
-  /// subscription is created.
+  /// Does not throw when the build has no push driver. An app with push absent
+  /// still has a person signed in, and their intent is worth recording for the
+  /// boot that does have one.
   Future<void> initializePushWithUserId(String userId) async {
-    if (_pushDriver == null) {
-      throw NotificationException(
-        'Push driver not configured. Ensure NotificationServiceProvider is registered.',
-        code: 'PUSH_DRIVER_NOT_CONFIGURED',
-      );
-    }
-
-    // Try to login the user with the push provider
-    // This may fail if there's no subscription yet - that's OK
-    try {
-      await _pushDriver!.login(userId);
-    } catch (e) {
-      _safeLogError(
-        'Push login deferred - will retry when subscription is active: $e',
-      );
-      // Don't rethrow - the external ID will be set when user grants permission
-    }
+    await want(userId);
+    await reconcilePushIdentity();
   }
 
-  /// Logout from push notifications.
+  /// Detaches this device from whoever it is subscribed as.
   ///
-  /// Removes the external user ID from the push subscription.
-  /// Call this when the user logs out to unlink the device from their account.
-  ///
-  /// This is important for:
-  /// - Preventing targeted transactional messages to this device after logout
-  /// - Security: ensuring the next user on this device doesn't receive
-  ///   the previous user's notifications
+  /// Call it on sign-out. The intent goes to `null` first and is persisted
+  /// there, so a `logout()` that fails, or an app killed before it finished,
+  /// still leaves a device that knows it should be subscribed as nobody.
   Future<void> logoutPush() async {
-    if (_pushDriver == null) {
-      // No driver configured, nothing to logout from
-      return;
-    }
-
-    try {
-      await _pushDriver!.logout();
-    } catch (e) {
-      _safeLogError('Failed to logout from push: $e');
-      // Don't throw - logout should be graceful
-    }
+    await want(null);
+    await reconcilePushIdentity();
   }
 
   // ========================================

@@ -13,7 +13,7 @@ void main() {
     // Clear any previous config
     Config.flush();
     // Clear push driver from manager
-    NotificationManager().forgetPushDriver();
+    NotificationManager().forgetDrivers();
     provider = NotificationServiceProvider(app);
   });
 

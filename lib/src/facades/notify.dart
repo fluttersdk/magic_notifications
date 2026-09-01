@@ -1,5 +1,6 @@
 import '../contracts/notifiable.dart';
 import '../contracts/notification.dart';
+import '../drivers/push/push_driver.dart';
 import '../models/database_notification.dart';
 import '../models/paginated_notifications.dart';
 import '../notification_manager.dart';
@@ -152,6 +153,15 @@ class Notify {
   static Future<void> logoutPush() async {
     await manager.logoutPush();
   }
+
+  /// Registers [factory] as the push driver named [name].
+  /// See [NotificationManager.extend].
+  static void extend(String name, PushDriver Function() factory) =>
+      manager.extend(name, factory);
+
+  /// Drops every channel, every registered driver and every resolved instance.
+  /// See [NotificationManager.forgetDrivers].
+  static void forgetDrivers() => manager.forgetDrivers();
 
   // ========================================
   // Polling
