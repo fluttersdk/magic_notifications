@@ -4,6 +4,9 @@ import '../drivers/push/push_driver.dart';
 import '../models/database_notification.dart';
 import '../models/paginated_notifications.dart';
 import '../notification_manager.dart';
+import '../ui/notification_view_registry.dart';
+import '../ui/views/notification_preferences_view.dart';
+import '../ui/views/notifications_list_view.dart';
 
 /// Notification facade.
 ///
@@ -27,6 +30,48 @@ class Notify {
 
   /// Get the notification manager instance.
   static NotificationManager get manager => NotificationManager();
+
+  // ========================================
+  // Views
+  // ========================================
+
+  static NotificationViewRegistry? _view;
+
+  /// The notification view registry.
+  ///
+  /// Holds the screens this package ships, `notifications.list` and
+  /// `notifications.preferences`, so a host swaps, wraps or decorates them
+  /// without forking them:
+  ///
+  /// ```dart
+  /// // Mount the preference screen with the host's own settings route.
+  /// Notify.view.register('notifications.preferences', () {
+  ///   return NotificationPreferencesView(backRoute: '/settings');
+  /// });
+  ///
+  /// // Say what one of the host's own notification types looks like.
+  /// Notify.view.slot(NotificationViewRegistry.typeIconSlotView, 'order_shipped',
+  ///     (context) => WIcon(Icons.local_shipping, className: 'text-lg text-green-500'));
+  /// ```
+  ///
+  /// The package defaults are registered the first time this is read, so a
+  /// host registration made afterwards replaces them. `clear()` drops them
+  /// too, which is what it is for.
+  static NotificationViewRegistry get view {
+    final registered = _view;
+    if (registered != null) return registered;
+
+    final registry = NotificationViewRegistry();
+    registry.register(
+        'notifications.list', () => const NotificationsListView());
+    registry.register(
+      'notifications.preferences',
+      () => const NotificationPreferencesView(),
+    );
+    _view = registry;
+
+    return registry;
+  }
 
   // ========================================
   // Sending

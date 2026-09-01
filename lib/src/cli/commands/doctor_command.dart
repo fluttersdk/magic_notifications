@@ -17,6 +17,15 @@ import 'package:magic_notifications/src/cli/cli.dart';
 /// dart run <app>:artisan notifications:doctor --verbose
 /// ```
 class DoctorCommand extends ArtisanCommand {
+  /// Background mode iOS requires before APNs will wake the app.
+  static const String _remoteNotificationMode = 'remote-notification';
+
+  /// Entitlement naming the APNs environment the app registers against.
+  static const String _apsEnvironmentKey = 'aps-environment';
+
+  /// Build setting through which Xcode learns the entitlements file exists.
+  static const String _entitlementsSetting = 'CODE_SIGN_ENTITLEMENTS';
+
   @override
   String get signature =>
       'notifications:doctor {--verbose : Show detailed diagnostic information}';
@@ -36,7 +45,8 @@ class DoctorCommand extends ArtisanCommand {
 
   @override
   Future<int> handle(ArtisanContext ctx) async {
-    ctx.output.info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
+    ctx.output.info(
+        ConsoleStyle.banner('Magic Notifications', magicNotificationsVersion));
 
     // 1. Collect missing requirements before printing — we need both for output.
     final verbose = ctx.input.option('verbose') as bool;
@@ -211,7 +221,20 @@ class DoctorCommand extends ArtisanCommand {
     };
   }
 
-  /// Inspect ios/Runner/Info.plist for basic existence.
+  /// Inspect the three markers an iOS project needs before a push arrives.
+  ///
+  /// Existence of `Info.plist` proves nothing: every Flutter iOS project ever
+  /// generated has one, so a check built on it can only ever pass. These three
+  /// can each fail on their own, and each one alone is enough to stop a
+  /// notification:
+  ///
+  /// 1. `UIBackgroundModes` listing `remote-notification`, without which iOS
+  ///    never wakes the app for a data payload.
+  /// 2. `aps-environment` in `Runner.entitlements`, without which the app has
+  ///    no APNs environment to register against.
+  /// 3. `CODE_SIGN_ENTITLEMENTS` in `project.pbxproj`, without which Xcode
+  ///    never reads that entitlements file at all and the second check passes
+  ///    while signing ignores it.
   Map<String, dynamic> _checkIOSSetup() {
     final infoPlistPath = PlatformHelper.infoPlistPath(projectRoot);
 
@@ -223,12 +246,74 @@ class DoctorCommand extends ArtisanCommand {
       };
     }
 
+    final issues = <String>[];
+
+    if (!_declaresBackgroundMode(infoPlistPath, _remoteNotificationMode)) {
+      issues.add(
+        'UIBackgroundModes in ios/Runner/Info.plist does not list '
+        '$_remoteNotificationMode',
+      );
+    }
+
+    if (!_fileDeclares(_entitlementsPath, '<key>$_apsEnvironmentKey</key>')) {
+      issues.add(
+        '$_apsEnvironmentKey is missing from ios/Runner/Runner.entitlements',
+      );
+    }
+
+    if (!_fileDeclares(_pbxprojPath, _entitlementsSetting)) {
+      issues.add(
+        '$_entitlementsSetting is not set in '
+        'ios/Runner.xcodeproj/project.pbxproj, so Xcode never reads the '
+        'entitlements file',
+      );
+    }
+
     return {
-      'configured': false,
+      'configured': issues.isEmpty,
       'exists': true,
-      'issues': ['iOS configuration requires manual setup in Xcode'],
+      'issues': issues,
     };
   }
+
+  /// Path to the iOS entitlements file the installer writes.
+  String get _entitlementsPath => '$projectRoot/ios/Runner/Runner.entitlements';
+
+  /// Path to the Xcode project file that has to name that entitlements file.
+  String get _pbxprojPath =>
+      '$projectRoot/ios/Runner.xcodeproj/project.pbxproj';
+
+  /// Whether [path] exists and mentions [marker] outside of a comment.
+  bool _fileDeclares(String path, String marker) {
+    if (!FileHelper.fileExists(path)) {
+      return false;
+    }
+    return _withoutComments(FileHelper.readFile(path)).contains(marker);
+  }
+
+  /// Whether the `UIBackgroundModes` array in [infoPlistPath] lists [mode].
+  ///
+  /// Scoped to that array rather than the whole file: `remote-notification`
+  /// appearing anywhere else in a plist (a string value, a bundle name) is not
+  /// the declaration iOS reads.
+  bool _declaresBackgroundMode(String infoPlistPath, String mode) {
+    final array = RegExp(
+      r'<key>\s*UIBackgroundModes\s*</key>\s*<array>(.*?)</array>',
+      dotAll: true,
+    ).firstMatch(_withoutComments(FileHelper.readFile(infoPlistPath)));
+
+    return array != null && array.group(1)!.contains('<string>$mode</string>');
+  }
+
+  /// Strip XML and OpenStep comments before a marker is looked for.
+  ///
+  /// Without this a commented-out reminder counts as configuration: the
+  /// Flutter iOS template ships `<!-- ... -->` blocks, a `.pbxproj` is dense
+  /// with `/* Debug */` annotations, and a developer who commented a key out
+  /// while debugging would still read as green.
+  String _withoutComments(String source) => source
+      .replaceAll(RegExp(r'<!--.*?-->', dotAll: true), '')
+      .replaceAll(RegExp(r'/\*.*?\*/', dotAll: true), '');
 
   /// Check for the OneSignal service worker file in the web directory.
   Map<String, dynamic> _checkWebSetup() {
@@ -360,8 +445,13 @@ class DoctorCommand extends ArtisanCommand {
               buffer.writeln('      Required: POST_NOTIFICATIONS permission');
             case 'ios':
               buffer.writeln('      Info.plist: ios/Runner/Info.plist');
+              buffer.writeln('      Entitlements: '
+                  'ios/Runner/Runner.entitlements');
+              buffer.writeln('      Project: '
+                  'ios/Runner.xcodeproj/project.pbxproj');
               buffer.writeln(
-                '      Required: Push Notifications capability in Xcode',
+                '      Required: UIBackgroundModes/$_remoteNotificationMode, '
+                '$_apsEnvironmentKey, $_entitlementsSetting',
               );
             case 'web':
               buffer.writeln('      Service Worker: web/OneSignalSDKWorker.js');

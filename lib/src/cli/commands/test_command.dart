@@ -1,5 +1,7 @@
 import 'package:fluttersdk_artisan/artisan.dart';
 
+import '../notifications_artisan_provider.dart';
+
 /// Test command for sending test notifications via any available channel.
 class TestCommand extends ArtisanCommand {
   @override
@@ -25,7 +27,8 @@ class TestCommand extends ArtisanCommand {
 
   @override
   Future<int> handle(ArtisanContext ctx) async {
-    ctx.output.info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
+    ctx.output.info(
+        ConsoleStyle.banner('Magic Notifications', magicNotificationsVersion));
 
     // 1. Validate channel selection.
     final channel = ctx.input.option('channel') as String;

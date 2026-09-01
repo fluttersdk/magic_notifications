@@ -38,6 +38,79 @@ Map<String, dynamic> get notificationConfig => {
 ''');
 }
 
+/// Write a minimal iOS project into [tempDir].
+///
+/// The three markers the doctor reads are independently switchable so each one
+/// can be removed on its own: an `Info.plist` whose `UIBackgroundModes` array
+/// holds [backgroundModes], a `Runner.entitlements` carrying `aps-environment`
+/// when [entitlement] is set, and a `project.pbxproj` naming that file in
+/// `CODE_SIGN_ENTITLEMENTS` when [codeSignEntitlements] is set.
+void _writeIosProject(
+  Directory tempDir, {
+  List<String> backgroundModes = const <String>[],
+  bool entitlement = false,
+  bool codeSignEntitlements = false,
+  String? infoPlistOverride,
+}) {
+  Directory('${tempDir.path}/ios/Runner').createSync(recursive: true);
+  Directory('${tempDir.path}/ios/Runner.xcodeproj').createSync(recursive: true);
+
+  final modes = backgroundModes.isEmpty
+      ? ''
+      : '''
+	<key>UIBackgroundModes</key>
+	<array>
+${backgroundModes.map((mode) => '\t\t<string>$mode</string>').join('\n')}
+	</array>
+''';
+
+  File('${tempDir.path}/ios/Runner/Info.plist').writeAsStringSync(
+    infoPlistOverride ??
+        '''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>test_app</string>
+$modes</dict>
+</plist>
+''',
+  );
+
+  if (entitlement) {
+    File('${tempDir.path}/ios/Runner/Runner.entitlements').writeAsStringSync('''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>
+''');
+  }
+
+  final entitlementsSetting = codeSignEntitlements
+      ? '                CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;\n'
+      : '';
+  File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+      .writeAsStringSync('''
+// !\$*UTF8*\$!
+{
+    objects = {
+        97C147061CF9000F007C117D /* Debug */ = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+$entitlementsSetting                PRODUCT_BUNDLE_IDENTIFIER = com.example.app;
+            };
+            name = Debug;
+        };
+    };
+}
+''');
+}
+
 /// Write a valid pubspec.yaml with `magic_notifications` dependency.
 void _writeValidPubspec(Directory tempDir) {
   File('${tempDir.path}/pubspec.yaml').writeAsStringSync('''
@@ -424,6 +497,139 @@ Map<String, dynamic> get notificationConfig => {
     test('report includes config validation section', () {
       final report = command.generateReport();
       expect(report, contains('Config Validation'));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // iOS platform setup
+  // ---------------------------------------------------------------------------
+
+  group('iOS setup', () {
+    /// The `[ios]` prefixed entries of the doctor's missing-requirement list.
+    List<String> iosIssues() => command
+        .getMissingRequirements()
+        .where((issue) => issue.startsWith('[ios]'))
+        .toList();
+
+    test('reports all three markers missing on a stock Flutter iOS project',
+        () {
+      _writeIosProject(tempDir);
+
+      final issues = iosIssues();
+      expect(issues.any((i) => i.contains('UIBackgroundModes')), isTrue,
+          reason: 'a project without remote-notification must fail');
+      expect(issues.any((i) => i.contains('aps-environment')), isTrue,
+          reason: 'a project without an entitlements file must fail');
+      expect(issues.any((i) => i.contains('CODE_SIGN_ENTITLEMENTS')), isTrue,
+          reason: 'an entitlements file Xcode does not read must fail');
+    });
+
+    test('reports configured when all three markers are present', () {
+      _writeIosProject(
+        tempDir,
+        backgroundModes: const ['remote-notification'],
+        entitlement: true,
+        codeSignEntitlements: true,
+      );
+
+      final status =
+          command.checkPlatformSetup()['ios'] as Map<String, dynamic>;
+      expect(status['configured'], isTrue);
+      expect(status['issues'], isEmpty);
+      expect(iosIssues(), isEmpty);
+    });
+
+    test('fails when UIBackgroundModes omits remote-notification', () {
+      _writeIosProject(
+        tempDir,
+        backgroundModes: const ['fetch'],
+        entitlement: true,
+        codeSignEntitlements: true,
+      );
+
+      final status =
+          command.checkPlatformSetup()['ios'] as Map<String, dynamic>;
+      expect(status['configured'], isFalse);
+      expect(
+        (status['issues'] as List).single,
+        contains('UIBackgroundModes'),
+      );
+    });
+
+    test('fails when the entitlements file has no aps-environment', () {
+      _writeIosProject(
+        tempDir,
+        backgroundModes: const ['remote-notification'],
+        codeSignEntitlements: true,
+      );
+
+      final status =
+          command.checkPlatformSetup()['ios'] as Map<String, dynamic>;
+      expect(status['configured'], isFalse);
+      expect((status['issues'] as List).single, contains('aps-environment'));
+    });
+
+    test('fails when the pbxproj does not name the entitlements file', () {
+      _writeIosProject(
+        tempDir,
+        backgroundModes: const ['remote-notification'],
+        entitlement: true,
+      );
+
+      final status =
+          command.checkPlatformSetup()['ios'] as Map<String, dynamic>;
+      expect(status['configured'], isFalse);
+      expect(
+        (status['issues'] as List).single,
+        contains('CODE_SIGN_ENTITLEMENTS'),
+      );
+    });
+
+    test('a commented-out background mode does not count as configured', () {
+      _writeIosProject(
+        tempDir,
+        entitlement: true,
+        codeSignEntitlements: true,
+        infoPlistOverride: '''
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<!-- <key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array> -->
+</dict>
+</plist>
+''',
+      );
+
+      final status =
+          command.checkPlatformSetup()['ios'] as Map<String, dynamic>;
+      expect(status['configured'], isFalse);
+      expect(
+        (status['issues'] as List).single,
+        contains('UIBackgroundModes'),
+      );
+    });
+
+    test('reports the iOS row as configured in the report', () {
+      _writeIosProject(
+        tempDir,
+        backgroundModes: const ['remote-notification'],
+        entitlement: true,
+        codeSignEntitlements: true,
+      );
+
+      expect(command.generateReport(), contains('IOS: ✓ Configured'));
+    });
+
+    test('reports Info.plist absence as not found', () {
+      Directory('${tempDir.path}/ios').createSync(recursive: true);
+
+      final status =
+          command.checkPlatformSetup()['ios'] as Map<String, dynamic>;
+      expect(status['exists'], isFalse);
+      expect(status['configured'], isFalse);
     });
   });
 

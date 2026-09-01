@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:fluttersdk_artisan/artisan.dart';
 
+import '../notifications_artisan_provider.dart';
+
 /// Project type detection result for the install banner.
 enum ProjectType { flutter, dart, unknown }
 
@@ -40,6 +42,9 @@ class _InstallPlan {
 
   /// `true` when the operator selected the android platform.
   bool get hasAndroid => platforms.contains('android');
+
+  /// `true` when the operator selected the ios platform.
+  bool get hasIos => platforms.contains('ios');
 }
 
 /// `notifications:install`: installs Magic Notifications via the bundled
@@ -59,7 +64,8 @@ class _InstallPlan {
 ///    `lib/config/notifications.dart`, and `web/OneSignalSDKWorker.js` when web
 ///    is selected) so the atomic `.tmp` swap covers them, then helper-backed
 ///    mutations LAST (provider inject from the manifest, android permission,
-///    main.dart configFactory inject, and the idempotent `<head>` script).
+///    the iOS background mode plus push entitlement, main.dart configFactory
+///    inject, and the idempotent `<head>` script).
 ///    Helper-backed ops write synchronously during stage and do NOT roll back
 ///    (PluginInstaller V1 limitation), so they trail every high-risk write.
 /// 4. The head-script injection is gated with [HtmlEditor.hasContent] so a
@@ -79,13 +85,24 @@ class InstallCommand extends ArtisanInstallCommand {
   /// [getStubSearchPaths], and [resolveManifestPath].
   InstallCommand();
 
+  /// Background mode iOS requires before APNs will wake the app for a silent
+  /// or data payload.
+  static const String _remoteNotificationMode = 'remote-notification';
+
+  /// Where the OneSignal worker is written, relative to the web root.
+  static const String _serviceWorkerPath = 'OneSignalSDKWorker.js';
+
+  /// Scope that worker registers under.
+  static const String _serviceWorkerScope = '/onesignal/';
+
   @override
   String get signature => 'notifications:install '
       '$baseFlags'
       '{--app-id= : OneSignal App ID (UUID format)} '
       '{--platforms= : Comma-separated platforms (android,ios,web)} '
       '{--no-soft-prompt : Disable the soft prompt (enabled by default)} '
-      '{--safari-web-id= : Safari Web ID for web push (optional)} '
+      '{--safari-web-id= : Legacy Safari Web ID, optional; modern Safari '
+      'uses VAPID and needs none} '
       '{--notify-button : Enable the OneSignal notify button on web}';
 
   @override
@@ -150,7 +167,8 @@ class InstallCommand extends ArtisanInstallCommand {
 
   @override
   Future<int> handle(ArtisanContext ctx) async {
-    ctx.output.info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
+    ctx.output.info(
+        ConsoleStyle.banner('Magic Notifications', magicNotificationsVersion));
 
     // 1. Project-type guard. An unrecognised root means there is nothing safe
     //    to scaffold into.
@@ -276,15 +294,25 @@ class InstallCommand extends ArtisanInstallCommand {
     var notifyButtonEnabled = false;
     if (selected.contains('web')) {
       ctx.output.info(ConsoleStyle.step(3, 5, 'Web Configuration'));
-      ctx.output
-          .comment('Safari Web ID is required for Safari push notifications');
-      final safariInput =
-          Prompt.ask('Enter Safari Web ID (or press Enter to skip)');
-      if (safariInput.isNotEmpty) {
-        safariWebId = safariInput;
-        ctx.output.success('Safari Web ID configured');
+      // A Safari Web ID belongs to the LEGACY Safari push path only. Modern
+      // Safari (macOS 13+, iOS 16.4+) subscribes over VAPID and needs nothing
+      // here, so the answer defaults to skip rather than reading as required.
+      ctx.output.comment(
+        'Safari Web ID is only for the legacy Safari push path '
+        '(pre macOS 13 / iOS 16.4). Modern Safari uses VAPID and needs none.',
+      );
+      if (Prompt.confirm('Configure a legacy Safari Web ID?',
+          defaultValue: false)) {
+        final safariInput =
+            Prompt.ask('Enter legacy Safari Web ID (or press Enter to skip)');
+        if (safariInput.isNotEmpty) {
+          safariWebId = safariInput;
+          ctx.output.success('Legacy Safari Web ID configured');
+        } else {
+          ctx.output.comment('Legacy Safari Web ID skipped');
+        }
       } else {
-        ctx.output.comment('Safari Web ID skipped');
+        ctx.output.comment('Legacy Safari Web ID skipped');
       }
       notifyButtonEnabled = Prompt.confirm('Enable OneSignal notify button?',
           defaultValue: false);
@@ -370,7 +398,32 @@ class InstallCommand extends ArtisanInstallCommand {
           .injectAndroidPermission('android.permission.POST_NOTIFICATIONS');
     }
 
-    // 5. main.dart configFactory inject. The import is RELATIVE
+    // 5. iOS push setup, gated on platform selection. The dispatcher skips
+    //    both ops silently when ios/ is absent, and PlistWriter creates the
+    //    entitlements file when the project has never had one (which is every
+    //    Flutter project until somebody opens Xcode). The entitlement op also
+    //    points CODE_SIGN_ENTITLEMENTS at that file, without which Xcode never
+    //    reads it.
+    if (plan.hasIos) {
+      final modes = _declaredBackgroundModes(
+        PlatformHelper.infoPlistPath(projectRoot),
+      );
+      if (!modes.contains(_remoteNotificationMode)) {
+        installer.injectInfoPlistKey(
+          key: 'UIBackgroundModes',
+          value: <String>[...modes, _remoteNotificationMode],
+        );
+      }
+      installer.injectEntitlement(
+        platform: 'ios',
+        key: 'aps-environment',
+        // Development is the install-time default. The distribution value is a
+        // signing concern, decided when the build is archived, not here.
+        value: 'development',
+      );
+    }
+
+    // 6. main.dart configFactory inject. The import is RELATIVE
     //    (config/notifications.dart, not a package: import) so injectConfigFactory
     //    cannot be used; stage the import + the factory append explicitly.
     final mainPath = '$projectRoot/lib/main.dart';
@@ -385,7 +438,7 @@ class InstallCommand extends ArtisanInstallCommand {
         );
     }
 
-    // 6. Web SDK <head> script, gated on web selection AND idempotency. The
+    // 7. Web SDK <head> script, gated on web selection AND idempotency. The
     //    head_scripts dispatcher has no hasContent guard, so re-installing
     //    would double-inject without this check; stage the inject only when the
     //    SDK is not already present.
@@ -411,7 +464,7 @@ class InstallCommand extends ArtisanInstallCommand {
       'install/notification_config',
       searchPaths: getStubSearchPaths(),
     );
-    return StubLoader.replace(stub, {
+    final rendered = StubLoader.replace(stub, {
       'oneSignalAppId': plan.oneSignalAppId,
       'safariWebIdLine': plan.safariWebId != null
           ? "\n      'safari_web_id': '${plan.safariWebId}',"
@@ -419,6 +472,66 @@ class InstallCommand extends ArtisanInstallCommand {
       'notifyButtonEnabled': plan.notifyButtonEnabled.toString(),
       'softPromptEnabled': plan.enableSoftPrompt.toString(),
     });
+    return _withScopedServiceWorker(rendered);
+  }
+
+  /// Adds the scoped service-worker keys to a rendered push config.
+  ///
+  /// A Flutter web build registers `flutter_service_worker.js` at the root
+  /// scope and OneSignal's default registration claims the same scope, so the
+  /// two replace each other. Naming the worker and narrowing its scope is the
+  /// arrangement OneSignal documents for that collision. The script itself
+  /// stays at the web root, which the service-worker spec allows: a scope
+  /// narrower than the script's own directory is always permitted, only a
+  /// wider one needs a `Service-Worker-Allowed` header.
+  ///
+  /// @throws [StateError] when the stub carries no push `driver` line to
+  ///         anchor the keys to. A config that silently lost them collides at
+  ///         runtime, with nothing in the project pointing at why.
+  String _withScopedServiceWorker(String config) {
+    const anchor = "'driver': 'onesignal',";
+    if (!config.contains(anchor)) {
+      throw StateError(
+        'The install/notification_config stub has no "$anchor" line to anchor '
+        'the service-worker keys to.',
+      );
+    }
+    return config.replaceFirst(
+      anchor,
+      "$anchor\n      'service_worker_path': '$_serviceWorkerPath',"
+      "\n      'service_worker_scope': '$_serviceWorkerScope',",
+    );
+  }
+
+  /// The `UIBackgroundModes` values [infoPlistPath] already declares.
+  ///
+  /// [PluginInstaller.injectInfoPlistKey] dispatches a `List<String>` onto
+  /// `PlistWriter.setArrayKey`, which REPLACES the array, so staging
+  /// `['remote-notification']` blind would drop an app's own `fetch` or
+  /// `audio` mode on a helper-backed write the transaction cannot roll back.
+  /// Reading the current values first turns that replace into a union.
+  List<String> _declaredBackgroundModes(String infoPlistPath) {
+    if (!FileHelper.fileExists(infoPlistPath)) {
+      return const <String>[];
+    }
+
+    // Comments first: a mode somebody commented out is a mode the project does
+    // not declare, and carrying it into the union would quietly re-enable it.
+    final content = FileHelper.readFile(infoPlistPath)
+        .replaceAll(RegExp(r'<!--.*?-->', dotAll: true), '');
+    final array = RegExp(
+      r'<key>\s*UIBackgroundModes\s*</key>\s*<array>(.*?)</array>',
+      dotAll: true,
+    ).firstMatch(content);
+    if (array == null) {
+      return const <String>[];
+    }
+
+    return RegExp(r'<string>([^<]*)</string>')
+        .allMatches(array.group(1)!)
+        .map((match) => match.group(1)!.trim())
+        .where((mode) => mode.isNotEmpty)
+        .toList(growable: false);
   }
 
   /// Translates a [TransactionResult] into a process exit code and emits the

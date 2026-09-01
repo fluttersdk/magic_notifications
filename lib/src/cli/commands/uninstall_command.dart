@@ -1,5 +1,7 @@
 import 'package:fluttersdk_artisan/artisan.dart';
 
+import '../notifications_artisan_provider.dart';
+
 /// CLI command to uninstall Magic Notifications from the project.
 ///
 /// Reverses the changes made by `install`:
@@ -46,7 +48,8 @@ class UninstallCommand extends ArtisanCommand {
 
   @override
   Future<int> handle(ArtisanContext ctx) async {
-    ctx.output.info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
+    ctx.output.info(
+        ConsoleStyle.banner('Magic Notifications', magicNotificationsVersion));
 
     final force = ctx.input.option('force') as bool? ?? false;
 

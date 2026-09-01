@@ -28,8 +28,12 @@ export 'src/providers/notification_service_provider.dart';
 export 'src/drivers/push/push_driver.dart';
 export 'src/drivers/push/onesignal_driver.dart';
 
-// Widgets
-export 'src/widgets/push_prompt_dialog.dart';
+// UI
+export 'src/ui/notification_view_registry.dart';
+export 'src/ui/views/notifications_list_view.dart';
+export 'src/ui/views/notification_preferences_view.dart';
+export 'src/ui/components/notification_dropdown/index.dart';
+export 'src/http/notification_preferences_controller.dart';
 
 // Exceptions
 export 'src/exceptions/notification_exception.dart';

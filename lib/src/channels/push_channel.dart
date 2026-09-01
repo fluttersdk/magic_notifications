@@ -1,7 +1,10 @@
+import 'package:magic/magic.dart';
+
 import '../contracts/channel.dart';
 import '../contracts/notifiable.dart';
 import '../contracts/notification.dart';
 import '../drivers/push/push_driver.dart';
+import '../exceptions/notification_exception.dart';
 
 /// Push notification channel using a configured driver (e.g., OneSignal).
 ///
@@ -40,15 +43,25 @@ class PushChannel extends NotificationChannel {
       }
     }
 
-    // In a real implementation, this would POST to backend endpoint
-    // which then calls OneSignal API. For now, this is a no-op
-    // that will be implemented when backend integration is added.
-    //
-    // Example backend call would be:
-    // await Http.post('/notifications/push', data: {
-    //   'external_id': notifiable.pushExternalId,
-    //   'type': notification.type,
-    //   ...pushMessage.toMap(),
-    // });
+    // The endpoint derives the recipient from the authenticated session, so
+    // the request body carries no recipient field at all: that omission is
+    // the safety property that makes it safe to expose a client-triggered
+    // push send in the first place. Sending one, even null, would imply the
+    // caller can choose a target, which the server would reject anyway.
+    final response = await Http.post(
+      '/notifications/push-test',
+      data: <String, dynamic>{
+        'title': pushMessage.headingValue,
+        'body': pushMessage.contentValue,
+        if (pushMessage.dataValue != null) 'data': pushMessage.dataValue,
+      },
+    );
+
+    if (!response.successful) {
+      throw NotificationException(
+        response.message ?? 'Push test send failed.',
+        code: 'HTTP_${response.statusCode}',
+      );
+    }
   }
 }
