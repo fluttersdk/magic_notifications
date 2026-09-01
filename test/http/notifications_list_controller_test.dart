@@ -237,6 +237,13 @@ void main() {
       // A's incident titles before B's screen paints them.
       expect(controller.pageNotifier.value, isNull);
       expect(controller.currentPage, 1);
+
+      // And the STATUS is empty rather than success. `setSuccess` takes the
+      // DATA, so `setSuccess(false)` left a cleared screen claiming a load that
+      // answered nothing, which the empty-state branch reads differently from
+      // "holding nothing yet".
+      expect(controller.isSuccess, isFalse);
+      expect(controller.isEmpty, isTrue);
     });
   });
 
