@@ -1224,6 +1224,23 @@ class NotificationManager {
   /// segmentation data on one vendor's record; a device left subscribed as
   /// somebody who signed out pages the wrong person about somebody else's
   /// outage. The identity call is not held behind the softer one.
+  ///
+  /// ## What this does NOT cover, stated because the rest reads like it does
+  ///
+  /// The record of what to take back, [_writtenAttributes], is process-local by
+  /// construction: it is what THIS launch wrote. So the guarantee holds across a
+  /// switch and a sign-out within one process, and not across a restart between
+  /// them. An app that describes a user, is killed, and comes back to a
+  /// different account leaves the first person's email and tags on the vendor's
+  /// record, because nothing in this process knows they were ever written.
+  ///
+  /// Persisting the record would close that, and it is deliberately not done
+  /// here: it would put a person's email address into device storage in order to
+  /// be able to delete it later, which is a worse trade for the same feature.
+  /// The honest mitigation is on the other side, a server-side write through the
+  /// vendor's own API keyed on the external id, which needs no local copy of
+  /// anything. Until that exists, an adopter turning
+  /// [shareUserAttributesKey] on should know the boundary is one process wide.
   Future<void> _retirePushAttributes(PushDriver driver) async {
     final PushUserAttributes written =
         _writtenAttributes ?? PushUserAttributes.none;
