@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magic/magic.dart';
 import 'package:magic_notifications/magic_notifications.dart';
@@ -67,6 +69,60 @@ void main() {
       // matrix until a fresh read lands, and a read that fails leaves it there.
       expect(controller.matrixNotifier.value, isEmpty);
       expect(controller.pushProvisionedNotifier.value, isTrue);
+    });
+  });
+
+  group('NotificationPreferencesController — a session that ends mid-request',
+      () {
+    test('a fetch in flight at sign-out cannot publish the previous matrix',
+        () async {
+      // The intricate half of the epoch guard, and the one the list controller's
+      // tests do not reach: this controller publishes from four places, not two.
+      final _GatedPreferencesDriver network = _GatedPreferencesDriver();
+      Magic.app.setInstance('network', network);
+
+      controller.onInit();
+      final Future<void> reading = controller.fetchPreferences();
+      await Future<void>.delayed(Duration.zero);
+
+      await Notify.logoutPush();
+
+      network.answerGet(_matrix());
+      await reading;
+
+      expect(controller.matrixNotifier.value, isEmpty);
+      expect(controller.isSuccess, isFalse);
+    });
+
+    test('a write in flight at sign-out cannot publish its provisioning flag',
+        () async {
+      final _GatedPreferencesDriver network = _GatedPreferencesDriver();
+      Magic.app.setInstance('network', network);
+
+      controller.onInit();
+      controller.matrixNotifier.value = _matrix();
+
+      final Future<void> writing = controller.updateTypePreference(
+        'monitor_down',
+        'mail',
+        false,
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      await Notify.logoutPush();
+
+      // The provisioning flag rather than the rollback, because the rollback
+      // cannot move after a clear: `_withChannelEnabled` returns the matrix
+      // untouched when the type is absent, so restoring a cell into an emptied
+      // matrix is a no-op and an assertion on it passes against the unguarded
+      // build too. This publish DOES land: it writes a notifier directly, and
+      // an answer to A's write would otherwise tell B their push is not
+      // provisioned.
+      network.answerPut(statusCode: 200, pushProvisioned: false);
+      await writing;
+
+      expect(controller.pushProvisionedNotifier.value, isTrue);
+      expect(controller.matrixNotifier.value, isEmpty);
     });
   });
 
@@ -260,4 +316,69 @@ void main() {
       },
     );
   });
+}
+
+/// A network driver whose reads and writes hang until the test answers them.
+///
+/// The window under test only exists while a request is in the air, so the test
+/// has to hold one there across a sign-out. `Http.fake` cannot do this: its
+/// handler type is a synchronous `MagicResponse Function(MagicRequest)`, so a
+/// Future-returning handler never registers and the request fails for an
+/// unrelated reason, which makes the assertion pass against a broken build.
+class _GatedPreferencesDriver extends FakeNetworkDriver {
+  final List<Completer<MagicResponse>> _gets = <Completer<MagicResponse>>[];
+  final List<Completer<MagicResponse>> _puts = <Completer<MagicResponse>>[];
+
+  @override
+  Future<MagicResponse> get(
+    String url, {
+    Map<String, dynamic>? query,
+    Map<String, String>? headers,
+  }) {
+    final Completer<MagicResponse> completer = Completer<MagicResponse>();
+    _gets.add(completer);
+
+    return completer.future;
+  }
+
+  @override
+  Future<MagicResponse> put(
+    String url, {
+    dynamic data,
+    Map<String, dynamic>? query,
+    Map<String, String>? headers,
+  }) {
+    final Completer<MagicResponse> completer = Completer<MagicResponse>();
+    _puts.add(completer);
+
+    return completer.future;
+  }
+
+  /// Answers the oldest read still waiting with [matrix].
+  void answerGet(Map<String, dynamic> matrix) {
+    expect(_gets, isNotEmpty, reason: 'No read was waiting for an answer.');
+    _gets.removeAt(0).complete(
+          MagicResponse(
+            data: <String, dynamic>{'data': matrix},
+            statusCode: 200,
+          ),
+        );
+  }
+
+  /// Answers the oldest write still waiting with [statusCode].
+  ///
+  /// [pushProvisioned] rides in the `meta` block the real endpoint returns, so
+  /// a test can drive the one publish the write path makes into a notifier.
+  void answerPut({int statusCode = 200, bool? pushProvisioned}) {
+    expect(_puts, isNotEmpty, reason: 'No write was waiting for an answer.');
+    _puts.removeAt(0).complete(
+          MagicResponse(
+            data: <String, dynamic>{
+              if (pushProvisioned != null)
+                'meta': <String, dynamic>{'push_provisioned': pushProvisioned},
+            },
+            statusCode: statusCode,
+          ),
+        );
+  }
 }

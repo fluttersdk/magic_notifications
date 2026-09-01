@@ -77,7 +77,11 @@ class NotificationsListController extends MagicController
     _session++;
     _currentPage = 1;
     pageNotifier.value = null;
-    setSuccess(false);
+
+    // `setEmpty`, not `setSuccess(false)`: the argument to `setSuccess` is the
+    // DATA, so that call left the status reading success, which claims a load
+    // that answered nothing rather than a screen holding nothing yet.
+    setEmpty();
   }
 
   /// Read [page] from the backend and publish it.

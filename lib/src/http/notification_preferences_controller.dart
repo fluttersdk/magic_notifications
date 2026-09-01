@@ -67,7 +67,10 @@ class NotificationPreferencesController extends MagicController
     _isFetching = false;
     matrixNotifier.value = <String, dynamic>{};
     pushProvisionedNotifier.value = true;
-    setSuccess(false);
+
+    // `setEmpty`, not `setSuccess(false)`: see the same line in
+    // `NotificationsListController._clearSession`.
+    setEmpty();
   }
 
   /// The session a read or a write belongs to.
