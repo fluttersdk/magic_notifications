@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:magic/magic.dart' show Config;
 import 'package:onesignal_flutter/onesignal_flutter.dart';
 
 import '../../exceptions/notification_exception.dart';
@@ -201,6 +202,32 @@ class OneSignalDriver extends PushDriver {
     await OneSignal.logout();
   }
 
+  /// The config key deciding what a request on a DENIED device does.
+  static const String fallbackToSettingsKey =
+      'notifications.push.fallback_to_settings';
+
+  /// Whether a request on a denied device opens the app's settings page.
+  ///
+  /// ON by default, which is the behaviour this driver always had; the key
+  /// exists so an app can turn it OFF, not so it has to opt in. The two
+  /// postures are both legitimate and neither is a default for everybody: an
+  /// on-call product treats a missed page as an outage nobody hears, so it
+  /// wants to keep handing the user a way back, while an app whose
+  /// notifications are a convenience asks once and drops it rather than
+  /// bouncing somebody into Settings they did not ask for.
+  ///
+  /// It doubles as this driver's [canOpenPlatformSettings], because the two
+  /// are the same fact: with the fallback off, a request on a denied device
+  /// goes nowhere and a reminder offering to "turn it on" would be a control
+  /// that does nothing.
+  ///
+  /// A value that is not a boolean reads as the default rather than as off,
+  /// since a configuration mistake should not quietly remove the only route a
+  /// denied user has back.
+  @override
+  bool get canOpenPlatformSettings =>
+      Config.get<bool>(fallbackToSettingsKey) ?? true;
+
   @override
   Future<bool> requestPermission() async {
     if (!_initialized) {
@@ -209,7 +236,14 @@ class OneSignalDriver extends PushDriver {
         code: 'NOT_INITIALIZED',
       );
     }
-    return await OneSignal.Notifications.requestPermission(true);
+
+    // The SDK's `fallbackToSettings`. On a device that has never been asked
+    // this argument is inert (the real dialog is shown either way); it decides
+    // only what happens on a DENIED one, where the request itself can show
+    // nothing.
+    return await OneSignal.Notifications.requestPermission(
+      canOpenPlatformSettings,
+    );
   }
 
   @override

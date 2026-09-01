@@ -25,6 +25,53 @@ Map<String, dynamic> get notificationConfig => {
       // answers 501 while it is off, so setting this alone only changes which
       // side refuses. Set both, or neither.
       'self_test_enabled': false,
+
+      // Whether this package may raise the OS permission prompt by itself,
+      // once, right after somebody signs in.
+      //
+      // OFF, and an absent key is off too. A system dialog is the most
+      // interruptive thing a notification package can do, and it is a one-shot
+      // per install: answered "no", it cannot be raised again by any code, on
+      // any platform. So it is worth spending deliberately, in an app that has
+      // shown the person why it wants push, rather than fired the first time
+      // they log in.
+      //
+      // When it IS on, it fires only on a device the OS has never asked, never
+      // on one already subscribed, and never more than once per launch. A
+      // denied device is left alone: the prompt there shows nothing at all.
+      //
+      // ON WEB, THINK TWICE. Browsers require a user gesture for a permission
+      // request, and a login is not one, so this can burn the ask without ever
+      // rendering it. The reminder below, driven from a tap, is the web path.
+      'auto_request_on_login': false,
+
+      // How long the app waits before putting its OWN reminder back in front
+      // of somebody who turned it down, in HOURS. 0 (and an absent key) means
+      // never, so a decline stays a decline unless an app asks for otherwise.
+      //
+      // Hours, not days, because the useful cadence here is a day or less and
+      // a day-based key cannot say "24 hours" without a fraction.
+      //
+      // This is NOT the OS prompt, which cannot recur once it has been
+      // answered. It is the app's own row or dialog, which we control, so it
+      // applies to a denied device as much as to one that declined a soft ask.
+      // `Notify.manager.pushPromptAdvice(declinedAt: ...)` answers whether a
+      // reminder is due and what its button can actually do; this package
+      // never stores the decline timestamp itself.
+      'reprompt_after_hours': 0,
+
+      // Whether a permission request on an already-DENIED device opens the
+      // app's settings page instead of resolving silently.
+      //
+      // ON, which is what the mobile driver has always done. The key exists so
+      // an app can switch it OFF: an on-call product treats a missed page as
+      // an outage nobody hears and wants to keep handing the user a route
+      // back, while an app whose notifications are a convenience would rather
+      // ask once and drop it than bounce somebody into Settings.
+      //
+      // Mobile only. No browser API opens site settings from a page, so on web
+      // this is inert and a blocked user can only be told where the switch is.
+      'fallback_to_settings': true,
     },
     'database': {
       'enabled': true,

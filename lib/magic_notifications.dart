@@ -7,7 +7,9 @@ export 'src/contracts/notifiable.dart';
 export 'src/models/database_notification.dart';
 export 'src/models/notification_preference.dart';
 export 'src/models/paginated_notifications.dart';
+export 'src/models/push_delivery_snapshot.dart';
 export 'src/models/push_message.dart';
+export 'src/models/push_prompt_advice.dart';
 export 'src/models/push_subscription.dart';
 
 // Core

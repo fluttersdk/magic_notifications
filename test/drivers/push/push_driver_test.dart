@@ -132,6 +132,40 @@ void main() {
       expect(await driver.reachability(), PushReachability.on);
     });
   });
+
+  group('PushDriver.canRaisePermissionRequest', () {
+    test('is true only for a device that has never been asked', () async {
+      expect(
+        await TestPushDriver(
+          permission: PushPermissionState.notDetermined,
+        ).canRaisePermissionRequest(),
+        isTrue,
+      );
+
+      // Everything else has spent the one-shot: the request resolves without
+      // putting anything in front of the user, so a policy that fired here
+      // would raise a dialog nobody ever sees.
+      for (final PushPermissionState answered in <PushPermissionState>[
+        PushPermissionState.denied,
+        PushPermissionState.authorized,
+        PushPermissionState.provisional,
+      ]) {
+        expect(
+          await TestPushDriver(permission: answered)
+              .canRaisePermissionRequest(),
+          isFalse,
+          reason: '$answered has already been answered',
+        );
+      }
+    });
+
+    test('a driver claims no settings route it has not declared', () {
+      // The default has to be the conservative one: a reminder offering to
+      // open a settings page that does not open is worse than a sentence
+      // saying where the switch lives.
+      expect(TestPushDriver().canOpenPlatformSettings, isFalse);
+    });
+  });
 }
 
 class TestPushDriver extends PushDriver {

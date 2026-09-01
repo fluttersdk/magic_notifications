@@ -111,7 +111,49 @@ abstract class PushDriver {
   /// Requests push notification permission from the user.
   ///
   /// Returns `true` if permission was granted, `false` otherwise.
+  ///
+  /// **A `false` does not say whether the user was shown anything.** On a
+  /// device that has already denied, every platform resolves this immediately
+  /// with no dialog, so `false` covers "the user saw a prompt and declined",
+  /// "nothing was shown at all", and, where [canOpenPlatformSettings] is true,
+  /// "the settings page was opened and the user has not acted yet". Widening
+  /// the return type would change this contract for every driver, so it stays
+  /// a bool and the distinction is drawn by ASKING FIRST: a caller that needs
+  /// it reads [canRaisePermissionRequest] before requesting. True there means
+  /// a `false` afterwards was a real decline; false there means this call can
+  /// only route the user somewhere, or do nothing at all.
   Future<bool> requestPermission();
+
+  /// Whether raising the permission request would put a dialog in front of the
+  /// user.
+  ///
+  /// The package's ONE answer to that question, so a policy never has to
+  /// re-derive it from the permission enum. A device that has never been asked
+  /// is the only one a prompt can appear for, and every driver already
+  /// resolves its platform's version of that into
+  /// [PushPermissionState.notDetermined]: the mobile driver asks the SDK's own
+  /// `canRequest()` before it reports `denied`, and the web driver reads the
+  /// browser's tri-state `Notification.permission` where `default` is exactly
+  /// this state.
+  ///
+  /// A driver whose SDK answers this question directly overrides it; the
+  /// derived answer stays correct for one that does not.
+  Future<bool> canRaisePermissionRequest() async {
+    return await permissionState() == PushPermissionState.notDetermined;
+  }
+
+  /// Whether a permission request on a DENIED device still routes the user to
+  /// the platform setting.
+  ///
+  /// This is the one thing that keeps a reminder honest on a device the OS
+  /// prompt is spent on. The mobile SDK can open the app's own settings page
+  /// (`fallbackToSettings`), so a reminder there has somewhere to send the
+  /// tap; the browser has no such API at all, and a control that opened
+  /// nothing would be worse than a sentence saying where the switch lives.
+  ///
+  /// `false` by default, because a capability a driver has not declared cannot
+  /// be assumed, and the cost of being wrong is a dead control.
+  bool get canOpenPlatformSettings => false;
 
   /// Opts the user in to push notifications.
   Future<void> optIn();

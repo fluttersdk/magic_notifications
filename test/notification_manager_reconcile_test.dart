@@ -16,10 +16,31 @@ class _RecordingPushDriver extends PushDriver {
     String? subscribedAs,
     this.failLogout = false,
     this.failRead = false,
+    this.permission = PushPermissionState.authorized,
+    this.optedIn = true,
+    this.subscriptionId = 'sub-1',
+    this.canOpenPlatformSettings = false,
   }) : _externalId = subscribedAs;
 
   /// Every driver call in the order it was made, logins carrying their subject.
   final List<String> calls = <String>[];
+
+  /// The permission the platform reports, which is what drives reachability.
+  final PushPermissionState permission;
+
+  /// Whether the device is opted in, the second half of reachability.
+  final bool optedIn;
+
+  /// The subscription id the device holds, or null for a device with none.
+  final String? subscriptionId;
+
+  /// Whether a request on a DENIED device can still route to the platform
+  /// setting, which is the mobile `fallbackToSettings` capability.
+  @override
+  final bool canOpenPlatformSettings;
+
+  /// How many times the platform permission request was raised.
+  int permissionRequests = 0;
 
   /// Whether [logout] throws, standing in for a sign-out with no network.
   final bool failLogout;
@@ -51,9 +72,11 @@ class _RecordingPushDriver extends PushDriver {
       StreamController<PushIdentityChange>.broadcast();
 
   /// The calls that CHANGE the device's identity, which is what a reconcile is
-  /// judged on; a read-back is not an operation.
-  List<String> get identityCalls =>
-      calls.where((String call) => call != 'currentExternalId').toList();
+  /// judged on; neither a read-back nor a permission request is one.
+  List<String> get identityCalls => calls
+      .where((String call) =>
+          call != 'currentExternalId' && call != 'requestPermission')
+      .toList();
 
   @override
   String get name => 'recording';
@@ -62,11 +85,10 @@ class _RecordingPushDriver extends PushDriver {
   bool get isSupported => true;
 
   @override
-  Future<PushPermissionState> permissionState() async =>
-      PushPermissionState.authorized;
+  Future<PushPermissionState> permissionState() async => permission;
 
   @override
-  bool get isOptedIn => true;
+  bool get isOptedIn => optedIn;
 
   @override
   Future<void> initialize(Map<String, dynamic> config) async {
@@ -105,10 +127,15 @@ class _RecordingPushDriver extends PushDriver {
   }
 
   @override
-  Future<String?> currentSubscriptionId() async => 'sub-1';
+  Future<String?> currentSubscriptionId() async => subscriptionId;
 
   @override
-  Future<bool> requestPermission() async => true;
+  Future<bool> requestPermission() async {
+    calls.add('requestPermission');
+    permissionRequests++;
+
+    return permission == PushPermissionState.notDetermined;
+  }
 
   @override
   Future<void> optIn() async {}
@@ -734,4 +761,368 @@ void main() {
       expect(() => manager.pushDriver, throwsA(isA<NotificationException>()));
     });
   });
+
+  group('the automatic permission request', () {
+    /// Turns [key] on for one test and takes it back afterwards.
+    void configure(String key, Object value) {
+      Config.set(key, value);
+      addTearDown(() => Config.forget(key));
+    }
+
+    test('an app that sets neither key behaves exactly as it did before',
+        () async {
+      final _RecordingPushDriver driver = use(
+        _RecordingPushDriver(permission: PushPermissionState.notDetermined),
+      );
+
+      await manager.initializePushWithUserId('user_A');
+      await pumpEventQueue();
+
+      // The upgrade guarantee. A device that has never been asked is the one
+      // an automatic request would fire on, so if an absent key changed
+      // anything at all it would change it here.
+      expect(driver.permissionRequests, 0);
+      expect(driver.identityCalls, <String>['login:user_A']);
+
+      // And the second cadence is silent too: with no interval configured, a
+      // device that turned the reminder down is never reminded again.
+      final PushPromptAdvice advice = await manager.pushPromptAdvice(
+        declinedAt: DateTime.now().subtract(const Duration(days: 365)),
+      );
+      expect(advice.show, isFalse);
+    });
+
+    test('a device that was never asked is asked once, and only once',
+        () async {
+      configure(NotificationManager.autoRequestOnLoginKey, true);
+      final _RecordingPushDriver driver = use(
+        _RecordingPushDriver(permission: PushPermissionState.notDetermined),
+      );
+
+      await manager.initializePushWithUserId('user_A');
+      await pumpEventQueue();
+
+      expect(driver.permissionRequests, 1);
+
+      // A consumer wires this to auth state, which bumps on every cold-boot
+      // restore and every team switch. Asking again on each of those is a
+      // dialog the operator already answered.
+      await manager.initializePushWithUserId('user_A');
+      await manager.want('user_B');
+      await pumpEventQueue();
+
+      expect(driver.permissionRequests, 1);
+    });
+
+    test('a blocked device is never asked, whatever the config says', () async {
+      configure(NotificationManager.autoRequestOnLoginKey, true);
+      final _RecordingPushDriver driver = use(
+        _RecordingPushDriver(permission: PushPermissionState.denied),
+      );
+
+      await manager.initializePushWithUserId('user_A');
+      await pumpEventQueue();
+
+      // Every platform answers a request on a denied origin immediately and
+      // shows the user nothing, so this would be a prompt that never appears
+      // and an operator watching nothing happen.
+      expect(driver.permissionRequests, 0);
+    });
+
+    test('a device already subscribed is not asked', () async {
+      configure(NotificationManager.autoRequestOnLoginKey, true);
+      final _RecordingPushDriver driver = use(_RecordingPushDriver());
+
+      await manager.initializePushWithUserId('user_A');
+      await pumpEventQueue();
+
+      expect(driver.permissionRequests, 0);
+    });
+
+    test('a device that was asked once and opted out is not asked again',
+        () async {
+      configure(NotificationManager.autoRequestOnLoginKey, true);
+      final _RecordingPushDriver driver = use(
+        _RecordingPushDriver(optedIn: false),
+      );
+
+      await manager.initializePushWithUserId('user_A');
+      await pumpEventQueue();
+
+      // Reachable is not the same as promptable. This device reads `off`, like
+      // one that was never asked, but the permission was granted long ago and
+      // a request here resolves without showing anybody anything.
+      expect(await driver.reachability(), PushReachability.off);
+      expect(driver.permissionRequests, 0);
+    });
+
+    test('a sign-out declares no identity, so nothing is asked', () async {
+      configure(NotificationManager.autoRequestOnLoginKey, true);
+      final _RecordingPushDriver driver = use(
+        _RecordingPushDriver(permission: PushPermissionState.notDetermined),
+      );
+
+      await manager.logoutPush();
+      await pumpEventQueue();
+
+      // The trigger is a person signing IN. A device being detached from
+      // whoever was on it has nobody to ask on behalf of.
+      expect(driver.permissionRequests, 0);
+    });
+
+    test('a reconcile pass never raises a prompt', () async {
+      configure(NotificationManager.autoRequestOnLoginKey, true);
+      final _RecordingPushDriver driver = use(
+        _RecordingPushDriver(permission: PushPermissionState.notDetermined),
+      );
+
+      await manager.reconcilePushIdentity();
+      await pumpEventQueue();
+
+      // The reconciler runs on every auth-state change, on boot, and from the
+      // provider on a signed-out device. A dialog raised from there arrives
+      // with no login in front of it to explain what it is for.
+      expect(driver.permissionRequests, 0);
+    });
+
+    test('a permission request that throws does not take the login with it',
+        () async {
+      configure(NotificationManager.autoRequestOnLoginKey, true);
+      final _RecordingPushDriver driver = use(
+        _ThrowingRequestDriver(permission: PushPermissionState.notDetermined),
+      );
+
+      await expectLater(manager.initializePushWithUserId('user_A'), completes);
+      await pumpEventQueue();
+
+      expect(driver.identityCalls, <String>['login:user_A']);
+    });
+  });
+
+  group('the reminder policy', () {
+    /// Sets [key] for one test and takes it back afterwards.
+    void configure(String key, Object value) {
+      Config.set(key, value);
+      addTearDown(() => Config.forget(key));
+    }
+
+    /// [hours] ago.
+    DateTime hoursAgo(int hours) =>
+        DateTime.now().subtract(Duration(hours: hours));
+
+    test(
+        'a device that was never asked may be reminded, and the reminder can '
+        'raise the OS prompt', () async {
+      use(_RecordingPushDriver(permission: PushPermissionState.notDetermined));
+
+      final PushPromptAdvice advice = await manager.pushPromptAdvice();
+
+      expect(advice.show, isTrue);
+      expect(advice.reachability, PushReachability.off);
+      expect(advice.action, PushPromptAction.request);
+    });
+
+    test('the interval governs when a decline may be reminded again', () async {
+      configure(NotificationManager.repromptAfterHoursKey, 24);
+      use(_RecordingPushDriver(permission: PushPermissionState.notDetermined));
+
+      // Before: the operator said no eleven hours ago and meant it.
+      expect((await manager.pushPromptAdvice(declinedAt: hoursAgo(11))).show,
+          isFalse);
+
+      // At: a full interval has passed, so the reminder is due.
+      expect((await manager.pushPromptAdvice(declinedAt: hoursAgo(24))).show,
+          isTrue);
+
+      // After.
+      expect((await manager.pushPromptAdvice(declinedAt: hoursAgo(48))).show,
+          isTrue);
+    });
+
+    test('with no interval configured a decline is permanent', () async {
+      use(_RecordingPushDriver(permission: PushPermissionState.notDetermined));
+
+      expect(
+          (await manager.pushPromptAdvice(declinedAt: hoursAgo(24 * 365))).show,
+          isFalse);
+
+      // Explicit zero reads the same as absent, so an app can turn the cadence
+      // back off without deleting the key.
+      configure(NotificationManager.repromptAfterHoursKey, 0);
+      expect(
+          (await manager.pushPromptAdvice(declinedAt: hoursAgo(24 * 365))).show,
+          isFalse);
+    });
+
+    test(
+        'a blocked device is reminded too, and its action is the settings '
+        'page when the platform has one', () async {
+      configure(NotificationManager.repromptAfterHoursKey, 24);
+      use(
+        _RecordingPushDriver(
+          permission: PushPermissionState.denied,
+          canOpenPlatformSettings: true,
+        ),
+      );
+
+      final PushPromptAdvice due = await manager.pushPromptAdvice(
+        declinedAt: hoursAgo(25),
+      );
+
+      // The OS prompt is spent here, the app's own reminder is not: on mobile
+      // the tap lands on the app's settings page, where the operator really
+      // can turn notifications back on.
+      expect(due.show, isTrue);
+      expect(due.reachability, PushReachability.blocked);
+      expect(due.action, PushPromptAction.openSettings);
+
+      // And the same interval still holds it back inside the window.
+      expect(
+        (await manager.pushPromptAdvice(declinedAt: hoursAgo(1))).show,
+        isFalse,
+      );
+    });
+
+    test(
+        'a blocked device on a platform with no settings route can only be '
+        'told where the switch is', () async {
+      use(_RecordingPushDriver(permission: PushPermissionState.denied));
+
+      final PushPromptAdvice advice = await manager.pushPromptAdvice();
+
+      // The web case. No browser API opens Chrome's site settings from a page,
+      // so a control here would be a button that does nothing.
+      expect(advice.show, isTrue);
+      expect(advice.action, PushPromptAction.instructions);
+    });
+
+    test('a subscribed device is never reminded', () async {
+      configure(NotificationManager.repromptAfterHoursKey, 1);
+      use(_RecordingPushDriver());
+
+      final PushPromptAdvice advice = await manager.pushPromptAdvice(
+        declinedAt: hoursAgo(24),
+      );
+
+      expect(advice.reachability, PushReachability.on);
+      expect(advice.action, PushPromptAction.none);
+      expect(advice.show, isFalse);
+    });
+
+    test('a build with no push driver has nothing to remind anybody about',
+        () async {
+      final PushPromptAdvice advice = await manager.pushPromptAdvice();
+
+      expect(advice.reachability, PushReachability.unavailable);
+      expect(advice.action, PushPromptAction.none);
+      expect(advice.show, isFalse);
+    });
+
+    test('the host can switch the reminder off entirely', () async {
+      configure('notifications.soft_prompt.enabled', false);
+      use(_RecordingPushDriver(permission: PushPermissionState.notDetermined));
+
+      final PushPromptAdvice advice = await manager.pushPromptAdvice();
+
+      // The state and the action are still reported, because a caller that
+      // renders the state without a prompt still needs them; only the
+      // permission to interrupt is withdrawn.
+      expect(advice.show, isFalse);
+      expect(advice.action, PushPromptAction.request);
+    });
+
+    test('a decline timestamp in the future is not a licence to ask now',
+        () async {
+      configure(NotificationManager.repromptAfterHoursKey, 24);
+      use(_RecordingPushDriver(permission: PushPermissionState.notDetermined));
+
+      // A device whose clock is ahead, or a timestamp written by a server in
+      // another timezone: the elapsed time is negative, which is not an
+      // interval that has passed.
+      expect(
+        (await manager.pushPromptAdvice(declinedAt: hoursAgo(-48))).show,
+        isFalse,
+      );
+    });
+  });
+
+  group('the delivery snapshot', () {
+    test('reports the address and the reachability a server needs', () async {
+      use(_RecordingPushDriver(subscribedAs: 'user_A'));
+
+      final PushDeliverySnapshot snapshot =
+          await manager.pushDeliverySnapshot();
+
+      expect(snapshot.externalId, 'user_A');
+      expect(snapshot.subscriptionId, 'sub-1');
+      expect(snapshot.reachability, PushReachability.on);
+      expect(snapshot.canReceive, isTrue);
+    });
+
+    test('a device that cannot be paged says so', () async {
+      use(
+        _RecordingPushDriver(
+          subscribedAs: 'user_A',
+          permission: PushPermissionState.denied,
+        ),
+      );
+
+      final PushDeliverySnapshot snapshot =
+          await manager.pushDeliverySnapshot();
+
+      expect(snapshot.reachability, PushReachability.blocked);
+      expect(snapshot.canReceive, isFalse);
+    });
+
+    test('a permitted device holding no subscription reports it', () async {
+      use(_RecordingPushDriver(subscribedAs: 'user_A', subscriptionId: null));
+
+      final PushDeliverySnapshot snapshot =
+          await manager.pushDeliverySnapshot();
+
+      // The subtlest un-pageable state: permitted, opted in, and with no
+      // address to deliver to. A server reading only the permission would page
+      // into nothing here.
+      expect(snapshot.subscriptionId, isNull);
+      expect(snapshot.reachability, PushReachability.off);
+      expect(snapshot.canReceive, isFalse);
+    });
+
+    test('a build with no push driver reports unavailable rather than throwing',
+        () async {
+      final PushDeliverySnapshot snapshot =
+          await manager.pushDeliverySnapshot();
+
+      expect(snapshot.reachability, PushReachability.unavailable);
+      expect(snapshot.externalId, isNull);
+      expect(snapshot.subscriptionId, isNull);
+    });
+
+    test('a platform read that throws reports un-pageable, not an exception',
+        () async {
+      use(_RecordingPushDriver(failRead: true));
+
+      // The consumer posts this from a lifecycle path. A throw would take that
+      // path down, and claiming reachable on a read that failed would leave an
+      // escalation waiting on a device nobody can prove is there.
+      final PushDeliverySnapshot snapshot =
+          await manager.pushDeliverySnapshot();
+
+      expect(snapshot.canReceive, isFalse);
+      expect(snapshot.reachability, PushReachability.unavailable);
+    });
+  });
+}
+
+/// A driver whose permission request throws, standing in for a platform
+/// channel that is not there.
+class _ThrowingRequestDriver extends _RecordingPushDriver {
+  _ThrowingRequestDriver({required super.permission});
+
+  @override
+  Future<bool> requestPermission() async {
+    await super.requestPermission();
+
+    throw StateError('the SDK is not initialized');
+  }
 }

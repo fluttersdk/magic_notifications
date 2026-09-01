@@ -9,6 +9,9 @@ import 'drivers/push/push_driver.dart';
 import 'exceptions/notification_exception.dart';
 import 'models/database_notification.dart';
 import 'models/paginated_notifications.dart';
+import 'models/push_delivery_snapshot.dart';
+import 'models/push_prompt_advice.dart';
+import 'models/push_subscription.dart';
 import 'notification_poller.dart';
 import 'support/notification_log.dart';
 
@@ -81,6 +84,17 @@ class NotificationManager {
 
   /// Whether the device is known to carry [_pushIntent].
   bool _pushIdentityConverged = false;
+
+  /// Whether the automatic permission request has already had its one turn in
+  /// this process.
+  ///
+  /// Set when the pass STARTS rather than when it raises a dialog, so an
+  /// overlapping second login cannot slip past it while the first is reading
+  /// the platform, and so a pass that decided not to ask does not decide again
+  /// on the next auth bump. A consumer wires the login path to auth state, and
+  /// that bumps on every cold-boot restore and every team switch; asking on
+  /// each of those is a dialog the operator has already answered.
+  bool _autoRequestRaised = false;
 
   /// The failure of the last identity operation, retained rather than only
   /// logged, because nothing retries and a caller has to be able to see it.
@@ -233,6 +247,7 @@ class NotificationManager {
     _pushIdentityError = null;
     _reconciledIntent = null;
     _reconcileInFlight = null;
+    _autoRequestRaised = false;
     _dropInFlightReads();
   }
 
@@ -664,6 +679,13 @@ class NotificationManager {
   /// and somebody else's outage page.
   ///
   /// Nothing is sent to the SDK here; [reconcilePushIdentity] does that.
+  ///
+  /// This is also the one path that can raise a permission prompt, and only
+  /// when [autoRequestOnLoginKey] is switched on. Declaring SOMEBODY is the
+  /// trigger, because that is the moment the app has just earned the right to
+  /// ask: a person signed in, and the notifications this permission is for are
+  /// now addressed to them. Nothing is raised for a sign-out, and nothing is
+  /// raised anywhere else in this class.
   Future<void> want(String? externalId) async {
     final String? wanted = _blankToNull(externalId);
 
@@ -675,6 +697,19 @@ class NotificationManager {
     // boot. The load is a no-op once it has run, so a `want` that follows one
     // still overwrites what the vault held.
     await _loadPushIntent();
+
+    // Fired for a DECLARATION, not for a change, so it sits in front of the
+    // equality check below: an app that switches the key on ships an update to
+    // people who are already signed in, and for every one of them the next
+    // declaration is the same id the vault already holds. Gating it on a
+    // changed intent would mean nobody was ever asked.
+    //
+    // Not awaited, and that is the point: the platform dialog resolves when
+    // the user taps it, and this call sits on the login path in front of
+    // [reconcilePushIdentity]. Awaiting it would hold the identity reconcile,
+    // and with it every guarantee that depends on the device carrying the
+    // right subject, behind a dialog somebody may never look at.
+    if (wanted != null) unawaited(_autoRequestPermissionOnLogin());
 
     if (_pushIntent == wanted) return;
 
@@ -983,9 +1018,221 @@ class NotificationManager {
 
   /// Request push notification permission from the user.
   ///
-  /// Returns `true` if permission was granted, `false` otherwise.
+  /// Returns `true` if permission was granted, `false` otherwise. See
+  /// [PushDriver.requestPermission] for what a `false` does and does not say.
   Future<bool> requestPushPermission() async {
     return await pushDriver.requestPermission();
+  }
+
+  // ========================================
+  // Permission Policy
+  // ========================================
+
+  /// The config key that lets this package raise the permission request by
+  /// itself, once, after somebody signs in.
+  ///
+  /// Absent means off. Raising a system dialog is the most interruptive thing
+  /// a notification package can do, and an app that upgrades without touching
+  /// its config must not start doing it.
+  static const String autoRequestOnLoginKey =
+      'notifications.push.auto_request_on_login';
+
+  /// The config key carrying how long the app waits before reminding somebody
+  /// again, in HOURS.
+  ///
+  /// Hours rather than days because the useful cadence on an on-call product
+  /// is a day or less, and a day-based key cannot express anything under one
+  /// without a fraction. `0`, absent, or a negative value all mean never, so
+  /// the reminder stays a one-shot until an app asks for otherwise.
+  static const String repromptAfterHoursKey =
+      'notifications.push.reprompt_after_hours';
+
+  /// The config key an app uses to switch its own reminder off wholesale.
+  ///
+  /// Older than both keys above and previously read only by the host's own
+  /// prompt; [pushPromptAdvice] now honours it, so an app that turned the
+  /// prompt off does not have to remember to check it twice. Absent means on,
+  /// which is what it has always meant.
+  static const String softPromptEnabledKey =
+      'notifications.soft_prompt.enabled';
+
+  /// Whether the app may put its own push reminder in front of the user right
+  /// now, and what that reminder's control can accomplish.
+  ///
+  /// [declinedAt] is the last time the operator turned the reminder down on
+  /// THIS device, or `null` when they never have. The package does not store
+  /// it and will not: a decline is the consumer's own UI event, recorded
+  /// wherever that consumer already keeps device state, and a second copy in
+  /// here would be a second answer to drift out of sync. What the package owns
+  /// is the POLICY, because that is the part two consumers would each get
+  /// wrong in their own way.
+  ///
+  /// The policy, in order:
+  ///
+  ///  1. a device that is already subscribed, or a build with no push at all,
+  ///     is never reminded, and there is nothing for a control to do;
+  ///  2. an app that switched [softPromptEnabledKey] off is never reminded;
+  ///  3. a device that has never turned the reminder down may be reminded now;
+  ///  4. otherwise the reminder is due only once [repromptAfterHoursKey] has
+  ///     elapsed since [declinedAt], and never at all when that key is unset.
+  ///
+  /// A DENIED device is included on purpose. The OS prompt cannot recur there,
+  /// but the app's own reminder is not the OS prompt: on mobile its action
+  /// opens the app's settings page, which is a real route back, so silencing
+  /// it would strand exactly the people whose pages are going nowhere. What
+  /// the action can do is carried in [PushPromptAdvice.action] rather than
+  /// left to the caller to infer from the platform.
+  Future<PushPromptAdvice> pushPromptAdvice({DateTime? declinedAt}) async {
+    // 1. Read the device once. Everything below is derived from this reading,
+    //    so a caller never has to reconcile two reads taken a moment apart.
+    final PushDriver? driver = pushDriverOrNull;
+    final PushReachability reachability = driver == null
+        ? PushReachability.unavailable
+        : await driver.reachability();
+    final PushPromptAction action = _promptAction(driver, reachability);
+
+    // 2. Nothing to offer is the end of it, whatever the timestamps say.
+    if (action == PushPromptAction.none) {
+      return PushPromptAdvice(
+        show: false,
+        reachability: reachability,
+        action: action,
+      );
+    }
+
+    return PushPromptAdvice(
+      show: _softPromptEnabled && _remindersDue(declinedAt),
+      reachability: reachability,
+      action: action,
+    );
+  }
+
+  /// What a reminder's control could accomplish for [reachability].
+  ///
+  /// The `blocked` branch is the one that cannot be answered from the state
+  /// alone: whether there is anywhere to send the tap is a property of the
+  /// PLATFORM, and only the driver knows it.
+  PushPromptAction _promptAction(
+    PushDriver? driver,
+    PushReachability reachability,
+  ) {
+    return switch (reachability) {
+      PushReachability.unavailable ||
+      PushReachability.on =>
+        PushPromptAction.none,
+      PushReachability.off => PushPromptAction.request,
+      PushReachability.blocked => driver?.canOpenPlatformSettings ?? false
+          ? PushPromptAction.openSettings
+          : PushPromptAction.instructions,
+    };
+  }
+
+  /// Whether enough time has passed since [declinedAt] to ask again.
+  ///
+  /// A never-declined device is always due. A declined one is due only when an
+  /// interval is configured AND it has fully elapsed; a timestamp in the
+  /// future (a device whose clock is ahead) elapses nothing, so it answers no
+  /// rather than reading a negative difference as time served.
+  bool _remindersDue(DateTime? declinedAt) {
+    if (declinedAt == null) return true;
+
+    final int hours = Config.get<int>(repromptAfterHoursKey) ?? 0;
+    if (hours <= 0) return false;
+
+    return DateTime.now().difference(declinedAt) >= Duration(hours: hours);
+  }
+
+  /// Whether the host app has left its own reminder switched on.
+  bool get _softPromptEnabled => Config.get<bool>(softPromptEnabledKey) ?? true;
+
+  /// Raises the platform permission request once per process, when the app
+  /// asked for that and the OS has never been asked.
+  ///
+  /// Called from [want] and nowhere else, so there is exactly one path in this
+  /// package that can put a system dialog on screen. It deliberately does NOT
+  /// run from [reconcilePushIdentity], which fires on every auth-state change
+  /// and on a signed-out boot: a dialog raised from there arrives with nothing
+  /// in front of it explaining what it is for.
+  ///
+  /// Failure is logged and dropped rather than raised. It runs unawaited off
+  /// the login path, so a throw would surface as an unhandled async error, and
+  /// a permission this app could not ask for is not a reason to fail a login.
+  Future<void> _autoRequestPermissionOnLogin() async {
+    // 1. Absent means off, and so does a value that is not a boolean.
+    if (Config.get<bool>(autoRequestOnLoginKey) != true) return;
+
+    // 2. One turn per process, claimed before the first await so two logins in
+    //    the same breath cannot both take it.
+    if (_autoRequestRaised) return;
+    _autoRequestRaised = true;
+
+    final PushDriver? driver = pushDriverOrNull;
+    if (driver == null) return;
+
+    try {
+      // 3. `off` is the only state worth asking in: `on` is already
+      //    subscribed, `blocked` has spent the prompt, `unavailable` has no
+      //    platform to ask.
+      if (await driver.reachability() != PushReachability.off) return;
+
+      // 4. Reachable is not the same as promptable. A device that was asked
+      //    once, granted, and then opted out reads `off` too, and a request
+      //    there resolves without showing anybody anything.
+      if (!await driver.canRaisePermissionRequest()) return;
+
+      await driver.requestPermission();
+    } catch (e) {
+      NotificationLog.error(
+        'The automatic push permission request failed: $e',
+      );
+    }
+  }
+
+  /// Reads whether a push can reach this device right now, in a shape a
+  /// consumer can POST to its own backend.
+  ///
+  /// The server half of an escalation policy cannot see any of this: the
+  /// permission, the opt-in flag and the subscription id all live on the
+  /// device. Handed the snapshot, it can move on to the next responder
+  /// immediately instead of waiting out an acknowledgement from a phone that
+  /// was never going to ring.
+  ///
+  /// No transport is shipped with it, on purpose. This package does not know
+  /// the consumer's API, and an endpoint invented here would be one more
+  /// contract to keep in sync with a backend it cannot see. See
+  /// [PushDeliverySnapshot] for the shape and what it deliberately omits.
+  ///
+  /// A platform read that throws answers `unavailable` rather than raising.
+  /// The caller is on a lifecycle path, and of the two wrong answers available
+  /// on a failed read, "this device may not be reachable" escalates to a human
+  /// who is, while "reachable" strands the page on a device nobody can prove
+  /// is there.
+  Future<PushDeliverySnapshot> pushDeliverySnapshot() async {
+    final DateTime capturedAt = DateTime.now().toUtc();
+    final PushDriver? driver = pushDriverOrNull;
+
+    if (driver == null) {
+      return PushDeliverySnapshot(
+        reachability: PushReachability.unavailable,
+        capturedAt: capturedAt,
+      );
+    }
+
+    try {
+      return PushDeliverySnapshot(
+        reachability: await driver.reachability(),
+        externalId: _blankToNull(await driver.currentExternalId()),
+        subscriptionId: _blankToNull(await driver.currentSubscriptionId()),
+        capturedAt: capturedAt,
+      );
+    } catch (e) {
+      NotificationLog.error('Failed to read the push delivery state: $e');
+
+      return PushDeliverySnapshot(
+        reachability: PushReachability.unavailable,
+        capturedAt: capturedAt,
+      );
+    }
   }
 
   // ========================================

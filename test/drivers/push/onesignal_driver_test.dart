@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:magic/magic.dart' show Config;
 import 'package:magic_notifications/magic_notifications.dart';
 
 import '../../test_helper.dart';
@@ -75,6 +76,32 @@ void main() {
         if (!driver.isSupported) {
           expect(await driver.reachability(), PushReachability.unavailable);
         }
+      });
+    });
+
+    // What a permission request does on a DENIED device. The request itself
+    // needs a device, but the decision behind it is a config read, and it is
+    // the whole difference between a reminder with somewhere to send the tap
+    // and one that can only point at Settings in words.
+    group('the settings fallback', () {
+      tearDown(() => Config.forget(OneSignalDriver.fallbackToSettingsKey));
+
+      test('is on by default, which is what this driver always did', () {
+        expect(OneSignalDriver().canOpenPlatformSettings, isTrue);
+      });
+
+      test('an app that wants to ask once and drop it can switch it off', () {
+        Config.set(OneSignalDriver.fallbackToSettingsKey, false);
+
+        expect(OneSignalDriver().canOpenPlatformSettings, isFalse);
+      });
+
+      test('a value that is not a boolean reads as the default', () {
+        Config.set(OneSignalDriver.fallbackToSettingsKey, 'yes');
+
+        // Reading a configuration mistake as OFF would quietly remove the only
+        // route a denied operator has back to notifications.
+        expect(OneSignalDriver().canOpenPlatformSettings, isTrue);
       });
     });
 
