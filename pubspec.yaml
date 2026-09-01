@@ -37,6 +37,13 @@ dependencies:
   # 5.5.3, 5.5.5, 5.6.2 and 5.6.6. `^5.4.6` was resolving 5.6.3 in uptizm,
   # which carries some of those fixes but not the last one.
   onesignal_flutter: ^5.6.6
+  # Direct rather than transitive-through-flutter, because this package now
+  # names `@internal` in its own source: `NotificationViewRegistry` is exported
+  # from the barrel, so `registerDefault` is reachable by a host that must not
+  # call it, and the annotation is the only thing that can say so under Dart's
+  # library-level privacy. `depend_on_referenced_packages` asks for the import
+  # to be declared where it is used.
+  meta: ^1.15.0
   # ^1.2.0 matches the floor magic/pubspec.yaml:26 already declares. This
   # package is about to ship widgets, so wind moves from a transitive
   # dependency to a direct one; there is no 1.5-only API in use, so the floor

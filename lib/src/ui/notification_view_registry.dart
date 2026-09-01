@@ -1,4 +1,5 @@
 import 'package:flutter/widgets.dart';
+import 'package:meta/meta.dart';
 
 /// Builds a view widget for a registry key.
 typedef NotificationViewBuilder = Widget Function();
@@ -73,9 +74,18 @@ class NotificationViewRegistry {
 
   /// Register a builder this package ships, which [hasOverride] does not count.
   ///
-  /// Internal: `Notify.view` seeds the two screens through this so a downstream
-  /// package can tell them apart from a deliberate choice. A later [register]
-  /// on the same key promotes it to an override.
+  /// `Notify.view` seeds the two screens through this so a downstream package
+  /// can tell them apart from a deliberate choice. A later [register] on the
+  /// same key promotes it to an override.
+  ///
+  /// `@internal` rather than private, because Dart's privacy is library-level
+  /// and `notify.dart` has to call it. The annotation is the only thing that
+  /// can say so: this class is exported from the barrel, so a host CAN reach
+  /// this method, and a host that uses it inverts the guarantee the method
+  /// exists to provide. Its screen would be marked a default, [hasOverride]
+  /// would answer false for it, and the next downstream package gating on
+  /// [hasOverride] would overwrite the choice the host had made. Use [register].
+  @internal
   void registerDefault(String key, NotificationViewBuilder builder) {
     _builders[key] = builder;
     _defaults.add(key);

@@ -289,6 +289,36 @@ touches it in two ways:
 The package's own defaults are registered the first time `Notify.view` is
 read, so any registration you make afterwards replaces them; `Notify.view.clear()` drops every registration, package defaults included.
 
+### For a package built on top of this one
+
+Seeding on first read has a consequence worth stating, because it caught a
+downstream package out: **`has(key)` is true before anybody has chosen
+anything.** A package that installs its own default for one of these screens
+therefore cannot gate on `has`, or it skips every time and its own version never
+reaches the app.
+
+`hasOverride(key)` is the question with an answer. It is true only when somebody
+CHOSE a screen for that key, and false while the key still holds the default
+this package seeded:
+
+```dart
+// Install ours unless the app has picked its own.
+if (!Notify.view.hasOverride('notifications.list')) {
+  Notify.view.register('notifications.list', () => wrapped(const MyListView()));
+}
+```
+
+`register` promotes a key out of the default set, so a host registration wins
+whichever side of your own it lands on. `registerDefault` is what marks a key as
+a default, and it is `@internal`: calling it from outside this package inverts
+the guarantee, because your screen would then read as a default and the next
+package to check `hasOverride` would overwrite it.
+
+`Notify.forgetView()` drops the registry so the next read seeds a fresh one. It
+is the test-isolation seam, and it is not the same as `clear()`: clearing leaves
+the registry EMPTY, which is not the state an app boots with, so a suite that
+clears cannot see a decision that turns on the defaults being present.
+
 ---
 
 ## Architecture
