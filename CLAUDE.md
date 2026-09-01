@@ -36,9 +36,9 @@ lib/
     ├── drivers/push/             # OneSignalDriver (mobile), OneSignalWebDriver (web)
     ├── drivers/push_web/         # Web JS interop (conditional import)
     ├── facades/                   # Notify (static API)
-    ├── models/                    # DatabaseNotification, PushMessage, NotificationPreference, etc.
+    ├── models/                    # DatabaseNotification, PushMessage, NotificationPreference, PushSubscription, etc.
     ├── providers/                 # NotificationServiceProvider (register + boot)
-    ├── widgets/                   # PushPromptDialog
+    ├── ui/                        # NotificationViewRegistry, notifications list/preferences views, NotificationDropdown component
     ├── exceptions/               # NotificationException
     └── cli/
         ├── notifications_artisan_provider.dart  # MagicNotificationsArtisanProvider (7 commands + 2 MCP tools)

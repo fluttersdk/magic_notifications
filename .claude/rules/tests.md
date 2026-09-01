@@ -6,8 +6,8 @@ paths:
 # Testing Domain
 
 - Mock via contract inheritance (no mockito): `class MockNotificationChannel extends NotificationChannel { ... }`
-- Mock drivers: override `name`, `isSupported`, `onReceived` (return `Stream.empty()`), `initialize()`, `dispose()`
-- Reset singleton state in setUp: `manager.forgetChannels()` clears channels + push driver — call in every `setUp()`
+- Mock drivers: override `name`, `isSupported`, `onReceived` and `onIdentityChanged` (return `Stream.empty()`), `permissionState()` (async), `currentExternalId()`, `currentSubscriptionId()`, `initialize()`, `dispose()`
+- Reset singleton state in setUp: `manager.forgetDrivers()` clears channels, the registered factories, the resolved driver and the IN-MEMORY push intent. It deliberately leaves the PERSISTED intent alone, because a test-isolation helper must not sign a real device out. Call it in every `setUp()`.
 - Test structure mirrors `lib/src/` exactly: `test/channels/`, `test/contracts/`, `test/drivers/`, `test/facades/`, `test/models/`, `test/providers/`, `test/cli/`
 - Call `initMagicForTests()` from `test/test_helper.dart` in `main()` before any test needing Magic bindings
 - CLI tests in `test/cli/commands/` — override `getProjectRoot()` and `getStubSearchPaths()` for temp dirs

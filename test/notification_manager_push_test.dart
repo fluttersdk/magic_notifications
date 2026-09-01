@@ -6,8 +6,7 @@ void main() {
 
   setUp(() {
     manager = NotificationManager();
-    manager.forgetChannels();
-    manager.forgetPushDriver(); // Clear any existing driver
+    manager.forgetDrivers(); // Channels, driver registry and push intent
   });
 
   group('NotificationManager - Push', () {
@@ -59,17 +58,18 @@ void main() {
       expect(result, isTrue);
     });
 
-    test('initializePushWithUserId() throws if no driver configured', () async {
-      expect(
-        () => manager.initializePushWithUserId('user-123'),
-        throwsA(
-          isA<NotificationException>().having(
-            (e) => e.code,
-            'code',
-            'PUSH_DRIVER_NOT_CONFIGURED',
-          ),
-        ),
+    test('initializePushWithUserId() records the intent with no driver',
+        () async {
+      // A build with push absent still has a person signed in, and the intent
+      // is what the boot that DOES have a driver reconciles against, so this
+      // records rather than throws.
+      await expectLater(
+        manager.initializePushWithUserId('user-123'),
+        completes,
       );
+
+      expect(manager.pushIntent, 'user-123');
+      expect(manager.isPushIdentityConverged, isFalse);
     });
 
     test('initializePushWithUserId() logs in user when driver configured',
@@ -97,7 +97,8 @@ class MockPushDriver extends PushDriver {
   @override
   bool get isSupported => true;
   @override
-  PushPermissionState get permissionState => PushPermissionState.notDetermined;
+  Future<PushPermissionState> permissionState() async =>
+      PushPermissionState.notDetermined;
   @override
   bool get isOptedIn => false;
 
@@ -116,6 +117,12 @@ class MockPushDriver extends PushDriver {
   Future<void> logout() async {
     loggedInAs = null;
   }
+
+  @override
+  Future<String?> currentExternalId() async => loggedInAs;
+
+  @override
+  Future<String?> currentSubscriptionId() async => null;
 
   @override
   Future<bool> requestPermission() async {
@@ -143,4 +150,7 @@ class MockPushDriver extends PushDriver {
 
   @override
   Stream<PushPermissionState> get onPermissionChanged => Stream.empty();
+
+  @override
+  Stream<PushIdentityChange> get onIdentityChanged => Stream.empty();
 }

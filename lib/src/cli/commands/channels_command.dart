@@ -1,5 +1,7 @@
 import 'package:fluttersdk_artisan/artisan.dart';
 
+import '../notifications_artisan_provider.dart';
+
 /// CLI command to display all notification channels and their configuration.
 ///
 /// Reads the current `lib/config/notifications.dart` and shows the status
@@ -31,7 +33,8 @@ class ChannelsCommand extends ArtisanCommand {
   @override
   Future<int> handle(ArtisanContext ctx) async {
     // 1. Display banner with version.
-    ctx.output.info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
+    ctx.output.info(
+        ConsoleStyle.banner('Magic Notifications', magicNotificationsVersion));
 
     final configPath = '$projectRoot/lib/config/notifications.dart';
 

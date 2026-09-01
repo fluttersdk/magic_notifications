@@ -6,15 +6,19 @@ class NotificationException implements Exception {
   /// Optional error code
   final String? code;
 
-  NotificationException(this.message, {this.code});
+  const NotificationException(this.message, {this.code});
 
   @override
   String toString() =>
       'NotificationException: $message${code != null ? ' ($code)' : ''}';
 }
 
-/// Exception thrown when push notifications are not supported on the platform
-class PushNotSupportedException extends NotificationException {
-  PushNotSupportedException()
-      : super('Push notifications are not supported on this platform');
+/// Thrown when a call needs a push driver this build has no arm for.
+///
+/// The stub arm of the platform factory throws this instead of returning a
+/// driver that would silently do nothing: a caller that only wants "push did
+/// not work" catches [NotificationException] for free, and a caller that
+/// wants to say something specific about the platform catches this subtype.
+class UnsupportedPlatformException extends NotificationException {
+  const UnsupportedPlatformException(super.message);
 }

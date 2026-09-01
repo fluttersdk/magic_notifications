@@ -113,7 +113,7 @@ void main() {
 
   setUp(() {
     manager = NotificationManager();
-    manager.forgetChannels();
+    manager.forgetDrivers();
     manager.stopRealtime();
     manager.stopPolling();
     echo = _RecordingManager();

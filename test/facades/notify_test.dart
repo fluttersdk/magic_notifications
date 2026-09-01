@@ -15,7 +15,7 @@ void main() {
       final notifiable = TestNotifiable('1');
 
       // Reset and register mock channel
-      Notify.manager.forgetChannels();
+      Notify.forgetDrivers();
       final mockChannel = MockChannel('test');
       Notify.manager.registerChannel(mockChannel);
 
@@ -23,7 +23,88 @@ void main() {
 
       expect(mockChannel.sentCount, 1);
     });
+
+    test('extend() registers a driver the manager then resolves', () {
+      final driver = MockFacadePushDriver();
+      Notify.extend('mock', () => driver);
+      addTearDown(Notify.forgetDrivers);
+
+      expect(identical(Notify.manager.pushDriver, driver), isTrue);
+    });
+
+    test('forgetDrivers() clears the registry through the facade', () {
+      Notify.extend('mock', MockFacadePushDriver.new);
+
+      Notify.forgetDrivers();
+
+      expect(
+        () => Notify.manager.pushDriver,
+        throwsA(isA<NotificationException>()),
+      );
+    });
   });
+}
+
+// Minimal push driver, present only so the facade has something to register.
+class MockFacadePushDriver extends PushDriver {
+  @override
+  String get name => 'mock';
+
+  @override
+  bool get isSupported => true;
+
+  @override
+  Future<PushPermissionState> permissionState() async =>
+      PushPermissionState.notDetermined;
+
+  @override
+  bool get isOptedIn => false;
+
+  @override
+  Future<void> initialize(Map<String, dynamic> config) async {}
+
+  @override
+  Future<void> login(String externalId) async {}
+
+  @override
+  Future<void> logout() async {}
+
+  @override
+  Future<String?> currentExternalId() async => null;
+
+  @override
+  Future<String?> currentSubscriptionId() async => null;
+
+  @override
+  Future<bool> requestPermission() async => false;
+
+  @override
+  Future<void> optIn() async {}
+
+  @override
+  Future<void> optOut() async {}
+
+  @override
+  Future<void> setTags(Map<String, String> tags) async {}
+
+  @override
+  Future<void> removeTag(String key) async {}
+
+  @override
+  Stream<PushNotificationEvent> get onNotificationReceived =>
+      const Stream<PushNotificationEvent>.empty();
+
+  @override
+  Stream<PushNotificationEvent> get onNotificationClicked =>
+      const Stream<PushNotificationEvent>.empty();
+
+  @override
+  Stream<PushPermissionState> get onPermissionChanged =>
+      const Stream<PushPermissionState>.empty();
+
+  @override
+  Stream<PushIdentityChange> get onIdentityChanged =>
+      const Stream<PushIdentityChange>.empty();
 }
 
 // Test notification

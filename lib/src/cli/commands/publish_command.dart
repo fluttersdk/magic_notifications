@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:fluttersdk_artisan/artisan.dart';
 
+import '../notifications_artisan_provider.dart';
+
 /// CLI command to publish Magic Notifications stub files to the project.
 ///
 /// Copies the notification config stub to `lib/config/notifications.dart`
@@ -44,7 +46,8 @@ class PublishCommand extends ArtisanCommand {
 
   @override
   Future<int> handle(ArtisanContext ctx) async {
-    ctx.output.info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
+    ctx.output.info(
+        ConsoleStyle.banner('Magic Notifications', magicNotificationsVersion));
 
     final force = ctx.input.option('force') as bool? ?? false;
     final configPath = '$projectRoot/lib/config/notifications.dart';

@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:fluttersdk_artisan/artisan.dart';
 
+import '../notifications_artisan_provider.dart';
+
 /// CLI command for reading and updating Magic Notifications configuration.
 ///
 /// Supports displaying the current config (--show) and mutating individual
@@ -38,7 +40,8 @@ class ConfigureCommand extends ArtisanCommand {
 
   @override
   Future<int> handle(ArtisanContext ctx) async {
-    ctx.output.info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
+    ctx.output.info(
+        ConsoleStyle.banner('Magic Notifications', magicNotificationsVersion));
 
     // Check if config exists before proceeding with any operation.
     if (!configExists()) {

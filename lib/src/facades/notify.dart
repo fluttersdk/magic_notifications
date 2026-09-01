@@ -1,8 +1,14 @@
 import '../contracts/notifiable.dart';
 import '../contracts/notification.dart';
+import '../drivers/push/push_driver.dart';
+import '../exceptions/notification_exception.dart';
 import '../models/database_notification.dart';
 import '../models/paginated_notifications.dart';
+import '../models/push_user_attributes.dart';
 import '../notification_manager.dart';
+import '../ui/notification_view_registry.dart';
+import '../ui/views/notification_preferences_view.dart';
+import '../ui/views/notifications_list_view.dart';
 
 /// Notification facade.
 ///
@@ -26,6 +32,57 @@ class Notify {
 
   /// Get the notification manager instance.
   static NotificationManager get manager => NotificationManager();
+
+  // ========================================
+  // Views
+  // ========================================
+
+  static NotificationViewRegistry? _view;
+
+  /// The notification view registry.
+  ///
+  /// Holds the screens this package ships, `notifications.list` and
+  /// `notifications.preferences`, so a host swaps, wraps or decorates them
+  /// without forking them:
+  ///
+  /// ```dart
+  /// // Mount the preference screen with the host's own settings route.
+  /// Notify.view.register('notifications.preferences', () {
+  ///   return NotificationPreferencesView(backRoute: '/settings');
+  /// });
+  ///
+  /// // Say what one of the host's own notification types looks like.
+  /// Notify.view.slot(NotificationViewRegistry.typeIconSlotView, 'order_shipped',
+  ///     (context) => WIcon(Icons.local_shipping, className: 'text-lg text-green-500'));
+  /// ```
+  ///
+  /// The package defaults are registered the first time this is read, so a
+  /// host registration made afterwards replaces them. `clear()` drops them
+  /// too, which is what it is for.
+  ///
+  /// They are seeded as DEFAULTS, so `hasOverride(key)` is false until somebody
+  /// registers over them. That is the question `magic_starter` asks before
+  /// mounting its own wrapped versions: `has(key)` is true from the first read
+  /// and would make it skip every time.
+  static NotificationViewRegistry get view {
+    final registered = _view;
+    if (registered != null) return registered;
+
+    final registry = NotificationViewRegistry();
+    // `registerDefault`, not `register`: these are seeded on first read, so by
+    // `has()` both keys are spoken for before anybody has chosen anything, and
+    // a downstream package deciding whether to install its own default would
+    // always lose to them. `hasOverride()` is the question that has an answer.
+    registry.registerDefault(
+        'notifications.list', () => const NotificationsListView());
+    registry.registerDefault(
+      'notifications.preferences',
+      () => const NotificationPreferencesView(),
+    );
+    _view = registry;
+
+    return registry;
+  }
 
   // ========================================
   // Sending
@@ -62,6 +119,11 @@ class Notify {
   ///
   /// Returns [PaginatedNotifications] with data and pagination metadata.
   /// Useful for full-page notification lists with server-side pagination.
+  ///
+  /// Throws [NotificationException] when the read fails (a dropped connection,
+  /// a non-2xx answer, an undecodable body). A failure is not answered as an
+  /// empty page, because a caller cannot tell that apart from an empty inbox;
+  /// a caller that wants an empty page on failure catches this and says so.
   ///
   /// Example:
   /// ```dart
@@ -152,6 +214,45 @@ class Notify {
   static Future<void> logoutPush() async {
     await manager.logoutPush();
   }
+
+  /// Registers how this app describes whoever signs in, once, for every later
+  /// login and account switch.
+  ///
+  /// ```dart
+  /// Notify.describePushUserUsing((String externalId) => PushUserAttributes(
+  ///       email: Auth.user()?.email,
+  ///       tags: <String, String>{'first_name': ..., 'last_name': ...},
+  ///     ));
+  /// ```
+  ///
+  /// Nothing is sent until `notifications.push.share_user_attributes` is
+  /// switched on, and it ships off: an address and a name reaching a third
+  /// party is a decision an adopter makes deliberately. See
+  /// [NotificationManager.describePushUserUsing] for what the OneSignal SDK
+  /// does and does not promise on a login to a different external id, and why
+  /// this package takes its own writes back.
+  static void describePushUserUsing(PushUserAttributesResolver? describe) =>
+      manager.describePushUserUsing(describe);
+
+  /// Registers [factory] as the push driver named [name].
+  /// See [NotificationManager.extend].
+  static void extend(String name, PushDriver Function() factory) =>
+      manager.extend(name, factory);
+
+  /// Drops every channel, every registered driver and every resolved instance.
+  /// See [NotificationManager.forgetDrivers].
+  static void forgetDrivers() => manager.forgetDrivers();
+
+  /// Drops the view registry so the next read of [view] seeds a fresh one.
+  ///
+  /// The test-isolation seam for views, and the sibling of [forgetDrivers]. The
+  /// registry is a static cache, so a test that registers over a screen leaves
+  /// that registration standing for every test after it, and one asserting on
+  /// the SEEDED state would then read whatever the previous test chose.
+  /// `view.clear()` is not the same thing: it empties the registry this facade
+  /// is holding and does not restore the defaults, because the seeding only
+  /// happens on the first read.
+  static void forgetView() => _view = null;
 
   // ========================================
   // Polling

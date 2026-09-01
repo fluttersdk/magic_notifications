@@ -1,19 +1,33 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magic/magic.dart';
-import 'package:magic_notifications/magic_notifications.dart';
+import 'package:magic_notifications/src/drivers/push/push_driver.dart';
+import 'package:magic_notifications/src/exceptions/notification_exception.dart';
+import 'package:magic_notifications/src/models/push_subscription.dart';
+import 'package:magic_notifications/src/notification_manager.dart';
+import 'package:magic_notifications/src/providers/notification_service_provider.dart';
+
+import '../test_helper.dart';
 
 void main() {
   late MagicApp app;
+  late FakeLogManager log;
   late NotificationServiceProvider provider;
+
+  setUpAll(() async {
+    await initMagicForTests();
+  });
 
   setUp(() {
     app = MagicApp.instance;
-    // Clear any previous bindings
     app.flush();
-    // Clear any previous config
     Config.flush();
-    // Clear push driver from manager
-    NotificationManager().forgetPushDriver();
+    // The manager is a `static final` that outlives a container flush, so its
+    // channels, driver registry and push intent have to be dropped by hand.
+    NotificationManager().forgetDrivers();
+    // Bound AFTER the flush, which would otherwise drop it.
+    log = Log.fake();
     provider = NotificationServiceProvider(app);
   });
 
@@ -29,55 +43,391 @@ void main() {
       expect(identical(manager1, manager2), isTrue);
     });
 
-    test('boot() completes without error', () async {
-      provider.register();
-
+    test('boot() resolves the manager through the container', () async {
+      // No register(), so the container is empty. Resolving the singleton
+      // directly would boot happily against a binding no consumer can reach;
+      // going through the container turns that into magic's own diagnostic.
       await expectLater(
         provider.boot(),
-        completes,
+        throwsA(
+          isA<Exception>().having(
+            (Exception e) => e.toString(),
+            'message',
+            contains('[notifications] is not registered'),
+          ),
+        ),
       );
     });
 
-    test('boot() sets push driver when onesignal is configured', () async {
-      // Set up onesignal config
-      Config.set('notifications.push.driver', 'onesignal');
-      Config.set('notifications.push.app_id', 'test-app-123');
-
-      provider.register();
-      await provider.boot();
-
-      final manager = NotificationManager();
-      // Should not throw since driver is configured
-      expect(() => manager.pushDriver, returnsNormally);
-      expect(manager.pushDriver.name, 'onesignal');
-    });
-
-    test('boot() does not set push driver when driver is not onesignal',
-        () async {
-      // Set up different driver
+    test(
+        'boot() reports an unservable driver value and does not degrade '
+        'silently', () async {
       Config.set('notifications.push.driver', 'fcm');
 
       provider.register();
       await provider.boot();
 
-      final manager = NotificationManager();
-      // Should throw since driver is not configured
+      final List<FakeLogEntry> errors =
+          log.entries.where((FakeLogEntry e) => e.level == 'error').toList();
+
+      expect(errors, isNotEmpty);
+      expect(errors.first.message, contains('fcm'));
+      expect(errors.first.message, contains('Notify.extend'));
       expect(
-        () => manager.pushDriver,
+        () => app.make<NotificationManager>('notifications').pushDriver,
         throwsA(isA<NotificationException>()),
       );
     });
 
-    test('boot() does not set push driver when config is empty', () async {
+    test('boot() stays quiet when the driver key is absent', () async {
       provider.register();
       await provider.boot();
 
-      final manager = NotificationManager();
-      // Should throw since no config
+      // The other half of the pair above: the same spy caught the wrong value,
+      // so an empty error log here is a real answer rather than a spy that
+      // could never have seen anything.
+      log.assertNothingLogged('error');
       expect(
-        () => manager.pushDriver,
+        () => app.make<NotificationManager>('notifications').pushDriver,
         throwsA(isA<NotificationException>()),
       );
     });
+
+    test('boot() resolves the driver through the manager registry', () async {
+      provider.register();
+
+      final NotificationManager manager =
+          app.make<NotificationManager>('notifications');
+      final _RecordingPushDriver driver = _RecordingPushDriver();
+      manager.extend('onesignal', () => driver);
+
+      Config.set('notifications.push.driver', 'onesignal');
+      Config.set('notifications.push.app_id', 'test-app-123');
+
+      await provider.boot();
+
+      // A registered factory is reached, so the built-in and an override travel
+      // one path.
+      expect(identical(manager.pushDriver, driver), isTrue);
+      expect(driver.initConfig?['app_id'], 'test-app-123');
+      expect(NotificationServiceProvider.pushInitializationError, isNull);
+      log.assertNothingLogged('error');
+    });
+
+    test('boot() registers both channels when push is configured', () async {
+      provider.register();
+
+      final NotificationManager manager =
+          app.make<NotificationManager>('notifications');
+      manager.extend('onesignal', () => _RecordingPushDriver());
+
+      Config.set('notifications.push.driver', 'onesignal');
+      Config.set('notifications.push.app_id', 'test-app-123');
+
+      await provider.boot();
+
+      expect(manager.hasChannel('database'), isTrue);
+      expect(manager.hasChannel('push'), isTrue);
+    });
+
+    test('boot() registers the database channel with no push driver', () async {
+      provider.register();
+      await provider.boot();
+
+      final NotificationManager manager =
+          app.make<NotificationManager>('notifications');
+
+      expect(manager.hasChannel('database'), isTrue);
+      expect(manager.hasChannel('push'), isFalse);
+    });
+
+    test('boot() records an initialisation failure rather than swallowing it',
+        () async {
+      provider.register();
+
+      final NotificationManager manager =
+          app.make<NotificationManager>('notifications');
+      final _RecordingPushDriver driver = _RecordingPushDriver()
+        ..initializeError = StateError('the SDK refused');
+      manager.extend('onesignal', () => driver);
+
+      Config.set('notifications.push.driver', 'onesignal');
+      Config.set('notifications.push.app_id', 'test-app-123');
+
+      await expectLater(provider.boot(), completes);
+
+      // Readable afterwards, not only logged: a broken push setup has to be
+      // distinguishable from an absent one.
+      expect(
+        NotificationServiceProvider.pushInitializationError,
+        isA<StateError>(),
+      );
+      expect(
+        log.entries.where((FakeLogEntry e) => e.level == 'error'),
+        isNotEmpty,
+      );
+      // And it keeps degrading rather than aborting the boot.
+      expect(manager.hasChannel('push'), isTrue);
+    });
+
+    test('boot() does not report a platform that cannot carry push', () async {
+      provider.register();
+
+      final NotificationManager manager = app.make<NotificationManager>(
+        'notifications',
+      );
+      final _RecordingPushDriver driver = _RecordingPushDriver()
+        ..supported = false;
+      manager.extend('onesignal', () => driver);
+
+      Config.set('notifications.push.driver', 'onesignal');
+      Config.set('notifications.push.app_id', 'test-app-123');
+
+      await provider.boot();
+
+      // An unsupported platform is an ABSENT capability, not a broken setup, so
+      // it stays as quiet as an absent config key.
+      expect(driver.calls, isNot(contains('initialize')));
+      expect(NotificationServiceProvider.pushInitializationError, isNull);
+      log.assertNothingLogged('error');
+    });
+
+    test('boot() hands the driver the service-worker keys the config declares',
+        () async {
+      provider.register();
+
+      final NotificationManager manager =
+          app.make<NotificationManager>('notifications');
+      final _RecordingPushDriver driver = _RecordingPushDriver();
+      manager.extend('onesignal', () => driver);
+
+      Config.set('notifications.push.driver', 'onesignal');
+      Config.set('notifications.push.app_id', 'test-app-123');
+      Config.set(
+        'notifications.push.service_worker_path',
+        'OneSignalSDKWorker.js',
+      );
+      Config.set('notifications.push.service_worker_scope', '/onesignal/');
+
+      await provider.boot();
+
+      // Asserted on what the DRIVER received, not on the map's size: the driver
+      // is the only thing that can put these on the SDK's init object, and
+      // without them OneSignal registers its worker at the root scope a Flutter
+      // web build already owns with `flutter_service_worker.js`. Whichever
+      // registration lands second wins the scope, so when Flutter's does, push
+      // silently never arrives on a device that reports itself converged.
+      expect(
+          driver.initConfig?['service_worker_path'], 'OneSignalSDKWorker.js');
+      expect(driver.initConfig?['service_worker_scope'], '/onesignal/');
+    });
+
+    test('boot() leaves an undeclared service-worker key out of the map',
+        () async {
+      provider.register();
+
+      final NotificationManager manager =
+          app.make<NotificationManager>('notifications');
+      final _RecordingPushDriver driver = _RecordingPushDriver();
+      manager.extend('onesignal', () => driver);
+
+      Config.set('notifications.push.driver', 'onesignal');
+      Config.set('notifications.push.app_id', 'test-app-123');
+
+      await provider.boot();
+
+      // The other half of the pair above. The driver decides whether to set the
+      // SDK option at all by testing these for null and empty, so forwarding an
+      // absent key as `''` would hand OneSignal an explicit empty scope instead
+      // of leaving it on its own default.
+      expect(driver.initConfig, isNotNull);
+      expect(driver.initConfig!.containsKey('service_worker_path'), isFalse);
+      expect(driver.initConfig!.containsKey('service_worker_scope'), isFalse);
+    });
+
+    test('boot() drives one reconcile so the signed-out cold boot is covered',
+        () async {
+      provider.register();
+
+      final NotificationManager manager =
+          app.make<NotificationManager>('notifications');
+      final _RecordingPushDriver driver = _RecordingPushDriver();
+      manager.extend('onesignal', () => driver);
+
+      Config.set('notifications.push.driver', 'onesignal');
+      Config.set('notifications.push.app_id', 'test-app-123');
+
+      await provider.boot();
+
+      // A signed-out cold boot bumps no auth notifier at all, so the boot pass
+      // is the only thing that reads the device back.
+      expect(driver.calls, contains('currentExternalId'));
+      expect(manager.isPushIdentityConverged, isTrue);
+      // Nobody wanted, and the device carries nobody, so the SDK is untouched.
+      expect(driver.calls, isNot(contains('logout')));
+      expect(driver.calls, isNot(contains('login')));
+    });
+
+    test('boot() delivers a push the SDK replays while it initialises',
+        () async {
+      final FakeVaultService vault = Vault.fake();
+      addTearDown(Vault.unfake);
+      await vault.put(NotificationManager.pushIntentKey, 'user_A');
+      Http.fake(<String, MagicResponse>{
+        'notifications': Http.response(<String, dynamic>{'data': <dynamic>[]}),
+      });
+      addTearDown(Http.unfake);
+
+      provider.register();
+
+      final NotificationManager manager =
+          app.make<NotificationManager>('notifications');
+      // The intent is on disk from the previous process and nowhere in memory,
+      // which is every cold boot.
+      manager.forgetDrivers();
+      final _RecordingPushDriver driver = _RecordingPushDriver()
+        ..replayOnInitialize = const PushNotificationEvent(<String, dynamic>{
+          'subject': 'user_A',
+          'incident_id': 'i-1',
+        });
+      addTearDown(driver.dispose);
+      manager.extend('onesignal', () => driver);
+
+      Config.set('notifications.push.driver', 'onesignal');
+      Config.set('notifications.push.app_id', 'test-app-123');
+
+      final List<Map<String, dynamic>> delivered = <Map<String, dynamic>>[];
+      final StreamSubscription<PushNotificationEvent> subscription =
+          manager.onPushReceived.listen(
+        (PushNotificationEvent event) => delivered.add(event.data),
+      );
+      addTearDown(subscription.cancel);
+
+      await provider.boot();
+      await pumpEventQueue();
+
+      // A cold start from a notification TAP is exactly this: the SDK replays
+      // it while `initialize` runs, which is after the driver was attached and
+      // before anything read the persisted intent. Compared against an intent
+      // still unread, a push for the person actually holding the phone reads as
+      // addressed to somebody else and is dropped in silence.
+      expect(
+        delivered.map((Map<String, dynamic> d) => d['incident_id']),
+        <String>['i-1'],
+      );
+    });
   });
+}
+
+/// A [PushDriver] double that records the ORDER of the calls it received.
+///
+/// A boolean per call would pass for an implementation that reconciled before
+/// it initialized, which is the failure this step's boot sequence has to avoid.
+class _RecordingPushDriver extends PushDriver {
+  /// Every call this driver saw, in arrival order.
+  final List<String> calls = <String>[];
+
+  /// A notification the SDK replays from inside [initialize], the way a cold
+  /// start from a notification TAP arrives.
+  PushNotificationEvent? replayOnInitialize;
+
+  /// The foreground stream, a real controller rather than an empty one so a
+  /// test can put an event on it at a chosen moment.
+  final StreamController<PushNotificationEvent> received =
+      StreamController<PushNotificationEvent>.broadcast();
+
+  /// The config [initialize] was handed, so a test can prove the provider read
+  /// the package's own config keys.
+  Map<String, dynamic>? initConfig;
+
+  /// When set, [initialize] throws it.
+  Object? initializeError;
+
+  /// The external id the device is subscribed as.
+  String? externalId;
+
+  /// Whether this build can carry push at all.
+  bool supported = true;
+
+  @override
+  String get name => 'onesignal';
+
+  @override
+  bool get isSupported => supported;
+
+  @override
+  Future<PushPermissionState> permissionState() async =>
+      PushPermissionState.notDetermined;
+
+  @override
+  bool get isOptedIn => false;
+
+  @override
+  Future<void> initialize(Map<String, dynamic> config) async {
+    calls.add('initialize');
+    initConfig = config;
+
+    final PushNotificationEvent? replay = replayOnInitialize;
+    if (replay != null) received.add(replay);
+
+    final Object? failure = initializeError;
+    if (failure != null) throw failure;
+  }
+
+  @override
+  Future<void> login(String id) async {
+    calls.add('login');
+    externalId = id;
+  }
+
+  @override
+  Future<void> logout() async {
+    calls.add('logout');
+    externalId = null;
+  }
+
+  @override
+  Future<String?> currentExternalId() async {
+    calls.add('currentExternalId');
+
+    return externalId;
+  }
+
+  @override
+  Future<String?> currentSubscriptionId() async => null;
+
+  @override
+  Future<bool> requestPermission() async => true;
+
+  @override
+  Future<void> optIn() async {}
+
+  @override
+  Future<void> optOut() async {}
+
+  @override
+  Future<void> setTags(Map<String, String> tags) async {}
+
+  @override
+  Future<void> removeTag(String key) async {}
+
+  @override
+  Stream<PushNotificationEvent> get onNotificationReceived => received.stream;
+
+  /// Closes the controller a test opened.
+  void dispose() {
+    received.close();
+  }
+
+  @override
+  Stream<PushNotificationEvent> get onNotificationClicked =>
+      const Stream<PushNotificationEvent>.empty();
+
+  @override
+  Stream<PushPermissionState> get onPermissionChanged =>
+      const Stream<PushPermissionState>.empty();
+
+  @override
+  Stream<PushIdentityChange> get onIdentityChanged =>
+      const Stream<PushIdentityChange>.empty();
 }

@@ -3,8 +3,109 @@ Map<String, dynamic> get notificationConfig => {
   'notifications': {
     'push': {
       'driver': 'onesignal',
+      'service_worker_path': '{{ serviceWorkerPath }}',
+      'service_worker_scope': '{{ serviceWorkerScope }}',
       'app_id': '{{ oneSignalAppId }}',{{ safariWebIdLine }}
       'notify_button_enabled': {{ notifyButtonEnabled }},
+
+      // Whether this app may ask the backend to push to the signed-in
+      // person's OWN devices, so somebody can find out whether push reaches
+      // the phone in their hand before an incident rather than during one.
+      //
+      // OFF, and an absent key is off too. The send makes the platform emit a
+      // real push on a client's say-so, which is a capability worth switching
+      // on deliberately once something in the app actually needs it, not one
+      // worth having live from the day the package is installed. While it is
+      // off, PushChannel reports itself unavailable and sends nothing; a
+      // notification listing 'push' among its channels still reaches the
+      // others.
+      //
+      // TURNING IT ON TAKES BOTH HALVES. The backend carries the same switch
+      // (magic-starter.onesignal.self_test_enabled, also off by default) and
+      // answers 501 while it is off, so setting this alone only changes which
+      // side refuses. Set both, or neither.
+      'self_test_enabled': false,
+
+      // Whether this package may raise the OS permission prompt by itself,
+      // once, right after somebody signs in.
+      //
+      // OFF, and an absent key is off too. A system dialog is the most
+      // interruptive thing a notification package can do, and it is a one-shot
+      // per install: answered "no", it cannot be raised again by any code, on
+      // any platform. So it is worth spending deliberately, in an app that has
+      // shown the person why it wants push, rather than fired the first time
+      // they log in.
+      //
+      // When it IS on, it fires only on a device the OS has never asked, never
+      // on one already subscribed, and never more than once per launch. A
+      // denied device is left alone: the prompt there shows nothing at all.
+      //
+      // ON WEB, THINK TWICE. Browsers require a user gesture for a permission
+      // request, and a login is not one, so this can burn the ask without ever
+      // rendering it. The reminder below, driven from a tap, is the web path.
+      'auto_request_on_login': false,
+
+      // How long the app waits before putting its OWN reminder back in front
+      // of somebody who turned it down, in HOURS. 0 (and an absent key) means
+      // never, so a decline stays a decline unless an app asks for otherwise.
+      //
+      // Hours, not days, because the useful cadence here is a day or less and
+      // a day-based key cannot say "24 hours" without a fraction.
+      //
+      // This is NOT the OS prompt, which cannot recur once it has been
+      // answered. It is the app's own row or dialog, which we control, so it
+      // applies to a denied device as much as to one that declined a soft ask.
+      // `Notify.manager.pushPromptAdvice(declinedAt: ...)` answers whether a
+      // reminder is due and what its button can actually do; this package
+      // never stores the decline timestamp itself.
+      'reprompt_after_hours': 0,
+
+      // Whether a permission request on an already-DENIED device opens the
+      // app's settings page instead of resolving silently.
+      //
+      // ON, which is what the mobile driver has always done. The key exists so
+      // an app can switch it OFF: an on-call product treats a missed page as
+      // an outage nobody hears and wants to keep handing the user a route
+      // back, while an app whose notifications are a convenience would rather
+      // ask once and drop it than bounce somebody into Settings.
+      //
+      // Mobile only. No browser API opens site settings from a page, so on web
+      // this is inert and a blocked user can only be told where the switch is.
+      'fallback_to_settings': true,
+
+      // Whether the attributes this app describes its users with are sent to
+      // OneSignal at all.
+      //
+      // OFF, and an absent key is off too. What travels this path is an email
+      // address and whatever the app puts in a tag, which is usually a name:
+      // personal data leaving for a third party, under that vendor's
+      // retention and export rules. An adopter opts IN to that deliberately;
+      // finding out afterwards that an installed package has been sending it
+      // is the outcome this default exists to make impossible.
+      //
+      // It gates the WHOLE seam rather than the email alone, because this
+      // package cannot tell one tag from another: {'first_name': 'Ada'} is as
+      // personal as an address, {'plan': 'pro'} is not, and both arrive as two
+      // strings.
+      //
+      // Nothing is sent while there is no description either. The app
+      // registers one, once:
+      //
+      //   Notify.describePushUserUsing((externalId) => PushUserAttributes(
+      //         email: Auth.user()?.email,
+      //         tags: {'first_name': ..., 'last_name': ...},
+      //       ));
+      //
+      // and the identity lifecycle applies it on every login, takes it back on
+      // every account switch, and detaches it on sign-out.
+      //
+      // TAGS WRITTEN FROM A CLIENT ARE USER-TAMPERABLE. Anybody holding the
+      // app can write any value under any key from a console, so a tag is fine
+      // for choosing an audience and for personalising a message, and it is
+      // not fine for anything a backend later trusts. A plan tier or an
+      // entitlement belongs in a server-side tag write over OneSignal's REST
+      // API, from the system that already owns the fact.
+      'share_user_attributes': false,
     },
     'database': {
       'enabled': true,

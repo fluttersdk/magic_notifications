@@ -52,8 +52,8 @@ Managing notifications in Flutter means juggling multiple channels — database 
 | :dart: | **User Preferences** | Global and per-type channel preference management |
 | :hammer_and_wrench: | **CLI Tools** | Interactive install, configure, doctor, test, and more |
 | :gear: | **Config-Driven** | All settings in one Dart config file via `ConfigRepository` |
-| :speech_balloon: | **Soft Prompt** | Custom permission dialog before OS prompt |
-| :globe_with_meridians: | **Web Support** | Full web push via conditional JS interop |
+| :mag: | **Reachability Read** | Four-state answer (`unavailable`/`blocked`/`off`/`on`) so the app can decide what to show *before* asking the OS |
+| :globe_with_meridians: | **Web Support** | Full web push via conditional JS interop, subject to iOS Safari's Home Screen requirement (see below) |
 
 ---
 
@@ -143,18 +143,59 @@ Future<void> onLoginSuccess(User user) async {
 }
 ```
 
-> **External ID Format**: Always use a prefix like `user_` before the user ID. OneSignal blocks simple numeric values as external_id.
+> **External ID Format**: Always use a prefix like `user_` before the user ID. `Notify.initializePush()` forwards the string you give it unchanged; nothing inside the package adds a prefix. The backend addresses a device as `user_<uuid>`, so a bare numeric or bare UUID subscribes to an external id nothing sends to, and the push silently reaches nobody. OneSignal also blocks bare numeric external_id values outright.
 
 ### Display Notifications in UI
 
 ```dart
-NotificationDropdownWithStream(
+NotificationDropdown(
   notificationStream: Notify.notifications(),
   onMarkAsRead: (id) => Notify.markAsRead(id),
   onMarkAllAsRead: () => Notify.markAllAsRead(),
-  onNavigate: (path) => MagicRoute.to(path),
+  onNotificationTap: (n) => MagicRoute.to(n.actionUrl ?? '/'),
+  onViewAll: () => MagicRoute.to('/notifications'),
 )
 ```
+
+### Check Push Reachability Before Asking
+
+`PushDriver.reachability()` answers whether push can actually reach the device
+right now, without triggering the OS permission dialog:
+
+```dart
+final reachability = await NotificationManager().pushDriver.reachability();
+
+switch (reachability) {
+  case PushReachability.unavailable:
+    // No platform driver here at all (e.g. web driver on a platform it
+    // does not support). Do not offer push.
+    break;
+  case PushReachability.blocked:
+    // The user denied the OS prompt. iOS and most browsers never let the
+    // app raise that dialog again: tell the person where the OS setting
+    // lives (Settings > Notifications, or the browser's site permissions)
+    // instead of calling requestPermission() again, which will silently
+    // no-op.
+    break;
+  case PushReachability.off:
+    // Never asked, or asked and not opted in. Safe to call
+    // Notify.requestPushPermission().
+    break;
+  case PushReachability.on:
+    // Permitted, opted in, and holding a subscription id.
+    break;
+}
+```
+
+> [!IMPORTANT]
+> **iOS Safari web push only works after the site is added to the Home Screen.**
+> Per [OneSignal's own documentation](https://documentation.onesignal.com/docs/en/web-push-for-ios),
+> web push on iOS Safari "will work on iOS devices only after users add your
+> site to their home screen and open it from there. This is Apple's design
+> requirement." Shipping web push to iPhone/iPad Safari users without that
+> step means the permission prompt and the reachability read both look normal
+> while the push reaches nobody. There is no workaround; the app has to tell
+> the person to add the site to their Home Screen first.
 
 ### Clean Up on Logout
 
@@ -212,6 +253,71 @@ All commands use the host app's artisan binary: `dart run <app>:artisan notifica
 The `notifications:doctor` and `notifications:channels` commands are also available as read-only MCP tools for AI agents.
 
 See the [CLI Reference](https://magic.fluttersdk.com/packages/notifications/basics/cli) for all flags and options.
+
+---
+
+## Customizing the Notification Views
+
+`Notify.view` is a `NotificationViewRegistry` holding the two screens the
+package ships (`notifications.list`, `notifications.preferences`). A host app
+touches it in two ways:
+
+- **Re-register a view** to wrap it in the host's own page container. The
+  package deliberately cannot resolve that container itself (it does not know
+  which shell, if any, the host app renders screens inside), so re-registering
+  is the seam:
+
+  ```dart
+  Notify.view.register(
+    'notifications.preferences',
+    () => AppPageContainer(child: const NotificationPreferencesView()),
+  );
+  ```
+
+- **Register a type icon** so the shipped list and dropdown widgets can draw
+  the right leading icon for one of the host's own notification types, without
+  this package carrying a vocabulary that belongs to one product:
+
+  ```dart
+  Notify.view.slot(
+    NotificationViewRegistry.typeIconSlotView,
+    'order_shipped',
+    (context) => WIcon(Icons.local_shipping, className: 'text-lg text-green-500'),
+  );
+  ```
+
+The package's own defaults are registered the first time `Notify.view` is
+read, so any registration you make afterwards replaces them; `Notify.view.clear()` drops every registration, package defaults included.
+
+### For a package built on top of this one
+
+Seeding on first read has a consequence worth stating, because it caught a
+downstream package out: **`has(key)` is true before anybody has chosen
+anything.** A package that installs its own default for one of these screens
+therefore cannot gate on `has`, or it skips every time and its own version never
+reaches the app.
+
+`hasOverride(key)` is the question with an answer. It is true only when somebody
+CHOSE a screen for that key, and false while the key still holds the default
+this package seeded:
+
+```dart
+// Install ours unless the app has picked its own.
+if (!Notify.view.hasOverride('notifications.list')) {
+  Notify.view.register('notifications.list', () => wrapped(const MyListView()));
+}
+```
+
+`register` promotes a key out of the default set, so a host registration wins
+whichever side of your own it lands on. `registerDefault` is what marks a key as
+a default, and it is `@internal`: calling it from outside this package inverts
+the guarantee, because your screen would then read as a default and the next
+package to check `hasOverride` would overwrite it.
+
+`Notify.forgetView()` drops the registry so the next read seeds a fresh one. It
+is the test-isolation seam, and it is not the same as `clear()`: clearing leaves
+the registry EMPTY, which is not the state an app boots with, so a suite that
+clears cannot see a decision that turns on the defaults being present.
 
 ---
 

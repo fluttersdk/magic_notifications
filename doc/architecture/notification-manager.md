@@ -40,7 +40,7 @@ class Notify {
 This means `NotificationManager()` and `Notify.manager` are identical references, and state set through one is visible through the other.
 
 > [!NOTE]
-> For testing, use `forgetChannels()` and `forgetPushDriver()` to reset the singleton's internal state between tests.
+> For testing, use `forgetDrivers()` to reset the singleton's internal state between tests. It clears every channel, every registered push driver factory, and every resolved push driver instance in one call; there is a single method for this now, not a pair split by concern.
 
 ---
 
@@ -71,27 +71,57 @@ Registering a channel with an existing name replaces the previous instance — t
 
 ## <a name="push-driver"></a>Push Driver Setup
 
-The push driver is stored as a nullable field:
+The push driver resolves lazily through a name-keyed factory registry, not a
+single nullable field the provider must fill before anything else runs:
 
 ```dart
-PushDriver? _pushDriver;
+void extend(String name, PushDriver Function() factory) {
+  _pushFactories[name] = factory;
+  _resolvedPushDriver = null;
+  if (_pushDriver == null) _detachPushDriver();
+}
+
+PushDriver? get pushDriverOrNull {
+  if (_pushDriver != null) return _pushDriver;
+  if (_resolvedPushDriver != null) return _resolvedPushDriver;
+
+  final factory = _pushFactory();
+  if (factory == null) return null;
+
+  final created = factory();
+  _resolvedPushDriver = created;
+  _attachPushDriver(created);
+  return created;
+}
 
 PushDriver get pushDriver {
-  if (_pushDriver == null) {
+  final driver = pushDriverOrNull;
+  if (driver == null) {
     throw NotificationException(
-      'Push driver not configured. Call setPushDriver() first.',
+      'Push driver not configured. Register one with Notify.extend(name, '
+      'factory), or set one explicitly with setPushDriver().',
       code: 'PUSH_DRIVER_NOT_CONFIGURED',
     );
   }
-  return _pushDriver!;
-}
-
-void setPushDriver(PushDriver driver) {
-  _pushDriver = driver;
+  return driver;
 }
 ```
 
-`NotificationServiceProvider.boot()` calls `setPushDriver` then `driver.initialize(config)`. After initialization, the `PushChannel` constructor receives the same driver reference — `PushChannel.isAvailable` delegates to `driver.isSupported`.
+Resolution order for `pushDriver` / `pushDriverOrNull`: the instance
+`setPushDriver()` was given (the escape hatch for a consumer holding an
+already-built driver), then a previously-resolved registry instance, then a
+fresh build from the registry. `_pushFactory()` resolves the factory named by
+`notifications.push.driver` when more than one is registered, and falls back
+to the single registered factory when there is exactly one and no config says
+otherwise — with two or more and no matching name, there is no unambiguous
+answer and the call site that only wants "is push configured at all" gets
+`pushDriverOrNull == null` instead of a throw.
+
+`NotificationServiceProvider.boot()` registers the built-in OneSignal factory
+via `extend()`, then reads `pushDriver` (or `pushDriverOrNull` where absence
+is a supported state) to call `driver.initialize(config)`. After
+initialization, the `PushChannel` constructor receives the same driver
+reference — `PushChannel.isAvailable` delegates to `driver.isSupported`.
 
 ---
 

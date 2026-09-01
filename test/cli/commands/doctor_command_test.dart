@@ -38,6 +38,79 @@ Map<String, dynamic> get notificationConfig => {
 ''');
 }
 
+/// Write a minimal iOS project into [tempDir].
+///
+/// The three markers the doctor reads are independently switchable so each one
+/// can be removed on its own: an `Info.plist` whose `UIBackgroundModes` array
+/// holds [backgroundModes], a `Runner.entitlements` carrying `aps-environment`
+/// when [entitlement] is set, and a `project.pbxproj` naming that file in
+/// `CODE_SIGN_ENTITLEMENTS` when [codeSignEntitlements] is set.
+void _writeIosProject(
+  Directory tempDir, {
+  List<String> backgroundModes = const <String>[],
+  bool entitlement = false,
+  bool codeSignEntitlements = false,
+  String? infoPlistOverride,
+}) {
+  Directory('${tempDir.path}/ios/Runner').createSync(recursive: true);
+  Directory('${tempDir.path}/ios/Runner.xcodeproj').createSync(recursive: true);
+
+  final modes = backgroundModes.isEmpty
+      ? ''
+      : '''
+	<key>UIBackgroundModes</key>
+	<array>
+${backgroundModes.map((mode) => '\t\t<string>$mode</string>').join('\n')}
+	</array>
+''';
+
+  File('${tempDir.path}/ios/Runner/Info.plist').writeAsStringSync(
+    infoPlistOverride ??
+        '''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>test_app</string>
+$modes</dict>
+</plist>
+''',
+  );
+
+  if (entitlement) {
+    File('${tempDir.path}/ios/Runner/Runner.entitlements').writeAsStringSync('''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>
+''');
+  }
+
+  final entitlementsSetting = codeSignEntitlements
+      ? '                CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;\n'
+      : '';
+  File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+      .writeAsStringSync('''
+// !\$*UTF8*\$!
+{
+    objects = {
+        97C147061CF9000F007C117D /* Debug */ = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+$entitlementsSetting                PRODUCT_BUNDLE_IDENTIFIER = com.example.app;
+            };
+            name = Debug;
+        };
+    };
+}
+''');
+}
+
 /// Write a valid pubspec.yaml with `magic_notifications` dependency.
 void _writeValidPubspec(Directory tempDir) {
   File('${tempDir.path}/pubspec.yaml').writeAsStringSync('''
@@ -329,6 +402,214 @@ Map<String, dynamic> get notificationConfig => {
   });
 
   // ---------------------------------------------------------------------------
+  // Env-resolved app_id
+  // ---------------------------------------------------------------------------
+
+  group('env-resolved app_id', () {
+    /// Writes a config whose `app_id` line is [appIdExpression] verbatim.
+    void writeConfigWithAppId(String appIdExpression) {
+      File('${tempDir.path}/lib/config/notifications.dart')
+          .writeAsStringSync('''
+Map<String, dynamic> get notificationsConfig => {
+  'notifications': {
+    'push': {
+      'app_id': $appIdExpression,
+    },
+    'database': {
+      'polling_interval': 30,
+    },
+    'soft_prompt': {
+      'enabled': true,
+    },
+  },
+};
+''');
+    }
+
+    test('an envString-resolved app id is configured, not missing', () {
+      writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+
+      expect(command.validateConfig(), isEmpty);
+      expect(command.envResolvedAppIdKey(), 'ONESIGNAL_APP_ID');
+    });
+
+    test('the report names the env key the app id depends on', () {
+      writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+
+      expect(command.generateReport(), contains('ONESIGNAL_APP_ID'));
+      expect(command.generateReport(), isNot(contains('App ID not found')));
+    });
+
+    test('an env-driven config exits 0', () async {
+      writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+
+      final ctx = ArtisanContext.bare(
+        MapInput({'verbose': false}, signature: command.parsedSignature),
+        BufferedOutput(),
+      );
+      expect(await command.handle(ctx), 0);
+    });
+
+    test('env() and env<String>() are recognised too', () {
+      writeConfigWithAppId("env('ONESIGNAL_APP_ID')");
+      expect(command.validateConfig(), isEmpty);
+      expect(command.envResolvedAppIdKey(), 'ONESIGNAL_APP_ID');
+
+      writeConfigWithAppId("env<String>('ONESIGNAL_APP_ID')");
+      expect(command.validateConfig(), isEmpty);
+      expect(command.envResolvedAppIdKey(), 'ONESIGNAL_APP_ID');
+    });
+
+    test('an empty literal still fails', () {
+      writeConfigWithAppId("''");
+
+      expect(command.validateConfig().any((i) => i.contains('App ID')), isTrue);
+      expect(command.envResolvedAppIdKey(), isNull);
+    });
+
+    test('a placeholder literal still fails', () {
+      writeConfigWithAppId("'YOUR_APP_ID'");
+
+      expect(
+        command.validateConfig().any((i) => i.contains('placeholder')),
+        isTrue,
+      );
+    });
+
+    test('an absent app_id key still fails', () {
+      File('${tempDir.path}/lib/config/notifications.dart')
+          .writeAsStringSync('''
+Map<String, dynamic> get notificationsConfig => {
+  'notifications': {
+    'push': {
+      'driver': 'onesignal',
+    },
+    'database': {
+      'polling_interval': 30,
+    },
+    'soft_prompt': {
+      'enabled': true,
+    },
+  },
+};
+''');
+
+      expect(
+        command.validateConfig().any((i) => i.contains('App ID not found')),
+        isTrue,
+      );
+      expect(command.envResolvedAppIdKey(), isNull);
+    });
+
+    test('an env call with no key named is not treated as configured', () {
+      writeConfigWithAppId("envString('', '')");
+
+      expect(
+        command.validateConfig().any((i) => i.contains('App ID not found')),
+        isTrue,
+      );
+      expect(command.envResolvedAppIdKey(), isNull);
+    });
+
+    // The doctor cannot read runtime env, but `.env` is a readable file, which
+    // is the whole reason "configured but not provisioned" is checkable at all.
+    // Reporting it as a tick certified a deployment that cannot send a push.
+    group('the env file behind an env-resolved app id', () {
+      /// Writes a `.env` carrying [contents] verbatim into the temp project.
+      void writeEnvFile(String contents) {
+        File('${tempDir.path}/.env').writeAsStringSync(contents);
+      }
+
+      test('a blank value in .env is a warning, not a tick', () async {
+        writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+        writeEnvFile('APP_NAME=Uptizm\nONESIGNAL_APP_ID=\n');
+
+        final warnings = command.getWarnings();
+        expect(warnings, hasLength(1));
+        expect(warnings.single, contains('ONESIGNAL_APP_ID'));
+        expect(warnings.single, contains('.env'));
+
+        final report = command.generateReport();
+        expect(
+          report,
+          isNot(contains('✓ App ID is resolved')),
+          reason: 'a blank key must not read as resolved',
+        );
+        expect(report, isNot(contains('✓ All config checks passed')));
+        expect(report, isNot(contains('All requirements met')));
+      });
+
+      test('a key absent from .env is a warning naming the file', () {
+        writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+        writeEnvFile('APP_NAME=Uptizm\n');
+
+        expect(command.getWarnings().single, contains('ONESIGNAL_APP_ID'));
+        expect(command.getWarnings().single, contains('.env'));
+      });
+
+      test('no .env file at all is a warning naming the file it looked in', () {
+        writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+
+        expect(command.getWarnings().single, contains('.env'));
+      });
+
+      test('a provisioned value is green and names the key', () {
+        writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+        writeEnvFile(
+          '# push\nONESIGNAL_APP_ID="12345678-1234-1234-1234-123456789012"\n',
+        );
+
+        expect(command.getWarnings(), isEmpty);
+        expect(command.generateReport(), contains('✓ App ID is resolved'));
+        expect(command.generateReport(), contains('ONESIGNAL_APP_ID'));
+        expect(command.generateReport(), contains('All requirements met'));
+      });
+
+      test('a literal app id is unaffected by the env file', () {
+        writeConfigWithAppId("'12345678-1234-1234-1234-123456789012'");
+        writeEnvFile('APP_NAME=Uptizm\n');
+
+        expect(command.getWarnings(), isEmpty);
+        expect(command.generateReport(), contains('All requirements met'));
+      });
+
+      test('an unprovisioned key does not fail the command, but says so',
+          () async {
+        // A developer working before provisioning is a normal state, and a
+        // doctor that always fails gets ignored. The tick is what has to go.
+        writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+        writeEnvFile('ONESIGNAL_APP_ID=\n');
+
+        final output = BufferedOutput();
+        final ctx = ArtisanContext.bare(
+          MapInput({'verbose': false}, signature: command.parsedSignature),
+          output,
+        );
+
+        expect(await command.handle(ctx), 0);
+        expect(output.content, isNot(contains('All checks passed')));
+        expect(output.content, contains('ONESIGNAL_APP_ID'));
+      });
+
+      test('a warning never hides a real failure', () {
+        // The env warning rides alongside the existing failures; it does not
+        // replace them and it does not soften the exit code they earn.
+        writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+        writeEnvFile('ONESIGNAL_APP_ID=\n');
+        File('${tempDir.path}/pubspec.yaml').writeAsStringSync('''
+name: test_app
+dependencies:
+  flutter:
+    sdk: flutter
+''');
+
+        expect(command.getMissingRequirements(), isNotEmpty);
+        expect(command.getWarnings(), isNotEmpty);
+      });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // getMissingRequirements
   // ---------------------------------------------------------------------------
 
@@ -424,6 +705,139 @@ Map<String, dynamic> get notificationConfig => {
     test('report includes config validation section', () {
       final report = command.generateReport();
       expect(report, contains('Config Validation'));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // iOS platform setup
+  // ---------------------------------------------------------------------------
+
+  group('iOS setup', () {
+    /// The `[ios]` prefixed entries of the doctor's missing-requirement list.
+    List<String> iosIssues() => command
+        .getMissingRequirements()
+        .where((issue) => issue.startsWith('[ios]'))
+        .toList();
+
+    test('reports all three markers missing on a stock Flutter iOS project',
+        () {
+      _writeIosProject(tempDir);
+
+      final issues = iosIssues();
+      expect(issues.any((i) => i.contains('UIBackgroundModes')), isTrue,
+          reason: 'a project without remote-notification must fail');
+      expect(issues.any((i) => i.contains('aps-environment')), isTrue,
+          reason: 'a project without an entitlements file must fail');
+      expect(issues.any((i) => i.contains('CODE_SIGN_ENTITLEMENTS')), isTrue,
+          reason: 'an entitlements file Xcode does not read must fail');
+    });
+
+    test('reports configured when all three markers are present', () {
+      _writeIosProject(
+        tempDir,
+        backgroundModes: const ['remote-notification'],
+        entitlement: true,
+        codeSignEntitlements: true,
+      );
+
+      final status =
+          command.checkPlatformSetup()['ios'] as Map<String, dynamic>;
+      expect(status['configured'], isTrue);
+      expect(status['issues'], isEmpty);
+      expect(iosIssues(), isEmpty);
+    });
+
+    test('fails when UIBackgroundModes omits remote-notification', () {
+      _writeIosProject(
+        tempDir,
+        backgroundModes: const ['fetch'],
+        entitlement: true,
+        codeSignEntitlements: true,
+      );
+
+      final status =
+          command.checkPlatformSetup()['ios'] as Map<String, dynamic>;
+      expect(status['configured'], isFalse);
+      expect(
+        (status['issues'] as List).single,
+        contains('UIBackgroundModes'),
+      );
+    });
+
+    test('fails when the entitlements file has no aps-environment', () {
+      _writeIosProject(
+        tempDir,
+        backgroundModes: const ['remote-notification'],
+        codeSignEntitlements: true,
+      );
+
+      final status =
+          command.checkPlatformSetup()['ios'] as Map<String, dynamic>;
+      expect(status['configured'], isFalse);
+      expect((status['issues'] as List).single, contains('aps-environment'));
+    });
+
+    test('fails when the pbxproj does not name the entitlements file', () {
+      _writeIosProject(
+        tempDir,
+        backgroundModes: const ['remote-notification'],
+        entitlement: true,
+      );
+
+      final status =
+          command.checkPlatformSetup()['ios'] as Map<String, dynamic>;
+      expect(status['configured'], isFalse);
+      expect(
+        (status['issues'] as List).single,
+        contains('CODE_SIGN_ENTITLEMENTS'),
+      );
+    });
+
+    test('a commented-out background mode does not count as configured', () {
+      _writeIosProject(
+        tempDir,
+        entitlement: true,
+        codeSignEntitlements: true,
+        infoPlistOverride: '''
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<!-- <key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array> -->
+</dict>
+</plist>
+''',
+      );
+
+      final status =
+          command.checkPlatformSetup()['ios'] as Map<String, dynamic>;
+      expect(status['configured'], isFalse);
+      expect(
+        (status['issues'] as List).single,
+        contains('UIBackgroundModes'),
+      );
+    });
+
+    test('reports the iOS row as configured in the report', () {
+      _writeIosProject(
+        tempDir,
+        backgroundModes: const ['remote-notification'],
+        entitlement: true,
+        codeSignEntitlements: true,
+      );
+
+      expect(command.generateReport(), contains('IOS: ✓ Configured'));
+    });
+
+    test('reports Info.plist absence as not found', () {
+      Directory('${tempDir.path}/ios').createSync(recursive: true);
+
+      final status =
+          command.checkPlatformSetup()['ios'] as Map<String, dynamic>;
+      expect(status['exists'], isFalse);
+      expect(status['configured'], isFalse);
     });
   });
 

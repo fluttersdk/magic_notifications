@@ -70,28 +70,45 @@ void main() {
       test('onPermissionChanged returns a stream', () {
         expect(driver.onPermissionChanged, isA<Stream<PushPermissionState>>());
       });
+
+      test('onIdentityChanged returns a stream', () {
+        expect(driver.onIdentityChanged, isA<Stream<PushIdentityChange>>());
+      });
     });
 
     group('default state before initialization', () {
-      test('permissionState is notDetermined', () {
+      test('isInitialized is false', () {
+        expect(driver.isInitialized, isFalse);
+      });
+
+      test('permissionState is notDetermined', () async {
         expect(
-            driver.permissionState, equals(PushPermissionState.notDetermined));
+          await driver.permissionState(),
+          equals(PushPermissionState.notDetermined),
+        );
       });
 
       test('isOptedIn is false', () {
         expect(driver.isOptedIn, isFalse);
       });
 
-      test('subscriptionId is null', () {
-        expect(driver.subscriptionId, isNull);
+      test('currentSubscriptionId is null', () async {
+        expect(await driver.currentSubscriptionId(), isNull);
       });
 
-      test('externalId is null', () {
-        expect(driver.externalId, isNull);
+      test('currentExternalId is null', () async {
+        expect(await driver.currentExternalId(), isNull);
       });
 
       test('oneSignalId is null', () {
         expect(driver.oneSignalId, isNull);
+      });
+
+      test('reachability is unavailable off the web', () async {
+        // isSupported is kIsWeb, so the VM has no driver at all here.
+        if (!kIsWeb) {
+          expect(await driver.reachability(), PushReachability.unavailable);
+        }
       });
     });
 

@@ -7,12 +7,17 @@ library;
 
 /// Initialize OneSignal with configuration.
 ///
-/// No-op on non-web platforms.
-Future<void> init({
+/// Always reports `false` on non-web platforms: there is no SDK here, so no
+/// init callback can ever have run.
+Future<bool> init({
   required String appId,
   String? safariWebId,
   bool notifyButtonEnabled = false,
-}) async {}
+  String? serviceWorkerPath,
+  String? serviceWorkerScope,
+  Duration timeout = const Duration(seconds: 10),
+}) async =>
+    false;
 
 /// Whether the OneSignal SDK is available.
 ///
@@ -59,10 +64,26 @@ Future<void> removeTag(String key) async {}
 /// No-op on non-web platforms.
 Future<void> removeTags(List<String> keys) async {}
 
+/// Adds an email subscription to the current user.
+///
+/// Always reports `false` on non-web platforms: there is no SDK here, so
+/// nothing carried the address.
+Future<bool> addEmail(String email) async => false;
+
+/// Removes an email subscription from the current user.
+///
+/// Always reports `false` on non-web platforms, for the same reason.
+Future<bool> removeEmail(String email) async => false;
+
 /// Gets the current permission state.
 ///
 /// Always returns `false` on non-web platforms.
 bool getPermission() => false;
+
+/// Gets the browser's own notification permission.
+///
+/// Always returns `null` on non-web platforms: there is no browser to ask.
+String? getBrowserPermission() => null;
 
 /// Gets the current opt-in state.
 ///
@@ -123,9 +144,12 @@ void addNotificationClickListener(
 
 /// Adds a listener for foreground notification display events.
 ///
-/// No-op on non-web platforms.
+/// No-op on non-web platforms: [callback] is never invoked, so the suppression
+/// it would be handed is never offered either. Nothing here can draw a
+/// notification, so there is nothing to suppress.
 void addNotificationForegroundListener(
-  void Function(Map<String, dynamic> event) callback,
+  void Function(Map<String, dynamic> event, void Function() preventDisplay)
+      callback,
 ) {}
 
 /// Adds a listener for user state changes.

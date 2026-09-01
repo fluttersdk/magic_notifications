@@ -1,15 +1,34 @@
 import 'package:fluttersdk_artisan/artisan.dart';
 
+import '../notifications_artisan_provider.dart';
+import 'install_command.dart' show NotificationsConfigWiring;
+
 /// CLI command to uninstall Magic Notifications from the project.
 ///
 /// Reverses the changes made by `install`:
 /// - Deletes `lib/config/notifications.dart`
 /// - Removes the `magic_notifications` dependency from `pubspec.yaml`
 /// - Removes import and provider line from `lib/config/app.dart`
-/// - Removes import and configFactory line from `lib/main.dart`
+/// - Removes the config import and the configFactory entry naming the getter
+///   that config declares from `lib/main.dart`
+///
+/// ## Why the getter is read before anything is deleted
+///
+/// The factory entry in `main.dart` names whatever getter the project's config
+/// declares, which is `notificationConfig` only when the config came from this
+/// package's stub; a hand-written one names its own symbol. Matching on the
+/// stub's literal name removed nothing from such a project while reporting
+/// success, leaving an import and a factory pointing at a file this command had
+/// just deleted. The name can only be read off the config file, so it is read
+/// in [handle] BEFORE [_deleteConfigFile] removes the only copy of it.
+///
+/// When that name cannot be read (the config is already gone, or declares no
+/// getter this package can name), `main.dart` is left exactly as it is and the
+/// leftovers are reported: a line matched by guessing is a line removed from a
+/// project that still needs it.
 ///
 /// Platform files are NOT reverted (AndroidManifest.xml, index.html,
-/// OneSignalSDKWorker.js) — the user must clean those manually.
+/// OneSignalSDKWorker.js): the user must clean those manually.
 ///
 /// ## Usage
 /// ```bash
@@ -46,14 +65,20 @@ class UninstallCommand extends ArtisanCommand {
 
   @override
   Future<int> handle(ArtisanContext ctx) async {
-    ctx.output.info(ConsoleStyle.banner('Magic Notifications', '0.0.1'));
+    ctx.output.info(
+        ConsoleStyle.banner('Magic Notifications', magicNotificationsVersion));
 
     final force = ctx.input.option('force') as bool? ?? false;
 
-    // 1. Show what will be removed so the user knows exactly what happens.
-    _showRemovalSummary(ctx);
+    // 1. Read the getter the project's config declares. This has to happen
+    //    first: the config file is the only place that name exists, and
+    //    _deleteConfigFile is about to remove it.
+    final configGetter = _declaredConfigGetter();
 
-    // 2. Confirm unless --force is provided.
+    // 2. Show what will be removed so the user knows exactly what happens.
+    _showRemovalSummary(ctx, configGetter);
+
+    // 3. Confirm unless --force is provided.
     if (!force) {
       if (!confirmRemoval()) {
         ctx.output.info('Uninstall cancelled.');
@@ -61,23 +86,44 @@ class UninstallCommand extends ArtisanCommand {
       }
     }
 
-    // 3. Execute all removals.
-    await _executeUninstall(ctx);
+    // 4. Execute all removals.
+    await _executeUninstall(ctx, configGetter);
 
-    // 4. Remind the user about the platform files they need to clean manually.
+    // 5. Remind the user about the platform files they need to clean manually.
     _showPlatformCleanupInstructions(ctx);
 
     ctx.output.success('Magic Notifications uninstalled successfully!');
     return 0;
   }
 
+  /// The getter `lib/config/notifications.dart` declares its config map under,
+  /// or `null` when the file is absent or declares none this package can name.
+  String? _declaredConfigGetter() {
+    final configPath = '$projectRoot/lib/config/notifications.dart';
+    if (!FileHelper.fileExists(configPath)) {
+      return null;
+    }
+    return NotificationsConfigWiring.getterName(
+        FileHelper.readFile(configPath));
+  }
+
   /// Print a summary of what will be removed before asking for confirmation.
-  void _showRemovalSummary(ArtisanContext ctx) {
+  ///
+  /// [configGetter] is the symbol read off the project's own config, so the
+  /// summary promises the line this run can actually remove rather than the one
+  /// a stub-generated project would have.
+  void _showRemovalSummary(ArtisanContext ctx, String? configGetter) {
     ctx.output.info('The following will be removed:');
     ctx.output.info('  • lib/config/notifications.dart');
     ctx.output.info('  • magic_notifications dependency from pubspec.yaml');
     ctx.output.info('  • NotificationServiceProvider from lib/config/app.dart');
-    ctx.output.info('  • notificationConfig factory from lib/main.dart');
+    ctx.output.info(
+      configGetter == null
+          ? '  • nothing from lib/main.dart: the config getter cannot be read, '
+              'so its wiring is reported instead of guessed at'
+          : '  • the config import and the "() => $configGetter," factory '
+              'from lib/main.dart',
+    );
     ctx.output.writeln('');
     ctx.output.warning(
       'Platform files will NOT be reverted (manual cleanup required):',
@@ -90,9 +136,13 @@ class UninstallCommand extends ArtisanCommand {
 
   /// Perform all removal steps sequentially.
   ///
-  /// Each step is guarded — a missing file emits a warning instead of
-  /// throwing, so partial uninstalls are handled gracefully.
-  Future<void> _executeUninstall(ArtisanContext ctx) async {
+  /// Each step is guarded: a missing file emits a warning instead of throwing,
+  /// so partial uninstalls are handled gracefully. [configGetter] was read in
+  /// [handle], before step 1 deleted the file that declared it.
+  Future<void> _executeUninstall(
+    ArtisanContext ctx,
+    String? configGetter,
+  ) async {
     // 1. Delete notifications config file.
     _deleteConfigFile(ctx);
 
@@ -103,7 +153,7 @@ class UninstallCommand extends ArtisanCommand {
     _removeFromApp(ctx);
 
     // 4. Clean main.dart.
-    _removeFromMain(ctx);
+    _removeFromMain(ctx, configGetter);
   }
 
   /// Delete `lib/config/notifications.dart`.
@@ -162,29 +212,80 @@ class UninstallCommand extends ArtisanCommand {
     );
   }
 
-  /// Remove import and `notificationConfig` factory from `lib/main.dart`.
-  void _removeFromMain(ArtisanContext ctx) {
+  /// Remove the config import and the `() => [configGetter],` factory from
+  /// `lib/main.dart`.
+  ///
+  /// The import is matched however it is spelled (relative from `lib/`, or a
+  /// `package:` uri) because a project is free to write either; the factory is
+  /// matched by the getter the config declared, never by the stub's name.
+  ///
+  /// A `null` [configGetter] means nothing on disk could tell this command what
+  /// the factory is called. Both edits are then skipped together, import
+  /// included: removing the import while a factory still names the symbol it
+  /// provided leaves a project that compiles less than the one we started with.
+  ///
+  /// Both edits skip comments, because [NotificationsConfigWiring] strips them
+  /// before it decides a project is wired at all: a project whose import is
+  /// commented out is correctly judged "not wired", and cutting that text out
+  /// of the middle of its comment anyway leaves a dangling `//`.
+  void _removeFromMain(ArtisanContext ctx, String? configGetter) {
     final mainPath = '$projectRoot/lib/main.dart';
     if (!FileHelper.fileExists(mainPath)) {
       return;
     }
 
-    var content = FileHelper.readFile(mainPath);
+    if (configGetter == null) {
+      ctx.output.warning(
+        'lib/main.dart was left untouched: no config getter could be read out '
+        'of lib/config/notifications.dart, so the factory to remove cannot be '
+        'named without guessing. Remove the config/notifications.dart import '
+        'and its "() => <yourConfigGetter>," entry from Magic.init\'s '
+        'configFactories by hand.',
+      );
+      return;
+    }
 
-    // Remove the notifications config import line.
-    content = content.replaceAll(
-      RegExp(r"import 'config/notifications\.dart';\n?"),
-      '',
+    final content = FileHelper.readFile(mainPath);
+    final updated = _removeOutsideComments(
+      _removeOutsideComments(
+        content,
+        NotificationsConfigWiring.configImportLine,
+      ),
+      NotificationsConfigWiring.configFactoryLine(configGetter),
     );
 
-    // Remove the notificationConfig configFactory entry.
-    content = content.replaceAll(
-      RegExp(r"[ \t]*\(\) => notificationConfig,\n?"),
-      '',
-    );
+    if (updated == content) {
+      ctx.output.comment(
+        'lib/main.dart references no notifications wiring; nothing to remove.',
+      );
+      return;
+    }
 
-    FileHelper.writeFile(mainPath, content);
-    ctx.output.success('Removed notificationConfig from lib/main.dart');
+    FileHelper.writeFile(mainPath, updated);
+    ctx.output.success(
+      'Removed the config import and "() => $configGetter," from lib/main.dart',
+    );
+  }
+
+  /// Dart line and block comments, matched exactly as
+  /// [NotificationsConfigWiring.withoutComments] strips them.
+  ///
+  /// Sharing the notion of "comment" with the DETECTION is the point: a
+  /// removal that reads the file differently from the check that authorised it
+  /// edits text the check never counted.
+  static final RegExp _comment = RegExp(r'/\*.*?\*/|//[^\n]*', dotAll: true);
+
+  /// [source] with every match of [pattern] that lies outside a comment gone.
+  String _removeOutsideComments(String source, RegExp pattern) {
+    final comments = _comment.allMatches(source).toList(growable: false);
+
+    return source.replaceAllMapped(pattern, (match) {
+      final insideComment = comments.any(
+        (comment) => match.start >= comment.start && match.start < comment.end,
+      );
+
+      return insideComment ? match[0]! : '';
+    });
   }
 
   /// Print manual cleanup instructions for platform-specific files.

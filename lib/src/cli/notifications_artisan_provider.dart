@@ -10,6 +10,14 @@ import 'commands/publish_command.dart';
 import 'commands/test_command.dart';
 import 'commands/uninstall_command.dart';
 
+/// Version the seven `notifications:*` command banners print.
+///
+/// Mirrors the `version` field of this package's `pubspec.yaml`, which stays
+/// the release's single source of truth. `install_command_test.dart` reads
+/// both and fails when they disagree, so the seven banners cannot drift behind
+/// a release the way seven hand-written literals did.
+const String magicNotificationsVersion = '0.0.3';
+
 /// ArtisanServiceProvider for Magic Notifications.
 ///
 /// Contributes the seven `notifications:*` commands (install, configure, test,

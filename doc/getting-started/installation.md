@@ -95,6 +95,9 @@ dart run magic_notifications install \
 |----------|------|
 | Notification config | `lib/config/notifications.dart` |
 | Android permission | `android/app/src/main/AndroidManifest.xml` |
+| iOS background mode | `ios/Runner/Info.plist` (`UIBackgroundModes` gains `remote-notification`) |
+| iOS entitlement | `ios/Runner/Runner.entitlements` (`aps-environment`; created if absent) |
+| iOS build setting | `ios/Runner.xcodeproj/project.pbxproj` (`CODE_SIGN_ENTITLEMENTS` points at the entitlements file) |
 | Web service worker | `web/OneSignalSDKWorker.js` |
 | Web SDK script | `web/index.html` (injected) |
 | Provider injection | `lib/config/app.dart` (injected) |
@@ -186,15 +189,20 @@ ONESIGNAL_APP_ID=your-onesignal-app-id-here
 
 ### iOS
 
-iOS push requires manual steps in Xcode — the CLI cannot automate them.
+The CLI writes the three project-file markers a push needs directly, without
+opening Xcode: `UIBackgroundModes` gains `remote-notification` in
+`ios/Runner/Info.plist`, `aps-environment` is declared in
+`ios/Runner/Runner.entitlements` (created if the project never had one), and
+`CODE_SIGN_ENTITLEMENTS` in `ios/Runner.xcodeproj/project.pbxproj` is pointed
+at that entitlements file (without which Xcode never reads it, and signing
+silently ignores the entitlement).
 
-1. Open `ios/Runner.xcworkspace` (not `.xcodeproj`)
-2. Select the **Runner** target → **Signing & Capabilities**
-3. Add capability **Push Notifications**
-4. Add capability **Background Modes** → check **Remote notifications**
-5. Run `cd ios && pod install --repo-update && cd ..`
-6. Create an APNs key in [Apple Developer Portal](https://developer.apple.com/account/resources/authkeys/list) (.p8 file + Key ID + Team ID)
-7. Upload the .p8 key to OneSignal Dashboard → Settings → Platforms → Apple iOS (APNs)
+What is still manual, because it needs an Apple/OneSignal account rather than
+a project-file edit:
+
+1. Run `cd ios && pod install --repo-update && cd ..`
+2. Create an APNs key in [Apple Developer Portal](https://developer.apple.com/account/resources/authkeys/list) (.p8 file + Key ID + Team ID)
+3. Upload the .p8 key to OneSignal Dashboard → Settings → Platforms → Apple iOS (APNs)
 
 > [!NOTE]
 > Push notifications do not work on iOS Simulator. A physical device is required for testing.
@@ -240,6 +248,9 @@ importScripts("https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js");
   "gcm_sender_id_comment": "Do not change. Required for OneSignal Web Push."
 }
 ```
+
+> [!IMPORTANT]
+> **iOS Safari only receives web push after the site is added to the Home Screen.** Per [OneSignal's documentation](https://documentation.onesignal.com/docs/en/web-push-for-ios), this "will work on iOS devices only after users add your site to their home screen and open it from there. This is Apple's design requirement." There is no workaround for a plain Safari tab; the app has to tell the person to add the site to their Home Screen first.
 
 For the full platform guides, see [README.md](../../README.md).
 

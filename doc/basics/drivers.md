@@ -23,12 +23,14 @@ A push driver wraps a platform-specific push SDK. The `PushChannel` delegates al
 abstract class PushDriver {
   String get name;
   bool get isSupported;
-  PushPermissionState get permissionState;
+  Future<PushPermissionState> permissionState();
   bool get isOptedIn;
 
   Future<void> initialize(Map<String, dynamic> config);
   Future<void> login(String externalId);
   Future<void> logout();
+  Future<String?> currentExternalId();
+  Future<String?> currentSubscriptionId();
   Future<bool> requestPermission();
   Future<void> optIn();
   Future<void> optOut();
@@ -38,6 +40,9 @@ abstract class PushDriver {
   Stream<PushNotificationEvent> get onNotificationReceived;
   Stream<PushNotificationEvent> get onNotificationClicked;
   Stream<PushPermissionState> get onPermissionChanged;
+  Stream<PushIdentityChange> get onIdentityChanged;
+
+  Future<PushReachability> reachability(); // implemented in the base class
 }
 ```
 
@@ -47,17 +52,21 @@ abstract class PushDriver {
 |--------|-------------|
 | `name` | Driver identifier string (e.g., `'onesignal'`) |
 | `isSupported` | Synchronous platform check; `PushChannel.isAvailable` delegates here |
-| `permissionState` | Current `PushPermissionState` enum value |
+| `permissionState()` | Reads the current `PushPermissionState`. Asynchronous on both platforms: mobile reads the native permission over a platform channel, web reads the browser's own `Notification.permission`. |
 | `isOptedIn` | Whether the user is actively subscribed to push |
 | `initialize(config)` | One-time SDK init; must be called before all other methods |
 | `login(externalId)` | Associates a user account with the push subscription |
 | `logout()` | Removes the external user ID from the subscription |
+| `currentExternalId()` | Reads back the external id the device is currently subscribed as, or `null` when not initialized or unset. Closes the loop on `login`/`logout`: without it nothing can tell whether the SDK acted on the identity it was given. |
+| `currentSubscriptionId()` | Reads back the platform subscription id, or `null` when not initialized or unsubscribed. A push cannot be addressed without one, which is why `reachability()` consults it. |
 | `requestPermission()` | Triggers the OS permission dialog; returns `true` if granted |
 | `optIn()` / `optOut()` | Re-subscribe / unsubscribe without clearing the external ID |
 | `setTags(tags)` | Segmentation tags for OneSignal targeting |
 | `onNotificationReceived` | Broadcast stream; fires when a notification arrives while the app is in foreground |
 | `onNotificationClicked` | Broadcast stream; fires when the user taps a notification |
 | `onPermissionChanged` | Broadcast stream; fires on OS permission state transitions |
+| `onIdentityChanged` | Broadcast stream of `PushIdentityChange` events; fires whenever the SDK itself reports the user or subscription changed underneath the app. The only trustworthy confirmation that a `login`/`logout` actually landed. |
+| `reachability()` | Whether push can actually reach this device right now (see below). Implemented once in the base class; drivers do not override it. |
 
 ### PushNotificationEvent
 
@@ -69,6 +78,39 @@ class PushNotificationEvent {
 ```
 
 The `data` map contains the notification's `additionalData` payload (mobile) or the JS event data (web).
+
+### PushIdentityChange
+
+```dart
+class PushIdentityChange {
+  final String? externalId;
+  final String? subscriptionId;
+  final bool? optedIn;
+  const PushIdentityChange({this.externalId, this.subscriptionId, this.optedIn});
+}
+```
+
+Every field is nullable because a single SDK event reports only part of the state: a user change carries the external id, a subscription change carries the subscription id and the opt-in flag. A `null` field means "this event did not report it", never "it is empty".
+
+### Reachability
+
+`PushDriver.reachability()` derives a four-state answer instead of each driver
+declaring one, so every driver answers the same way:
+
+| State | Meaning |
+|-------|---------|
+| `PushReachability.unavailable` | No platform driver here at all (`isSupported == false`). |
+| `PushReachability.blocked` | Permission was denied and the platform will not re-prompt. The app has to point the person at the OS/browser setting; calling `requestPermission()` again silently no-ops. |
+| `PushReachability.off` | Never asked, or asked and not opted in. Safe to call `requestPermission()`. |
+| `PushReachability.on` | Permitted, opted in, and holding a subscription id — the only state a push can actually reach. |
+
+```dart
+final reachability = await driver.reachability();
+```
+
+This is the read a soft-prompt UI should gate on before showing itself, and
+the read that answers "can I send this device a push" without ever raising
+the OS dialog.
 
 ---
 
@@ -83,6 +125,36 @@ class OneSignalDriver extends PushDriver {
 
   @override
   bool get isSupported => Platform.isIOS || Platform.isAndroid;
+
+  @override
+  Future<PushPermissionState> permissionState() async {
+    if (!_initialized) return PushPermissionState.notDetermined;
+
+    final native = await OneSignal.Notifications.permissionNative();
+    return switch (native) {
+      OSNotificationPermission.authorized => PushPermissionState.authorized,
+      OSNotificationPermission.provisional ||
+      OSNotificationPermission.ephemeral =>
+        PushPermissionState.provisional,
+      OSNotificationPermission.notDetermined =>
+        PushPermissionState.notDetermined,
+      // Only iOS reports a real tri-state; elsewhere permissionNative
+      // collapses onto denied, so ask the SDK whether a prompt would still
+      // show. It does only when the device has never been asked.
+      OSNotificationPermission.denied =>
+        await OneSignal.Notifications.canRequest()
+            ? PushPermissionState.notDetermined
+            : PushPermissionState.denied,
+    };
+  }
+
+  @override
+  Future<String?> currentExternalId() async =>
+      _initialized ? OneSignal.User.getExternalId() : null;
+
+  @override
+  Future<String?> currentSubscriptionId() async =>
+      _initialized ? OneSignal.User.pushSubscription.id : null;
 
   @override
   Future<void> initialize(Map<String, dynamic> config) async {
@@ -101,11 +173,28 @@ class OneSignalDriver extends PushDriver {
       );
     });
 
+    // The observer carries a bare bool; re-read permissionState() instead of
+    // collapsing the tri-state onto denied.
     OneSignal.Notifications.addPermissionObserver((permission) {
-      _permissionController.add(
-        permission ? PushPermissionState.authorized : PushPermissionState.denied,
+      unawaited(permissionState().then(_permissionController.add));
+    });
+
+    OneSignal.User.addObserver((state) {
+      _identityController.add(
+        PushIdentityChange(externalId: state.current.externalId),
       );
     });
+
+    OneSignal.User.pushSubscription.addObserver((state) {
+      _identityController.add(
+        PushIdentityChange(
+          subscriptionId: state.current.id,
+          optedIn: state.current.optedIn,
+        ),
+      );
+    });
+
+    _initialized = true;
   }
 
   @override
@@ -127,11 +216,15 @@ class OneSignalDriver extends PushDriver {
   @override
   Future<void> setTags(Map<String, String> tags) =>
       OneSignal.User.addTags(tags);
+
+  @override
+  Stream<PushIdentityChange> get onIdentityChanged =>
+      _identityController.stream;
 }
 ```
 
 > [!NOTE]
-> Throws `NotificationException` with code `PLATFORM_NOT_SUPPORTED` when called on web, and `NOT_INITIALIZED` when any method is called before `initialize`. These are programmer errors — handle them at app startup.
+> Throws `NotificationException` with code `PLATFORM_NOT_SUPPORTED` when `initialize` is called on an unsupported platform, and `NOT_INITIALIZED` when `login` or `requestPermission` is called before `initialize`. These are programmer errors — handle them at app startup.
 
 ### Listening to Events
 
@@ -227,6 +320,8 @@ class FcmDriver extends PushDriver {
       StreamController<PushNotificationEvent>.broadcast();
   final StreamController<PushPermissionState> _permissionController =
       StreamController<PushPermissionState>.broadcast();
+  final StreamController<PushIdentityChange> _identityController =
+      StreamController<PushIdentityChange>.broadcast();
 
   @override
   String get name => 'fcm';
@@ -235,7 +330,8 @@ class FcmDriver extends PushDriver {
   bool get isSupported => !kIsWeb && (Platform.isIOS || Platform.isAndroid);
 
   @override
-  PushPermissionState get permissionState => PushPermissionState.notDetermined;
+  Future<PushPermissionState> permissionState() async =>
+      PushPermissionState.notDetermined;
 
   @override
   bool get isOptedIn => false;
@@ -250,6 +346,12 @@ class FcmDriver extends PushDriver {
 
   @override
   Future<void> logout() async { /* remove token */ }
+
+  @override
+  Future<String?> currentExternalId() async => null;
+
+  @override
+  Future<String?> currentSubscriptionId() async => null;
 
   @override
   Future<bool> requestPermission() async {
@@ -280,18 +382,27 @@ class FcmDriver extends PushDriver {
   @override
   Stream<PushPermissionState> get onPermissionChanged =>
       _permissionController.stream;
+
+  @override
+  Stream<PushIdentityChange> get onIdentityChanged =>
+      _identityController.stream;
+
+  // reachability() is inherited from the base class; no override needed.
 }
 ```
 
-Register it in your service provider's `boot()`:
+Register it with the manager's driver registry in your service provider's
+`boot()` (see [Notification Manager](../architecture/notification-manager.md#push-driver)
+for the resolution order):
 
 ```dart
 @override
 Future<void> boot() async {
   final manager = NotificationManager();
-  final driver = FcmDriver();
-  manager.setPushDriver(driver);
-  await driver.initialize({'project_id': Config.get('notifications.push.project_id')});
+  manager.extend('fcm', () => FcmDriver());
+  await manager.pushDriver.initialize(
+    {'project_id': Config.get('notifications.push.project_id')},
+  );
 }
 ```
 

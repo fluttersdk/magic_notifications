@@ -20,13 +20,35 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  # ^0.0.6 is the floor for `Echo.connection`, which the realtime notification
-  # path needs to avoid a second WebSocket on an already-open connection. A 0.0.x
-  # caret pins the patch, so ^0.0.5 resolves exactly 0.0.5 and that release has
-  # no public connection accessor.
+  # ^0.0.6 is a FLOOR, not a pin: pub_semver's `Version.nextBreaking` raises the
+  # MINOR whenever the major is zero (`version.dart:245`), so `^0.0.6` resolves
+  # `>=0.0.6 <0.1.0`, the whole 0.0.x line, not one exact patch. The floor
+  # matters because `Echo.connection` does not exist below 0.0.6, and without
+  # it a solver may hand this package a magic that lacks the accessor the
+  # realtime notification path needs to avoid a second WebSocket on an
+  # already-open connection.
   magic: ^0.0.6
-  fluttersdk_artisan: ^0.0.8
-  onesignal_flutter: ^5.4.6
+  # ^0.0.14 is a floor: the `XcodeProjectEditor` the iOS installer step drives
+  # does not exist below it. 0.0.14 is published, so an ordinary adopter
+  # resolves this from pub.dev; locally it still resolves through
+  # pubspec_overrides.yaml, which points at ../artisan.
+  fluttersdk_artisan: ^0.0.14
+  # ^5.6.6 is a floor: the login/logout identity race was patched across
+  # 5.5.3, 5.5.5, 5.6.2 and 5.6.6. `^5.4.6` was resolving 5.6.3 in uptizm,
+  # which carries some of those fixes but not the last one.
+  onesignal_flutter: ^5.6.6
+  # Direct rather than transitive-through-flutter, because this package now
+  # names `@internal` in its own source: `NotificationViewRegistry` is exported
+  # from the barrel, so `registerDefault` is reachable by a host that must not
+  # call it, and the annotation is the only thing that can say so under Dart's
+  # library-level privacy. `depend_on_referenced_packages` asks for the import
+  # to be declared where it is used.
+  meta: ^1.15.0
+  # ^1.2.0 matches the floor magic/pubspec.yaml:26 already declares. This
+  # package is about to ship widgets, so wind moves from a transitive
+  # dependency to a direct one; there is no 1.5-only API in use, so the floor
+  # stays at 1.2.0 rather than narrowing every adopter's graph for nothing.
+  fluttersdk_wind: ^1.2.0
 
 dev_dependencies:
   flutter_test:

@@ -1,7 +1,11 @@
-// Conditional imports to provide platform-specific implementations
+// Conditional imports to provide platform-specific implementations.
+//
+// Guards on the js-interop library rather than the legacy HTML one, because
+// the legacy library is absent under a wasm web compile; the old guard would
+// select this no-op stub in that build instead of the real web implementation.
 // ignore: unused_import
 import 'onesignal_js_interop_stub.dart'
-    if (dart.library.html) 'onesignal_js_interop_web.dart' as impl;
+    if (dart.library.js_interop) 'onesignal_js_interop_web.dart' as impl;
 
 /// OneSignal JavaScript SDK interop layer.
 ///
@@ -31,17 +35,26 @@ class OneSignalJsInterop {
   ///
   /// This should be called once during app startup. Config options:
   /// - `appId` (required): Your OneSignal App ID
-  /// - `safariWebId` (optional): Safari Web ID for Safari browser support
+  /// - `safariWebId` (optional): Safari Web ID for the legacy Safari path
   /// - `notifyButtonEnabled` (optional): Show floating bell widget (default: false)
-  static Future<void> init({
+  /// - `serviceWorkerPath` (optional): Path to `OneSignalSDKWorker.js`
+  /// - `serviceWorkerScope` (optional): Scope to register that worker under
+  ///
+  /// Returns `true` only when the SDK's own init callback ran, so a page
+  /// without the OneSignal script answers `false` instead of a false success.
+  static Future<bool> init({
     required String appId,
     String? safariWebId,
     bool notifyButtonEnabled = false,
+    String? serviceWorkerPath,
+    String? serviceWorkerScope,
   }) =>
       impl.init(
         appId: appId,
         safariWebId: safariWebId,
         notifyButtonEnabled: notifyButtonEnabled,
+        serviceWorkerPath: serviceWorkerPath,
+        serviceWorkerScope: serviceWorkerScope,
       );
 
   /// Whether the OneSignal SDK is available in the current environment.
@@ -102,10 +115,34 @@ class OneSignalJsInterop {
   /// See: https://documentation.onesignal.com/docs/web-sdk-reference#removetag-removetags
   static Future<void> removeTags(List<String> keys) => impl.removeTags(keys);
 
+  /// Adds an email subscription to the current user.
+  ///
+  /// Answers whether the SDK on this page carried the call. The email
+  /// subscription API belongs to the v16 user model, and a page pinned to an
+  /// older script does not expose it; a `false` lets the driver report an
+  /// address that went nowhere instead of passing over it.
+  ///
+  /// See: https://documentation.onesignal.com/docs/web-sdk-reference#addemail
+  static Future<bool> addEmail(String email) => impl.addEmail(email);
+
+  /// Removes an email subscription from the current user.
+  ///
+  /// Answers whether the SDK on this page carried the call, as [addEmail] does.
+  ///
+  /// See: https://documentation.onesignal.com/docs/web-sdk-reference#removeemail
+  static Future<bool> removeEmail(String email) => impl.removeEmail(email);
+
   /// Gets the current push permission state.
   ///
   /// Returns `true` if permission is granted, `false` otherwise.
   static bool getPermission() => impl.getPermission();
+
+  /// Gets the browser's own notification permission.
+  ///
+  /// Returns `granted`, `denied`, `default`, or `null` when the browser has no
+  /// Notification API. [getPermission] cannot distinguish a blocked browser
+  /// from one that was never asked; this can.
+  static String? getBrowserPermission() => impl.getBrowserPermission();
 
   /// Gets the current opt-in state.
   ///
@@ -174,9 +211,17 @@ class OneSignalJsInterop {
 
   /// Adds a listener for foreground notification display events.
   ///
-  /// The callback receives the notification data as a map.
+  /// The callback receives the notification data as a map, plus the SDK's own
+  /// `preventDefault` as `preventDisplay`: the browser asks the page before the
+  /// service worker draws a foreground push, and this is the only way to answer
+  /// "do not draw". It must be called synchronously from inside the callback,
+  /// because the SDK reads the answer as soon as the listener returns.
+  ///
+  /// The decision belongs to the driver; this only carries the mechanism
+  /// across the interop boundary.
   static void addNotificationForegroundListener(
-    void Function(Map<String, dynamic> event) callback,
+    void Function(Map<String, dynamic> event, void Function() preventDisplay)
+        callback,
   ) =>
       impl.addNotificationForegroundListener(callback);
 
