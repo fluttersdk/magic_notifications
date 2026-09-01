@@ -50,6 +50,39 @@ void main() {
       );
     });
 
+    test('send() carries a .url() destination into the payload', () async {
+      final FakeNetworkDriver network = Http.fake(<String, MagicResponse>{
+        'notifications/push-test': Http.response(
+          <String, dynamic>{'delivered': true},
+          202,
+        ),
+      });
+
+      final channel = PushChannel(MockPushDriver());
+      final message = PushMessage()
+        ..heading('Monitor Down')
+        ..content('api.example.com is not responding')
+        ..url('https://uptizm.com/incidents/42')
+        ..data(<String, dynamic>{'incident_id': '42'});
+
+      await channel.send(
+        TestNotifiable('1'),
+        TestNotification(pushMessage: message),
+      );
+
+      final MagicRequest request = network.recorded.single.$1;
+      final Map<String, dynamic> body = request.data as Map<String, dynamic>;
+      final Map<String, dynamic> payload = body['data'] as Map<String, dynamic>;
+
+      // The endpoint validates `title`, `body` and `data` and nothing else, so
+      // a fourth top-level key never reaches the device. `url` is the first key
+      // the deeplink handler reads out of a payload, so a test push whose whole
+      // job is proving tap-through has to carry it there.
+      expect(payload['url'], 'https://uptizm.com/incidents/42');
+      expect(payload['incident_id'], '42');
+      expect(body.keys, isNot(contains('url')));
+    });
+
     test('send() POSTs to notifications/push-test with no recipient field',
         () async {
       final FakeNetworkDriver network = Http.fake(<String, MagicResponse>{

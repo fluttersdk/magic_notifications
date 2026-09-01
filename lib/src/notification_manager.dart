@@ -162,6 +162,11 @@ class NotificationManager {
   final StreamController<PushDriver> _pushDriverAttachedController =
       StreamController<PushDriver>.broadcast();
 
+  /// The end of a session, for anything holding notification state of its own.
+  /// See [onSessionCleared].
+  final StreamController<void> _sessionClearedController =
+      StreamController<void>.broadcast();
+
   /// Notification poller for periodic fetching
   NotificationPoller? _poller;
 
@@ -232,19 +237,36 @@ class NotificationManager {
 
   /// Send a notification to a notifiable entity.
   ///
-  /// Dispatches the notification to all channels returned by
-  /// [Notification.via]. Skips unavailable channels and logs warnings
-  /// for unknown channels without throwing.
+  /// Dispatches the notification to every channel [Notification.via] returns.
+  /// An unknown channel and an unavailable one are both skipped with a warning.
+  ///
+  /// Every channel gets its attempt even when an earlier one fails, and the
+  /// first failure is rethrown once they all have. Channels are independent
+  /// delivery attempts, so the loop must not let one decide whether the others
+  /// happen: with `via()` answering `['push', 'database']` and a push send
+  /// throwing, an abort here means the in-app row is written or not depending
+  /// on the ORDER of that list, which is not something a caller writing
+  /// `via()` is choosing. Push became able to throw at all in the release that
+  /// added the self-test endpoint; before it, this path could not fail.
+  ///
+  /// The failure still reaches the caller rather than being swallowed. The
+  /// first one is rethrown with its type and stack intact, so a caller catching
+  /// [NotificationException] for a specific `code` still sees it; any further
+  /// ones are reported at error level, because an exception can only carry one.
   Future<void> send(Notifiable notifiable, Notification notification) async {
     final channels = notification.via(notifiable);
+
+    Object? firstError;
+    StackTrace? firstStack;
 
     for (final channelName in channels) {
       final channel = _channels[channelName];
 
       if (channel == null) {
-        // Log warning for unknown channel (but don't throw)
-        // ignore: avoid_print
-        print('Warning: Unknown notification channel: $channelName');
+        NotificationLog.warning(
+          'Unknown notification channel: $channelName',
+        );
+
         continue;
       }
 
@@ -253,7 +275,23 @@ class NotificationManager {
         continue;
       }
 
-      await channel.send(notifiable, notification);
+      try {
+        await channel.send(notifiable, notification);
+      } catch (error, stack) {
+        if (firstError == null) {
+          firstError = error;
+          firstStack = stack;
+        } else {
+          NotificationLog.error(
+            'The $channelName channel also failed to send '
+            '${notification.type}: $error',
+          );
+        }
+      }
+    }
+
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError, firstStack!);
     }
   }
 
@@ -842,7 +880,17 @@ class NotificationManager {
     } finally {
       // Cleared BEFORE the joiners are woken, so one of them can start the next
       // pass rather than joining a future that has already completed.
-      _reconcileInFlight = null;
+      //
+      // Guarded on identity for the same reason [_loadPushIntent] guards its
+      // own write: [forgetDrivers] nulls this marker, so a pass that started
+      // before it and finishes after it would otherwise clear the marker a
+      // NEWER pass had already published, and the next caller would start a
+      // second concurrent pass and issue the duplicate `login()` the
+      // single-flight exists to prevent.
+      if (identical(_reconcileInFlight, pass.future)) {
+        _reconcileInFlight = null;
+      }
+
       pass.complete();
     }
   }
@@ -1635,7 +1683,26 @@ class NotificationManager {
     _notifications = <DatabaseNotification>[];
     _framesDuringFetch.clear();
     _notificationController.add(_notifications);
+
+    if (!_sessionClearedController.isClosed) {
+      _sessionClearedController.add(null);
+    }
   }
+
+  /// Fires when the session ends and this manager drops what it held for it.
+  ///
+  /// The bell's own cache is cleared by [logoutPush] directly, but it is not
+  /// the only place a person's notifications live: the list and preferences
+  /// controllers are `Magic.findOrPut` singletons and magic's controller
+  /// registry is process-lifetime, so nothing disposes them between two people
+  /// using the same device. Without this signal, B signs in and the list paints
+  /// A's incident titles from `pageNotifier` before the first refresh lands,
+  /// and a refresh that FAILS deliberately leaves those rows up, so they stay.
+  ///
+  /// Anything caching per-person notification state subscribes here and drops
+  /// it. Published rather than pushed: the manager is the core and must not
+  /// reach up into the UI layer to reset it.
+  Stream<void> get onSessionCleared => _sessionClearedController.stream;
 
   // ========================================
   // Polling Management

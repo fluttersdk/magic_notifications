@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magic/magic.dart';
-import 'package:magic_notifications/src/http/notifications_list_controller.dart';
+import 'package:magic_notifications/magic_notifications.dart';
 
 import '../test_helper.dart';
 
@@ -158,6 +158,28 @@ void main() {
       // mixin's own state, which is exactly why the page does not live there.
       expect(controller.isLoading, isTrue);
       expect(controller.pageNotifier.value?.data, hasLength(1));
+    });
+
+    test('signing out drops the page the previous person was reading',
+        () async {
+      fakePages(lastPage: 3);
+
+      // The controller has to exist before the sign-out, the way it does on a
+      // device where somebody opened the list and then signed out.
+      controller.onInit();
+      await controller.loadPage(2);
+
+      expect(controller.pageNotifier.value, isNotNull);
+      expect(controller.currentPage, 2);
+
+      await Notify.logoutPush();
+
+      // Read synchronously, because this is exactly what `build` does on the
+      // next person's first frame, before any refresh has had a chance to land.
+      // This controller is a process-lifetime singleton, so nothing else drops
+      // A's incident titles before B's screen paints them.
+      expect(controller.pageNotifier.value, isNull);
+      expect(controller.currentPage, 1);
     });
   });
 

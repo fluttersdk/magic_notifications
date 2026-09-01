@@ -53,6 +53,56 @@ void main() {
       expect(channel.sentCount, 0);
     });
 
+    test(
+        'send() still reaches the later channels when an earlier one throws, '
+        'whatever order via() names them in', () async {
+      final push = MockChannel(
+        'push',
+        throws: NotificationException('backend said no', code: 'HTTP_500'),
+      );
+      final database = MockChannel('database');
+
+      manager.registerChannel(push);
+      manager.registerChannel(database);
+
+      // Push FIRST, which is the order that used to decide whether the in-app
+      // row was written at all.
+      await expectLater(
+        manager.send(
+            TestNotifiable('1'),
+            TestNotification(
+              via: ['push', 'database'],
+            )),
+        throwsA(isA<NotificationException>()),
+      );
+
+      expect(database.sentCount, 1);
+    });
+
+    test('send() rethrows the first failure with its own type and code',
+        () async {
+      manager.registerChannel(MockChannel(
+        'push',
+        throws: NotificationException('refused', code: 'PUSH_REFUSED'),
+      ));
+      manager.registerChannel(MockChannel(
+        'database',
+        throws: StateError('a second, different failure'),
+      ));
+
+      await expectLater(
+        manager.send(
+            TestNotifiable('1'),
+            TestNotification(
+              via: ['push', 'database'],
+            )),
+        throwsA(
+          isA<NotificationException>()
+              .having((e) => e.code, 'code', 'PUSH_REFUSED'),
+        ),
+      );
+    });
+
     test('send() logs warning for unknown channels', () async {
       final notification = TestNotification(via: ['unknown']);
       // Should not throw, just log
@@ -454,9 +504,12 @@ class _RecordingBroadcastManager extends FakeBroadcastManager {
 class MockChannel extends NotificationChannel {
   final String _name;
   final bool _available;
+  final Object? _throws;
   int sentCount = 0;
 
-  MockChannel(this._name, {bool available = true}) : _available = available;
+  MockChannel(this._name, {bool available = true, Object? throws})
+      : _available = available,
+        _throws = throws;
 
   @override
   String get name => _name;
@@ -467,6 +520,8 @@ class MockChannel extends NotificationChannel {
   @override
   Future<void> send(Notifiable notifiable, Notification notification) async {
     sentCount++;
+
+    if (_throws != null) throw _throws;
   }
 }
 

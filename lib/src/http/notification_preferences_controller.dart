@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:magic/magic.dart';
 
+import '../facades/notify.dart';
 import '../support/notification_log.dart';
 
 /// Controller behind the notification preference matrix.
@@ -33,6 +36,38 @@ class NotificationPreferencesController extends MagicController
   final pushProvisionedNotifier = ValueNotifier<bool>(true);
 
   bool _isFetching = false;
+
+  /// Drops the previous person's preference matrix when the session ends.
+  ///
+  /// This controller is a `Magic.findOrPut` singleton and magic's controller
+  /// registry is process-lifetime, so sign-out disposes nothing here. Without
+  /// this subscription, B signs in on a shared device and the preferences
+  /// screen paints A's per-type channel matrix out of [matrixNotifier] until a
+  /// fresh read lands, and a read that fails leaves it there.
+  late final StreamSubscription<void> _sessionCleared =
+      Notify.manager.onSessionCleared.listen((_) => _clearSession());
+
+  @override
+  void onInit() {
+    // Touched so the late field initialises: the subscription has to exist from
+    // the moment the controller does.
+    _sessionCleared;
+    super.onInit();
+  }
+
+  /// Forget the matrix held for the session that just ended.
+  ///
+  /// [pushProvisionedNotifier] goes back to `true` rather than to the last
+  /// value read, for the reason its own doc gives: it is a claim about the
+  /// BACKEND, and the honest state before any read for this session is "no
+  /// reason to say otherwise" rather than a false "not configured".
+  void _clearSession() {
+    _saving.clear();
+    _isFetching = false;
+    matrixNotifier.value = <String, dynamic>{};
+    pushProvisionedNotifier.value = true;
+    setSuccess(false);
+  }
 
   /// The cells with a write in flight, keyed by type and channel.
   ///
@@ -241,6 +276,7 @@ class NotificationPreferencesController extends MagicController
 
   @override
   void dispose() {
+    _sessionCleared.cancel();
     matrixNotifier.dispose();
     pushProvisionedNotifier.dispose();
     super.dispose();

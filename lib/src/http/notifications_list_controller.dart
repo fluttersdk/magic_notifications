@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:magic/magic.dart';
 
@@ -37,6 +39,33 @@ class NotificationsListController extends MagicController
 
   /// The page number the last successful read landed on.
   int get currentPage => _currentPage;
+
+  /// Drops the previous person's rows when the session ends.
+  ///
+  /// This controller is a `Magic.findOrPut` singleton and magic's controller
+  /// registry is process-lifetime, so sign-out disposes nothing here: without
+  /// this subscription, B signs in on a shared device, opens the list, and
+  /// `build` paints A's incident titles out of [pageNotifier] before `onInit`'s
+  /// refresh lands. [loadPage]'s catch then deliberately leaves the rows up, so
+  /// a refresh that fails leaves A's rows on B's screen indefinitely.
+  late final StreamSubscription<void> _sessionCleared =
+      Notify.manager.onSessionCleared.listen((_) => _clearSession());
+
+  @override
+  void onInit() {
+    // Touched so the late field initialises: the subscription has to exist from
+    // the moment the controller does, not from the first sign-out after
+    // something happened to read it.
+    _sessionCleared;
+    super.onInit();
+  }
+
+  /// Forget the page held for the session that just ended.
+  void _clearSession() {
+    _currentPage = 1;
+    pageNotifier.value = null;
+    setSuccess(false);
+  }
 
   /// Read [page] from the backend and publish it.
   ///
@@ -83,6 +112,7 @@ class NotificationsListController extends MagicController
 
   @override
   void dispose() {
+    _sessionCleared.cancel();
     pageNotifier.dispose();
     super.dispose();
   }

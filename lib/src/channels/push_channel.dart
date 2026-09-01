@@ -123,12 +123,29 @@ class PushChannel extends NotificationChannel {
     // the safety property that makes it safe to expose a client-triggered
     // push send in the first place. Sending one, even null, would imply the
     // caller can choose a target, which the server would reject anyway.
+    // `url` folds into the payload rather than riding beside it, because the
+    // endpoint validates `title`, `body` and `data` and nothing else, so a
+    // fourth key is dropped by `validated()` and never reaches the device. It
+    // lands under `url` specifically: that is the first key the deeplink
+    // handler reads out of a push payload, and it is the name the builder's own
+    // `.url()` uses. Without this, a notification that set its destination with
+    // `.url()` instead of stuffing it into `data` produced a test push that
+    // taps through to nothing, which is the single thing a test send exists to
+    // prove. An explicit `data['url']` wins, since the caller wrote it closer
+    // to the payload.
+    final Map<String, dynamic>? payload = pushMessage.urlValue == null
+        ? pushMessage.dataValue
+        : <String, dynamic>{
+            'url': pushMessage.urlValue,
+            ...?pushMessage.dataValue,
+          };
+
     final response = await Http.post(
       '/notifications/push-test',
       data: <String, dynamic>{
         'title': pushMessage.headingValue,
         'body': pushMessage.contentValue,
-        if (pushMessage.dataValue != null) 'data': pushMessage.dataValue,
+        if (payload != null) 'data': payload,
       },
     );
 

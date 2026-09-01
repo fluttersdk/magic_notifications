@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magic/magic.dart';
-import 'package:magic_notifications/src/http/notification_preferences_controller.dart';
+import 'package:magic_notifications/magic_notifications.dart';
 
 import '../test_helper.dart';
 
@@ -41,6 +41,33 @@ void main() {
 
   tearDown(() {
     Http.unfake();
+  });
+
+  group('NotificationPreferencesController — session boundary', () {
+    test('signing out drops the previous person\'s preference matrix',
+        () async {
+      Http.fake((request) {
+        return MagicResponse(
+          data: <String, dynamic>{'data': _matrix()},
+          statusCode: 200,
+        );
+      });
+
+      // Alive before the sign-out, as it is on a device where somebody opened
+      // the preferences screen and then signed out.
+      controller.onInit();
+      await controller.fetchPreferences();
+
+      expect(controller.matrixNotifier.value, isNotEmpty);
+
+      await Notify.logoutPush();
+
+      // This controller is a process-lifetime singleton, so without the session
+      // subscription the next person's screen paints A's per-type channel
+      // matrix until a fresh read lands, and a read that fails leaves it there.
+      expect(controller.matrixNotifier.value, isEmpty);
+      expect(controller.pushProvisionedNotifier.value, isTrue);
+    });
   });
 
   group('NotificationPreferencesController — failure paths', () {
