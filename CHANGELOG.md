@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-02
+
 ### Breaking Changes
 - **The soft-prompt dialog widget is removed.** It shipped as a Material dialog with hardcoded English copy, and shipping a prompt widget at all forces one adopter's tone and layout onto everybody who installs the package. The package keeps the decision the widget existed to gate (see the new `PushDriver.reachability()` below) and leaves building the actual prompt UI to the host app. `notifications.soft_prompt.enabled`/`title`/`message` still exist in the config; they are now read by the host app's own prompt, not acted on by the package. Any app importing the removed widget must build its own dialog, gated on `reachability()`.
 - **`NotificationManager.forgetChannels()` and `forgetPushDriver()` are merged into one `forgetDrivers()`.** The two-method split invited a test to reset one without the other, which left a driver or a channel from a previous test alive under the next one; a single call now clears every channel, every registered push driver factory, and every resolved push driver instance together. Update any test `setUp()` calling either removed method to call `forgetDrivers()` instead.
