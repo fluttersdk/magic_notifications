@@ -6,6 +6,7 @@ import '../drivers/push/onesignal_web_driver.dart';
 import '../drivers/push/push_driver.dart';
 import '../drivers/push_web/onesignal_factory.dart';
 import '../notification_manager.dart';
+import '../support/notification_log.dart';
 
 /// Binds notifications into magic's container and wires the push driver.
 ///
@@ -108,7 +109,7 @@ class NotificationServiceProvider extends ServiceProvider {
     //    when the intent already matches the device.
     await manager.reconcilePushIdentity();
 
-    Log.debug(
+    NotificationLog.debug(
       '[notifications] push driver ${driver?.name ?? 'absent'}, '
       'channels database'
       '${manager.hasChannel('push') ? ' + push' : ''}',
@@ -136,7 +137,7 @@ class NotificationServiceProvider extends ServiceProvider {
     // 3. A value nothing can serve. Loud, then degrade: push is the only thing
     //    lost, and an app must not fail to boot over a typo in a config key.
     if (configured != _oneSignal) {
-      Log.error(
+      NotificationLog.error(
         '[notifications] config notifications.push.driver is "$configured", '
         'and the only driver this package ships is "$_oneSignal". Push is '
         'left unconfigured. To supply a driver of your own, register it in '
@@ -199,7 +200,7 @@ class NotificationServiceProvider extends ServiceProvider {
       );
     } catch (e) {
       _pushInitializationError = e;
-      Log.error(
+      NotificationLog.error(
         '[notifications] push driver "${driver.name}" failed to initialize: '
         '$e. Push is unavailable on this device for the rest of the session; '
         'read NotificationServiceProvider.pushInitializationError to see it.',

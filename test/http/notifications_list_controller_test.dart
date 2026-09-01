@@ -160,4 +160,32 @@ void main() {
       expect(controller.pageNotifier.value?.data, hasLength(1));
     });
   });
+
+  group('NotificationsListController on a host with no log binding', () {
+    tearDown(() {
+      // The case below flushed the container to drop the `log` binding, and it
+      // dropped every other binding with it. Put a log back so the rest of the
+      // run resolves one again.
+      Log.fake();
+    });
+
+    test('loadPage() reaches its error state instead of throwing', () async {
+      // A host that registers no logging provider is a legitimate build, not
+      // only a test condition, and `Log.error` resolves `log` out of the
+      // container and THROWS when nothing bound it. Called unguarded from the
+      // catch, it turns a handled read failure into an unhandled one: the
+      // screen never reaches its error state and the exception escapes into
+      // whatever awaited the load.
+      Magic.flush();
+
+      Http.fake((request) {
+        throw StateError('connection closed');
+      });
+
+      await controller.loadPage(1);
+
+      expect(controller.isError, isTrue);
+      expect(controller.isSuccess, isFalse);
+    });
+  });
 }

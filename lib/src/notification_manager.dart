@@ -10,17 +10,7 @@ import 'exceptions/notification_exception.dart';
 import 'models/database_notification.dart';
 import 'models/paginated_notifications.dart';
 import 'notification_poller.dart';
-
-/// Safe logging that doesn't throw when Log service isn't available.
-///
-/// Used for graceful degradation in test environments.
-void _safeLogError(String message) {
-  try {
-    Log.error(message);
-  } catch (_) {
-    // Silently ignore when Log service isn't available (e.g., in tests)
-  }
-}
+import 'support/notification_log.dart';
 
 /// Core notification manager.
 ///
@@ -254,7 +244,7 @@ class NotificationManager {
         _notificationController.add(_notifications);
       }
     } catch (e) {
-      _safeLogError('Failed to fetch notifications: $e');
+      NotificationLog.error('Failed to fetch notifications: $e');
       // Don't throw - just keep current state
     } finally {
       // Cleared when the LAST read finishes, including a failed one: a frame
@@ -358,7 +348,7 @@ class NotificationManager {
   /// success path stays the only one that produces a page.
   Never _failedPageRead(int page, String reason, {required String code}) {
     final String message = 'Failed to read notifications page $page: $reason.';
-    _safeLogError(message);
+    NotificationLog.error(message);
 
     throw NotificationException(message, code: code);
   }
@@ -379,7 +369,7 @@ class NotificationManager {
         return (response.data['count'] as num?)?.toInt() ?? 0;
       }
     } catch (e) {
-      _safeLogError('Failed to get unread count: $e');
+      NotificationLog.error('Failed to get unread count: $e');
     }
     return 0;
   }
@@ -401,7 +391,7 @@ class NotificationManager {
     try {
       await Http.post('/notifications/$id/read');
     } catch (e) {
-      _safeLogError('Failed to mark notification as read: $e');
+      NotificationLog.error('Failed to mark notification as read: $e');
       // Revert optimistic update on failure
       await fetchNotifications();
     }
@@ -421,7 +411,7 @@ class NotificationManager {
     try {
       await Http.post('/notifications/read-all');
     } catch (e) {
-      _safeLogError('Failed to mark all notifications as read: $e');
+      NotificationLog.error('Failed to mark all notifications as read: $e');
       // Revert optimistic update on failure
       await fetchNotifications();
     }
@@ -440,7 +430,7 @@ class NotificationManager {
     try {
       await Http.delete('/notifications/$id');
     } catch (e) {
-      _safeLogError('Failed to delete notification: $e');
+      NotificationLog.error('Failed to delete notification: $e');
       // Revert optimistic update on failure
       _notifications.addAll(removed);
       _notificationController.add(_notifications);
@@ -726,7 +716,7 @@ class NotificationManager {
       _pushIdentityError = null;
 
       if (!_pushIdentityConverged) {
-        _safeLogError(
+        NotificationLog.error(
           'Push identity did not take: wanted "${intent ?? 'nobody'}", '
           'the device reports "${readBack ?? 'nobody'}".',
         );
@@ -739,7 +729,7 @@ class NotificationManager {
       // and simply did not take.
       _pushIdentityConverged = false;
       _pushIdentityError = e;
-      _safeLogError(
+      NotificationLog.error(
         'Push identity operation failed for '
         '"${intent ?? 'sign-out'}": $e',
       );
@@ -808,7 +798,7 @@ class NotificationManager {
 
     if (subject.toString() == _pushIntent) return true;
 
-    _safeLogError(
+    NotificationLog.error(
       'Dropped a push addressed to "$subject" on a device subscribed as '
       '"${_pushIntent ?? 'nobody'}".',
     );
@@ -835,7 +825,7 @@ class NotificationManager {
     try {
       _pushIntent = _blankToNull(await Vault.get(pushIntentKey));
     } catch (e) {
-      _safeLogError('Failed to read the persisted push intent: $e');
+      NotificationLog.error('Failed to read the persisted push intent: $e');
     }
   }
 
@@ -854,7 +844,7 @@ class NotificationManager {
         await Vault.put(pushIntentKey, externalId);
       }
     } catch (e) {
-      _safeLogError('Failed to persist the push intent: $e');
+      NotificationLog.error('Failed to persist the push intent: $e');
     }
   }
 
@@ -1079,7 +1069,7 @@ class NotificationManager {
       _realtimeEventName = event;
       _watchRealtimeConnection();
     } catch (e) {
-      _safeLogError('Failed to start realtime notifications: $e');
+      NotificationLog.error('Failed to start realtime notifications: $e');
       stopRealtime();
 
       return false;
@@ -1179,7 +1169,7 @@ class NotificationManager {
       _notifications = _prependKeyedById(incoming, _notifications);
       _notificationController.add(_notifications);
     } catch (e) {
-      _safeLogError('Failed to decode a realtime notification: $e');
+      NotificationLog.error('Failed to decode a realtime notification: $e');
     }
   }
 }

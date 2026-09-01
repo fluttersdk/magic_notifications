@@ -3,6 +3,7 @@ import 'package:magic/magic.dart';
 
 import '../facades/notify.dart';
 import '../models/paginated_notifications.dart';
+import '../support/notification_log.dart';
 
 /// Controller behind the notification list screen.
 ///
@@ -50,6 +51,10 @@ class NotificationsListController extends MagicController
   /// rather than absorbing them into an empty page. The rows already on
   /// screen are left alone, so a failed reload shows the failure without
   /// throwing away what the user was reading.
+  ///
+  /// The report goes through [NotificationLog] rather than [Log], because a
+  /// host that bound no logging provider would otherwise have `Log.error`
+  /// throw here and lose the error state this catch exists to set.
   Future<void> loadPage(int page) async {
     setLoading();
 
@@ -63,7 +68,9 @@ class NotificationsListController extends MagicController
       pageNotifier.value = result;
       setSuccess(true);
     } catch (e, stackTrace) {
-      Log.error('[NotificationsListController.loadPage] $e\n$stackTrace');
+      NotificationLog.error(
+        '[NotificationsListController.loadPage] $e\n$stackTrace',
+      );
       setError(trans('notifications.load_failed'));
     }
   }

@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:magic/magic.dart';
 
+import '../support/notification_log.dart';
+
 /// Controller behind the notification preference matrix.
 ///
 /// Holds the type x channel matrix the backend publishes at
@@ -68,7 +70,7 @@ class NotificationPreferencesController extends MagicController
       }
       setSuccess(true);
     } catch (e, stackTrace) {
-      Log.error(
+      NotificationLog.error(
         '[NotificationPreferencesController.fetchPreferences] $e\n$stackTrace',
       );
       setError(trans('errors.unexpected'));
@@ -144,7 +146,7 @@ class NotificationPreferencesController extends MagicController
       // 4. Revert on failure.
       if (!response.successful) {
         _revertChannel(type, channel, previous);
-        Log.error(
+        NotificationLog.error(
           '[NotificationPreferencesController.updateTypePreference] '
           'PUT failed: ${response.statusCode}',
         );
@@ -157,7 +159,7 @@ class NotificationPreferencesController extends MagicController
       _publishPushProvisioned(response);
     } catch (e, stackTrace) {
       _revertChannel(type, channel, previous);
-      Log.error(
+      NotificationLog.error(
         '[NotificationPreferencesController.updateTypePreference] '
         '$e\n$stackTrace',
       );
