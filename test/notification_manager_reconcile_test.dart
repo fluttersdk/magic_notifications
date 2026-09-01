@@ -1003,6 +1003,31 @@ void main() {
 
       expect(driver.identityCalls, <String>['login:user_A']);
     });
+
+    test('a request that threw leaves the turn for the next declaration',
+        () async {
+      configure(NotificationManager.autoRequestOnLoginKey, true);
+      final _RecordingPushDriver driver = use(
+        _ThrowingRequestDriver(permission: PushPermissionState.notDetermined),
+      );
+
+      await manager.want('user_A');
+      await pumpEventQueue();
+
+      expect(driver.permissionRequests, 1);
+
+      // The realistic route in: a web driver whose `initialize` has not
+      // finished answers `notDetermined`, so reachability reads `off` and the
+      // promptable check passes, and the SDK then raises NOT_INITIALIZED out of
+      // the request. A throw there is positive evidence that NO dialog was
+      // shown, so keeping the turn spends the one ask per launch on a pass
+      // nobody saw: the same defect the driver-less ordering had one window
+      // over, burnt by a driver that threw instead of by one that was absent.
+      await manager.want('user_A');
+      await pumpEventQueue();
+
+      expect(driver.permissionRequests, 2);
+    });
   });
 
   group('the reminder policy', () {

@@ -101,6 +101,11 @@ class NotificationManager {
   /// await, which keeps the property above exactly as it was: the ordering
   /// exists to beat a second login in the same breath, and a driver read that
   /// cannot suspend gives one nowhere to arrive.
+  ///
+  /// A pass that THREW gives the turn back for the same reason: a throw is
+  /// evidence that no dialog reached anybody, so the ask has not been spent.
+  /// A pass that decided not to ask keeps it, because that decision was made on
+  /// a platform answer and will be the same one on the next bump.
   bool _autoRequestRaised = false;
 
   /// The failure of the last identity operation, retained rather than only
@@ -1464,9 +1469,10 @@ class NotificationManager {
   /// and on a signed-out boot: a dialog raised from there arrives with nothing
   /// in front of it explaining what it is for.
   ///
-  /// Failure is logged and dropped rather than raised. It runs unawaited off
-  /// the login path, so a throw would surface as an unhandled async error, and
-  /// a permission this app could not ask for is not a reason to fail a login.
+  /// Failure releases the turn and is then logged and dropped rather than
+  /// raised. It runs unawaited off the login path, so a throw would surface as
+  /// an unhandled async error, and a permission this app could not ask for is
+  /// not a reason to fail a login.
   Future<void> _autoRequestPermissionOnLogin() async {
     // 1. Absent means off, and so does a value that is not a boolean.
     if (Config.get<bool>(autoRequestOnLoginKey) != true) return;
@@ -1501,6 +1507,26 @@ class NotificationManager {
 
       await driver.requestPermission();
     } catch (e) {
+      // 6. The turn goes back BEFORE the failure is logged, because a throw out
+      //    of any of the three calls above is positive evidence that no dialog
+      //    was ever put in front of anybody: nothing here draws a prompt except
+      //    `requestPermission()`, and it threw instead of resolving. Keeping the
+      //    claim would spend the single ask per launch on a pass that showed
+      //    nobody anything, which is the same defect the driver-less ordering
+      //    above carries, burnt by a driver that threw rather than by one that
+      //    was absent. The realistic route in is a web driver whose
+      //    `initialize` has not finished: `permissionState()` answers
+      //    `notDetermined`, so [PushDriver.reachability] reads `off` and
+      //    [PushDriver.canRaisePermissionRequest] passes, and the SDK then
+      //    raises NOT_INITIALIZED.
+      //
+      //    Releasing is the whole of it. Nothing is retried from here: the next
+      //    DECLARATION asks again (which for the ordering above is the next
+      //    auth-state bump, and for a host reading `onPushDriverAttached` is the
+      //    moment a driver exists), and a retry loop on a platform that is
+      //    failing would be a dialog attempt nobody asked for.
+      _autoRequestRaised = false;
+
       NotificationLog.error(
         'The automatic push permission request failed: $e',
       );
