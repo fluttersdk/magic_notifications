@@ -59,14 +59,23 @@ class Notify {
   /// The package defaults are registered the first time this is read, so a
   /// host registration made afterwards replaces them. `clear()` drops them
   /// too, which is what it is for.
+  ///
+  /// They are seeded as DEFAULTS, so `hasOverride(key)` is false until somebody
+  /// registers over them. That is the question `magic_starter` asks before
+  /// mounting its own wrapped versions: `has(key)` is true from the first read
+  /// and would make it skip every time.
   static NotificationViewRegistry get view {
     final registered = _view;
     if (registered != null) return registered;
 
     final registry = NotificationViewRegistry();
-    registry.register(
+    // `registerDefault`, not `register`: these are seeded on first read, so by
+    // `has()` both keys are spoken for before anybody has chosen anything, and
+    // a downstream package deciding whether to install its own default would
+    // always lose to them. `hasOverride()` is the question that has an answer.
+    registry.registerDefault(
         'notifications.list', () => const NotificationsListView());
-    registry.register(
+    registry.registerDefault(
       'notifications.preferences',
       () => const NotificationPreferencesView(),
     );
@@ -233,6 +242,17 @@ class Notify {
   /// Drops every channel, every registered driver and every resolved instance.
   /// See [NotificationManager.forgetDrivers].
   static void forgetDrivers() => manager.forgetDrivers();
+
+  /// Drops the view registry so the next read of [view] seeds a fresh one.
+  ///
+  /// The test-isolation seam for views, and the sibling of [forgetDrivers]. The
+  /// registry is a static cache, so a test that registers over a screen leaves
+  /// that registration standing for every test after it, and one asserting on
+  /// the SEEDED state would then read whatever the previous test chose.
+  /// `view.clear()` is not the same thing: it empties the registry this facade
+  /// is holding and does not restore the defaults, because the seeding only
+  /// happens on the first read.
+  static void forgetView() => _view = null;
 
   // ========================================
   // Polling

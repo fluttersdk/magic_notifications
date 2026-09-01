@@ -237,4 +237,49 @@ void main() {
       expect(find.byIcon(Icons.notifications_none_outlined), findsNothing);
     });
   });
+
+  group('hasOverride distinguishes a choice from a shipped default', () {
+    setUp(Notify.forgetView);
+
+    test('the two screens Notify seeds are present but not overrides', () {
+      // `has` is true from the first read, because reading `Notify.view` is
+      // what seeds them. A downstream package gating its own default on `has`
+      // therefore never installs it: `magic_starter` mounts these two wrapped
+      // in the host's page geometry, and that wrap would never reach a screen.
+      expect(Notify.view.has('notifications.list'), isTrue);
+      expect(Notify.view.has('notifications.preferences'), isTrue);
+
+      expect(Notify.view.hasOverride('notifications.list'), isFalse);
+      expect(Notify.view.hasOverride('notifications.preferences'), isFalse);
+    });
+
+    test('registering over a default promotes the key to an override', () {
+      Notify.view.register('notifications.list', () => const SizedBox());
+
+      expect(Notify.view.hasOverride('notifications.list'), isTrue);
+
+      // The neighbour is untouched, so one screen being claimed does not make
+      // the other one look claimed.
+      expect(Notify.view.hasOverride('notifications.preferences'), isFalse);
+    });
+
+    test('a key nothing registered is neither present nor an override', () {
+      expect(Notify.view.has('notifications.nope'), isFalse);
+      expect(Notify.view.hasOverride('notifications.nope'), isFalse);
+    });
+
+    test('clear drops the default marks with the builders', () {
+      Notify.view.clear();
+      Notify.view.registerDefault('notifications.list', () => const SizedBox());
+
+      expect(Notify.view.hasOverride('notifications.list'), isFalse);
+
+      Notify.view.clear();
+      Notify.view.register('notifications.list', () => const SizedBox());
+
+      // Re-registered through the public method after a clear, so it is a
+      // choice again rather than a leftover default mark.
+      expect(Notify.view.hasOverride('notifications.list'), isTrue);
+    });
+  });
 }

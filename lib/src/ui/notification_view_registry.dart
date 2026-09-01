@@ -55,10 +55,43 @@ class NotificationViewRegistry {
   final Map<String, NotificationSlotBuilder> _slots =
       <String, NotificationSlotBuilder>{};
 
+  /// Keys currently holding a builder this PACKAGE seeded, not one a caller
+  /// registered.
+  ///
+  /// `has(key)` cannot answer "is this screen spoken for", because the two
+  /// screens this package ships are seeded into every registry the moment
+  /// `Notify.view` is first read, so the answer is yes before anybody has
+  /// chosen anything. A caller deciding whether to install its own default
+  /// needs [hasOverride] instead.
+  final Set<String> _defaults = <String>{};
+
   /// Register a builder under the given key.
   void register(String key, NotificationViewBuilder builder) {
     _builders[key] = builder;
+    _defaults.remove(key);
   }
+
+  /// Register a builder this package ships, which [hasOverride] does not count.
+  ///
+  /// Internal: `Notify.view` seeds the two screens through this so a downstream
+  /// package can tell them apart from a deliberate choice. A later [register]
+  /// on the same key promotes it to an override.
+  void registerDefault(String key, NotificationViewBuilder builder) {
+    _builders[key] = builder;
+    _defaults.add(key);
+  }
+
+  /// Whether [key] holds a builder somebody CHOSE, rather than one this package
+  /// seeded.
+  ///
+  /// This is the question a downstream package asks before installing its own
+  /// default. `magic_starter` mounts the two screens wrapped in the host's page
+  /// geometry, and it has to lose to an app that registered its own screen
+  /// while still winning over the bare defaults this package seeds: gating that
+  /// on [has] means it always loses, and the wrap it exists to apply never
+  /// reaches the screen.
+  bool hasOverride(String key) =>
+      _builders.containsKey(key) && !_defaults.contains(key);
 
   /// Register a layout builder under the given key.
   void registerLayout(String key, NotificationLayoutBuilder builder) {
@@ -171,6 +204,7 @@ class NotificationViewRegistry {
   /// Remove all builders (useful for tests).
   void clear() {
     _builders.clear();
+    _defaults.clear();
     _layouts.clear();
     _modals.clear();
     _slots.clear();
