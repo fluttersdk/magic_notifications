@@ -402,6 +402,117 @@ Map<String, dynamic> get notificationConfig => {
   });
 
   // ---------------------------------------------------------------------------
+  // Env-resolved app_id
+  // ---------------------------------------------------------------------------
+
+  group('env-resolved app_id', () {
+    /// Writes a config whose `app_id` line is [appIdExpression] verbatim.
+    void writeConfigWithAppId(String appIdExpression) {
+      File('${tempDir.path}/lib/config/notifications.dart')
+          .writeAsStringSync('''
+Map<String, dynamic> get notificationsConfig => {
+  'notifications': {
+    'push': {
+      'app_id': $appIdExpression,
+    },
+    'database': {
+      'polling_interval': 30,
+    },
+    'soft_prompt': {
+      'enabled': true,
+    },
+  },
+};
+''');
+    }
+
+    test('an envString-resolved app id is configured, not missing', () {
+      writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+
+      expect(command.validateConfig(), isEmpty);
+      expect(command.envResolvedAppIdKey(), 'ONESIGNAL_APP_ID');
+    });
+
+    test('the report names the env key the app id depends on', () {
+      writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+
+      expect(command.generateReport(), contains('ONESIGNAL_APP_ID'));
+      expect(command.generateReport(), isNot(contains('App ID not found')));
+    });
+
+    test('an env-driven config exits 0', () async {
+      writeConfigWithAppId("envString('ONESIGNAL_APP_ID', '')");
+
+      final ctx = ArtisanContext.bare(
+        MapInput({'verbose': false}, signature: command.parsedSignature),
+        BufferedOutput(),
+      );
+      expect(await command.handle(ctx), 0);
+    });
+
+    test('env() and env<String>() are recognised too', () {
+      writeConfigWithAppId("env('ONESIGNAL_APP_ID')");
+      expect(command.validateConfig(), isEmpty);
+      expect(command.envResolvedAppIdKey(), 'ONESIGNAL_APP_ID');
+
+      writeConfigWithAppId("env<String>('ONESIGNAL_APP_ID')");
+      expect(command.validateConfig(), isEmpty);
+      expect(command.envResolvedAppIdKey(), 'ONESIGNAL_APP_ID');
+    });
+
+    test('an empty literal still fails', () {
+      writeConfigWithAppId("''");
+
+      expect(command.validateConfig().any((i) => i.contains('App ID')), isTrue);
+      expect(command.envResolvedAppIdKey(), isNull);
+    });
+
+    test('a placeholder literal still fails', () {
+      writeConfigWithAppId("'YOUR_APP_ID'");
+
+      expect(
+        command.validateConfig().any((i) => i.contains('placeholder')),
+        isTrue,
+      );
+    });
+
+    test('an absent app_id key still fails', () {
+      File('${tempDir.path}/lib/config/notifications.dart')
+          .writeAsStringSync('''
+Map<String, dynamic> get notificationsConfig => {
+  'notifications': {
+    'push': {
+      'driver': 'onesignal',
+    },
+    'database': {
+      'polling_interval': 30,
+    },
+    'soft_prompt': {
+      'enabled': true,
+    },
+  },
+};
+''');
+
+      expect(
+        command.validateConfig().any((i) => i.contains('App ID not found')),
+        isTrue,
+      );
+      expect(command.envResolvedAppIdKey(), isNull);
+    });
+
+    test('an env call with no key named is not treated as configured', () {
+      writeConfigWithAppId("envString('', '')");
+
+      expect(
+        command.validateConfig().any((i) => i.contains('App ID not found')),
+        isTrue,
+      );
+      expect(command.envResolvedAppIdKey(), isNull);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // getMissingRequirements
   // ---------------------------------------------------------------------------
 

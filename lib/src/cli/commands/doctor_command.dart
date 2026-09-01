@@ -26,6 +26,22 @@ class DoctorCommand extends ArtisanCommand {
   /// Build setting through which Xcode learns the entitlements file exists.
   static const String _entitlementsSetting = 'CODE_SIGN_ENTITLEMENTS';
 
+  /// Matches an `app_id` whose value is a quoted string LITERAL.
+  static final RegExp _literalAppId = RegExp(r"'app_id':\s*'([^']*)'");
+
+  /// Matches an `app_id` READ FROM THE ENVIRONMENT, capturing the env key.
+  ///
+  /// A value that differs between deployments cannot be a literal, so an app
+  /// resolves it at runtime instead; this scan happens at file level and can
+  /// only ever see the call. Three shapes are recognised: magic's `env('KEY')`
+  /// and `env<String>('KEY')`, plus the `envString('KEY', fallback)` wrapper an
+  /// app writes when a present-but-blank key has to fall back. The key capture
+  /// demands at least one character, so `envString('', '')` names no key and
+  /// still reads as an absent App ID rather than a configured one.
+  static final RegExp _envResolvedAppId = RegExp(
+    r"'app_id':\s*(?:envString|env)\s*(?:<[^>]*>)?\s*\(\s*'([^']+)'",
+  );
+
   @override
   String get signature =>
       'notifications:doctor {--verbose : Show detailed diagnostic information}';
@@ -119,10 +135,15 @@ class DoctorCommand extends ArtisanCommand {
     final content = FileHelper.readFile(configPath);
     final issues = <String>[];
 
-    // 1. Validate app_id presence and UUID format.
-    final appIdMatch = RegExp(r"'app_id':\s*'([^']*)'").firstMatch(content);
+    // 1. Validate app_id presence and UUID format. A literal is validated here
+    //    and now; an env-resolved one has no value at file-scan time, so its
+    //    presence IS the check and the report names the key instead. Only a
+    //    config carrying neither is missing an App ID.
+    final appIdMatch = _literalAppId.firstMatch(content);
     if (appIdMatch == null) {
-      issues.add('App ID not found in config');
+      if (!_envResolvedAppId.hasMatch(content)) {
+        issues.add('App ID not found in config');
+      }
     } else {
       final appId = appIdMatch.group(1)!;
       if (appId.isEmpty || appId == 'YOUR_APP_ID') {
@@ -157,6 +178,28 @@ class DoctorCommand extends ArtisanCommand {
     }
 
     return issues;
+  }
+
+  /// The environment key an env-resolved `app_id` reads at runtime, or `null`
+  /// when the config declares a literal (or no `app_id` at all).
+  ///
+  /// Reported rather than validated: the doctor reads files, so it can name the
+  /// key the value comes from but never the value itself. A literal wins when
+  /// both shapes somehow appear, because the literal is the one this command
+  /// can actually check.
+  String? envResolvedAppIdKey() {
+    final configPath = '$projectRoot/lib/config/notifications.dart';
+
+    if (!FileHelper.fileExists(configPath)) {
+      return null;
+    }
+
+    final content = FileHelper.readFile(configPath);
+    if (_literalAppId.hasMatch(content)) {
+      return null;
+    }
+
+    return _envResolvedAppId.firstMatch(content)?.group(1);
   }
 
   /// Validate that [appId] matches the OneSignal UUID format (8-4-4-4-12 hex).
@@ -402,6 +445,15 @@ class DoctorCommand extends ArtisanCommand {
     if (!configExists) {
       buffer.writeln('  ✗ Skipped — config file missing');
     } else {
+      // An env-resolved App ID is configured, but only the environment knows
+      // its value, so name the key the deployment has to carry.
+      final envKey = envResolvedAppIdKey();
+      if (envKey != null) {
+        buffer.writeln(
+          '  ✓ App ID is resolved at runtime from the $envKey '
+          'environment variable',
+        );
+      }
       final configIssues = validateConfig();
       if (configIssues.isEmpty) {
         buffer.writeln('  ✓ All config checks passed');

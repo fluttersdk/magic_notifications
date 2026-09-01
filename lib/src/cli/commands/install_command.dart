@@ -8,6 +8,76 @@ import '../notifications_artisan_provider.dart';
 /// Project type detection result for the install banner.
 enum ProjectType { flutter, dart, unknown }
 
+/// Reads how a project has wired `lib/config/notifications.dart` out of the
+/// project's OWN source, instead of assuming the names this package generates.
+///
+/// The getter name is not knowable in advance. The stub `notifications:install`
+/// writes calls it `notificationConfig`, but a project that hand-wrote its
+/// config names it after its own config root (`notificationsConfig` for a
+/// `notifications.*` tree). Every command that has to name that symbol, the
+/// installer appending a factory and the uninstaller removing one, reads it
+/// through this one place: a command that guesses either stops the app
+/// compiling (install appending a factory for a symbol that does not exist) or
+/// silently does nothing while reporting success (uninstall matching a line
+/// that is not there).
+abstract final class NotificationsConfigWiring {
+  /// Core of an import of the notifications config, however the path is
+  /// spelled (relative from `lib/`, or a `package:` uri).
+  static const String _importCore =
+      r"""import\s+['"][^'"]*config/notifications\.dart['"]""";
+
+  /// Matches the `Map<String, dynamic> get <name> =>` declaration a
+  /// notifications config exposes, capturing the getter name.
+  static final RegExp getterDeclaration = RegExp(
+    r'Map<\s*String\s*,\s*dynamic\s*>\s+get\s+(\w+)\s*=>',
+  );
+
+  /// Matches an import of the notifications config, which is what "this
+  /// project is already wired" means.
+  static final RegExp configImport = RegExp(_importCore);
+
+  /// Matches that import as a whole LINE (any `show` / `as` combinator, the
+  /// semicolon and the line break included), so removing it leaves no residue.
+  static final RegExp configImportLine =
+      RegExp(r'[ \t]*' + _importCore + r'[^;\n]*;[ \t]*\r?\n?');
+
+  /// The getter name [configSource] declares its config map under, or `null`
+  /// when it declares none this package can name.
+  static String? getterName(String configSource) =>
+      getterDeclaration.firstMatch(withoutComments(configSource))?.group(1);
+
+  /// Whether [mainSource] already imports the notifications config.
+  ///
+  /// Comments are stripped first: an import somebody commented out is not an
+  /// import, and reading one as wiring would leave the project with a config
+  /// nothing ever loads.
+  static bool wiresConfig(String mainSource) =>
+      configImport.hasMatch(withoutComments(mainSource));
+
+  /// Matches the `() => <getterName>,` configFactory entry, for a rename in
+  /// place.
+  static RegExp configFactory(String getterName) =>
+      RegExp(_factoryPattern(getterName));
+
+  /// Matches that entry as a whole LINE, for a removal that leaves no blank
+  /// line behind.
+  static RegExp configFactoryLine(String getterName) =>
+      RegExp(r'[ \t]*' + _factoryPattern(getterName) + r'[ \t]*\r?\n?');
+
+  /// Strips Dart line and block comments from [source].
+  ///
+  /// Every reader here looks for a declaration, and a declaration inside a
+  /// comment (a doc comment quoting the import, a factory line left commented
+  /// during debugging) is not one.
+  static String withoutComments(String source) => source
+      .replaceAll(RegExp(r'/\*.*?\*/', dotAll: true), '')
+      .replaceAll(RegExp(r'//[^\n]*'), '');
+
+  /// The bare `() => <getterName>,` pattern both matchers above build on.
+  static String _factoryPattern(String getterName) =>
+      r'\(\)\s*=>\s*' + RegExp.escape(getterName) + r'\s*,';
+}
+
 /// Resolved install plan computed from CLI flags or the interactive wizard.
 ///
 /// Carries everything the staging phase needs so [InstallCommand.handle] can
@@ -70,6 +140,10 @@ class _InstallPlan {
 ///    (PluginInstaller V1 limitation), so they trail every high-risk write.
 /// 4. The head-script injection is gated with [HtmlEditor.hasContent] so a
 ///    re-install never double-injects.
+/// 5. After a successful commit, a `--force` run that replaced an existing
+///    config reconciles `main.dart` with the file it just wrote (see
+///    [_realignMainFactory]). Regenerating the config must never leave the
+///    project naming a getter that no longer exists.
 ///
 /// ## Why a fluent override, not a pure manifest
 ///
@@ -360,14 +434,29 @@ class InstallCommand extends ArtisanInstallCommand {
 
     // 1. Config file. Skip when it already exists and --force was not passed
     //    (mirrors the legacy behavior; the installer would otherwise overwrite).
+    //    The rendered source is kept: op 6 reads the config getter's name out
+    //    of whichever source this run leaves on disk.
+    //
+    //    The getter the project declares TODAY is read here, before anything
+    //    can overwrite the only file that carries it, because step 8 needs it
+    //    to re-point an already-wired main.dart after a --force regeneration.
     final configPath = '$projectRoot/lib/config/notifications.dart';
-    if (FileHelper.fileExists(configPath) && !force) {
+    final mainPath = '$projectRoot/lib/main.dart';
+    final configExists = FileHelper.fileExists(configPath);
+    final previousGetter = configExists
+        ? NotificationsConfigWiring.getterName(FileHelper.readFile(configPath))
+        : null;
+    final mainWiredBefore =
+        FileHelper.fileExists(mainPath) && _wiresConfig(mainPath);
+    String? stagedConfig;
+    if (configExists && !force) {
       ctx.output.warning(
           'Configuration file already exists. Use --force to overwrite.');
     } else {
+      stagedConfig = _renderConfig(plan);
       installer.writeFile(
         targetPath: configPath,
-        content: _renderConfig(plan),
+        content: stagedConfig,
       );
     }
 
@@ -426,16 +515,40 @@ class InstallCommand extends ArtisanInstallCommand {
     // 6. main.dart configFactory inject. The import is RELATIVE
     //    (config/notifications.dart, not a package: import) so injectConfigFactory
     //    cannot be used; stage the import + the factory append explicitly.
-    final mainPath = '$projectRoot/lib/main.dart';
-    if (FileHelper.fileExists(mainPath) &&
-        !FileHelper.readFile(mainPath).contains('notificationConfig')) {
-      installer
-        ..injectMainDartImport("import 'config/notifications.dart';")
-        ..injectAfter(
-          targetFile: mainPath,
-          pattern: RegExp(r'\(\)\s*=>\s*\w+Config,(?=\s*\n\s*\])'),
-          code: '\n      () => notificationConfig,',
+    //
+    //    Prior wiring is detected by THAT IMPORT, never by a symbol name: the
+    //    guard used to test for the stub's `notificationConfig`, which misses on
+    //    a project whose config declares `notificationsConfig`, so every re-run
+    //    appended a factory naming a symbol that does not exist and stopped the
+    //    app compiling. And when this run is not the one writing the config, the
+    //    getter's name is read out of the project's own file rather than
+    //    assumed.
+    if (FileHelper.fileExists(mainPath) && !mainWiredBefore) {
+      final configSource = stagedConfig ??
+          (configExists ? FileHelper.readFile(configPath) : null);
+      final getter = configSource == null
+          ? null
+          : NotificationsConfigWiring.getterName(configSource);
+      if (getter == null) {
+        // Guessing here is how the app broke in the first place: a factory
+        // naming a symbol the config does not declare costs a compile, while a
+        // missing one costs a documented manual step.
+        ctx.output.warning(
+          'No config getter could be read out of lib/config/notifications.dart, '
+          'so lib/main.dart was left untouched. Add '
+          "\"import 'config/notifications.dart';\" and "
+          '"() => <yourConfigGetter>," inside Magic.init\'s configFactories '
+          'by hand.',
         );
+      } else {
+        installer
+          ..injectMainDartImport("import 'config/notifications.dart';")
+          ..injectAfter(
+            targetFile: mainPath,
+            pattern: RegExp(r'\(\)\s*=>\s*\w+Config,(?=\s*\n\s*\])'),
+            code: '\n      () => $getter,',
+          );
+      }
     }
 
     // 7. Web SDK <head> script, gated on web selection AND idempotency. The
@@ -455,7 +568,93 @@ class InstallCommand extends ArtisanInstallCommand {
       }
     }
 
-    return installer.commit(dryRun: isDryRun(ctx), force: force);
+    final result = await installer.commit(dryRun: isDryRun(ctx), force: force);
+
+    // 8. Post-commit reconcile: a --force run that REPLACED an existing config
+    //    leaves an already-wired main.dart naming a getter the new file no
+    //    longer declares. This runs after the commit, not as a staged op, so it
+    //    reads the config that actually landed and never fires on a dry run or
+    //    on a transaction that rolled back.
+    if (result is Success &&
+        stagedConfig != null &&
+        configExists &&
+        mainWiredBefore) {
+      _realignMainFactory(
+        ctx,
+        mainPath,
+        previousGetter: previousGetter,
+        regeneratedGetter: NotificationsConfigWiring.getterName(stagedConfig),
+      );
+    }
+
+    return result;
+  }
+
+  /// Whether the project's `main.dart` at [mainPath] already imports the
+  /// notifications config, which is what "already installed" means here.
+  bool _wiresConfig(String mainPath) => NotificationsConfigWiring.wiresConfig(
+        FileHelper.readFile(mainPath),
+      );
+
+  /// Re-points an already-wired `lib/main.dart` at the getter the regenerated
+  /// config declares, after a `--force` run overwrote the project's own config.
+  ///
+  /// Why this exists: `--force` rewrites the config from the stub, whose getter
+  /// is `notificationConfig`, while a project that hand-wrote its config named
+  /// its own symbol in `Magic.init`. Left alone, the two disagree and the app
+  /// stops compiling. The operator asked to REGENERATE THE CONFIG, not to break
+  /// the build, and a command whose whole purpose is repair must never hand
+  /// back a project that does not compile.
+  ///
+  /// Why the wiring follows the file, rather than the stub being rendered under
+  /// whatever getter the old config declared: `--force` means "give me the
+  /// file this installer generates". Rendering it under a foreign name would
+  /// leave a config that no fresh install would ever produce, so nobody reading
+  /// that project later could tell what the tool actually writes. The symbol
+  /// is one line in `main.dart`; the file is the thing being regenerated.
+  ///
+  /// [previousGetter] is read BEFORE the overwrite (the old file is the only
+  /// place that name exists) and [regeneratedGetter] comes from the source this
+  /// run wrote. When either is unknown, `main.dart` is left exactly as it is:
+  /// a guessed rename is how this package broke a real project once already.
+  void _realignMainFactory(
+    ArtisanContext ctx,
+    String mainPath, {
+    required String? previousGetter,
+    required String? regeneratedGetter,
+  }) {
+    if (regeneratedGetter == null || previousGetter == null) {
+      ctx.output.warning(
+        'lib/config/notifications.dart was regenerated, but the getter it '
+        'declared before could not be read, so lib/main.dart was left '
+        'untouched. Check that its configFactories entry names '
+        '${regeneratedGetter ?? 'the getter the new config declares'}.',
+      );
+      return;
+    }
+    if (previousGetter == regeneratedGetter) {
+      return;
+    }
+
+    final content = FileHelper.readFile(mainPath);
+    final updated = content.replaceAll(
+      NotificationsConfigWiring.configFactory(previousGetter),
+      '() => $regeneratedGetter,',
+    );
+    if (updated == content) {
+      ctx.output.warning(
+        'lib/main.dart imports the notifications config but names no '
+        '"() => $previousGetter," factory, so nothing was re-pointed. Check '
+        'its configFactories entry names $regeneratedGetter.',
+      );
+      return;
+    }
+
+    FileHelper.writeFile(mainPath, updated);
+    ctx.output.success(
+      'Re-pointed lib/main.dart at $regeneratedGetter '
+      '(was $previousGetter, which the regenerated config no longer declares)',
+    );
   }
 
   /// Renders the notification config stub with the plan's placeholder values.

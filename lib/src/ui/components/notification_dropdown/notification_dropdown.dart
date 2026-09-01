@@ -4,6 +4,7 @@ import 'package:magic/magic.dart';
 
 import '../../../facades/notify.dart';
 import '../../../models/database_notification.dart';
+import 'notification_dropdown.recipe.dart';
 
 /// Bell icon dropdown with a real-time unread badge over a notification stream.
 ///
@@ -20,6 +21,34 @@ import '../../../models/database_notification.dart';
 ///   onViewAll: () => MagicRoute.to('/notifications'),
 /// )
 /// ```
+///
+/// ### Restyling it
+///
+/// The defaults are Wind's own palette (`bg-white`, `text-gray-500`,
+/// `bg-red-500`), which reads as a foreign control next to an app whose other
+/// controls are written in that app's semantic aliases. Four surfaces take an
+/// override so an adopter can answer in its own vocabulary without forking the
+/// widget: [triggerClassName], [triggerIconClassName], [badgeClassName] with
+/// [badgeTextClassName], and [panelClassName].
+///
+/// Each override REPLACES its default outright, layout tokens included, rather
+/// than appending to it, so a value that changes one token still has to carry
+/// the rest:
+///
+/// ```dart
+/// NotificationDropdown(
+///   notificationStream: Notify.notifications(),
+///   triggerClassName: 'w-9 h-9 rounded-lg flex items-center justify-center '
+///       'bg-surface hover:bg-surface-container',
+///   triggerIconClassName: 'text-[18px] text-fg-muted',
+///   panelClassName: 'w-80 bg-surface border border-color-border rounded-xl',
+/// )
+/// ```
+///
+/// Replacement rather than append is deliberate. Wind's last-wins is per
+/// family, and `bg-*` and `dark:bg-*` are two families, so an appended
+/// light-only override would leave the default's `dark:bg-gray-800` alive and
+/// the adopter would be debugging a dark mode it never asked for.
 class NotificationDropdown extends StatelessWidget {
   /// The neutral leading icon, used for every type the adopter did not answer
   /// for through the `notifications.icon` slot family.
@@ -40,6 +69,43 @@ class NotificationDropdown extends StatelessWidget {
   /// Callback when the "View all" link is tapped.
   final VoidCallback? onViewAll;
 
+  /// className of the popover panel, replacing
+  /// [kNotificationDropdownPanelClassName].
+  ///
+  /// The default carries the panel's `w-80` width and `rounded-xl shadow-xl`
+  /// alongside its palette, so an override that only means to recolor the
+  /// surface still has to restate the width it wants.
+  final String panelClassName;
+
+  /// className of the trigger surface, replacing
+  /// [kNotificationDropdownTriggerClassName].
+  ///
+  /// The default's `hover:`/`active:` tones are part of the string; an override
+  /// that omits them ships a trigger with no press or hover feedback.
+  final String triggerClassName;
+
+  /// className of the trigger glyph, replacing
+  /// [kNotificationDropdownTriggerIconClassName].
+  ///
+  /// This is where the bell's SIZE lives (`text-2xl` by default), so an adopter
+  /// fitting the bell into a smaller control box overrides this one rather than
+  /// [triggerClassName].
+  final String triggerIconClassName;
+
+  /// className of the unread badge pill, replacing
+  /// [kNotificationDropdownBadgeClassName].
+  ///
+  /// The count inside it is clamped to
+  /// [kNotificationDropdownBadgeMaxTextScaleFactor] whatever this value is,
+  /// because the clamp is derived from the DEFAULT pill's fixed height; an
+  /// override that makes the pill taller gets a badge that scales less than it
+  /// could, never one that clips.
+  final String badgeClassName;
+
+  /// className of the unread count inside the badge pill, replacing
+  /// [kNotificationDropdownBadgeTextClassName].
+  final String badgeTextClassName;
+
   /// Creates a [NotificationDropdown].
   const NotificationDropdown({
     super.key,
@@ -48,6 +114,11 @@ class NotificationDropdown extends StatelessWidget {
     this.onMarkAllAsRead,
     this.onNotificationTap,
     this.onViewAll,
+    this.panelClassName = kNotificationDropdownPanelClassName,
+    this.triggerClassName = kNotificationDropdownTriggerClassName,
+    this.triggerIconClassName = kNotificationDropdownTriggerIconClassName,
+    this.badgeClassName = kNotificationDropdownBadgeClassName,
+    this.badgeTextClassName = kNotificationDropdownBadgeTextClassName,
   });
 
   @override
@@ -78,12 +149,7 @@ class NotificationDropdown extends StatelessWidget {
   ) {
     return WPopover(
       alignment: PopoverAlignment.bottomRight,
-      className: '''
-        w-80
-        bg-white dark:bg-gray-800
-        border border-gray-200 dark:border-gray-700
-        rounded-xl shadow-xl
-      ''',
+      className: panelClassName,
       maxHeight: 400,
       triggerBuilder: (context, isOpen, isHovering) =>
           _buildTrigger(context, isOpen, isHovering, unreadCount: unreadCount),
@@ -103,14 +169,10 @@ class NotificationDropdown extends StatelessWidget {
       children: [
         WDiv(
           states: {if (isOpen) 'active', if (isHovering) 'hover'},
-          className: '''
-            p-2 rounded-lg duration-150
-            bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800
-            active:bg-gray-100 dark:active:bg-gray-800
-          ''',
+          className: triggerClassName,
           child: WIcon(
             Icons.notifications_outlined,
-            className: 'text-2xl text-gray-500 dark:text-gray-400',
+            className: triggerIconClassName,
           ),
         ),
         if (unreadCount > 0)
@@ -118,16 +180,19 @@ class NotificationDropdown extends StatelessWidget {
             top: 4,
             right: 4,
             child: WDiv(
-              className: '''
-                min-w-[14px] h-[14px] px-1 rounded-full
-                bg-red-500
-                flex items-center justify-center
-              ''',
-              child: WText(
-                unreadCount > 9
-                    ? trans('notifications.badge_overflow')
-                    : unreadCount.toString(),
-                className: 'text-[9px] font-bold text-white',
+              className: badgeClassName,
+              // The pill's height is fixed while the digit inside it grows with
+              // the OS text scale, so an accessibility scale clips the count.
+              // The clamp is the whole guard against that; see the constant for
+              // where its value comes from and why it must not be raised alone.
+              child: MediaQuery.withClampedTextScaling(
+                maxScaleFactor: kNotificationDropdownBadgeMaxTextScaleFactor,
+                child: WText(
+                  unreadCount > 9
+                      ? trans('notifications.badge_overflow')
+                      : unreadCount.toString(),
+                  className: badgeTextClassName,
+                ),
               ),
             ),
           ),
@@ -301,12 +366,7 @@ class NotificationDropdown extends StatelessWidget {
   Widget _buildLoadingDropdown() {
     return WPopover(
       alignment: PopoverAlignment.bottomRight,
-      className: '''
-        w-80
-        bg-white dark:bg-gray-800
-        border border-gray-200 dark:border-gray-700
-        rounded-xl shadow-xl
-      ''',
+      className: panelClassName,
       maxHeight: 400,
       triggerBuilder: (context, isOpen, isHovering) =>
           _buildTrigger(context, isOpen, isHovering, unreadCount: 0),
@@ -320,12 +380,7 @@ class NotificationDropdown extends StatelessWidget {
   Widget _buildErrorDropdown() {
     return WPopover(
       alignment: PopoverAlignment.bottomRight,
-      className: '''
-        w-80
-        bg-white dark:bg-gray-800
-        border border-gray-200 dark:border-gray-700
-        rounded-xl shadow-xl
-      ''',
+      className: panelClassName,
       maxHeight: 400,
       triggerBuilder: (context, isOpen, isHovering) =>
           _buildTrigger(context, isOpen, isHovering, unreadCount: 0),

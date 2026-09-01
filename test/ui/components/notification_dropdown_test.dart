@@ -58,9 +58,19 @@ void main() {
     });
   }
 
-  Widget wrap(Widget child) {
+  Widget wrap(Widget child, {TextScaler textScaler = TextScaler.noScaling}) {
     return MaterialApp(
-      home: WindTheme(data: WindThemeData(), child: Scaffold(body: child)),
+      home: WindTheme(
+        data: WindThemeData(),
+        child: Scaffold(
+          body: Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+              child: child,
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -131,6 +141,98 @@ void main() {
 
     expect(find.text('Nothing here yet'), findsOneWidget);
     expect(find.byIcon(Icons.notifications_off_outlined), findsOneWidget);
+  });
+
+  testWidgets(
+    'the unread badge stays inside its pill at an accessibility text scale',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          NotificationDropdown(notificationStream: streamController.stream),
+          textScaler: const TextScaler.linear(3.0),
+        ),
+      );
+
+      streamController.add([makeNotification(), makeNotification()]);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final Finder count = find.text('2');
+
+      // The pill is a fixed-height box, so the digit's own render box is
+      // CONSTRAINT-clamped to that height whether or not the glyph fits: at a
+      // 3.0 scale the box still measures 14.0 while the line paints at 39.0.
+      // The intrinsic height is the only honest reading of what the text
+      // actually needs, so the assertion goes against that, not against
+      // `digit.size.height`, which would pass vacuously.
+      final Size pill = tester.getSize(
+        find.ancestor(of: count, matching: find.byType(WDiv)).first,
+      );
+      final RenderBox digit = tester.renderObject<RenderBox>(count);
+      final double needed = digit.getMaxIntrinsicHeight(digit.size.width);
+
+      expect(needed, lessThanOrEqualTo(pill.height));
+    },
+  );
+
+  testWidgets('the styling seam reaches the trigger, badge and panel', (
+    tester,
+  ) async {
+    const String triggerClassName = 'p-2 rounded-lg bg-transparent';
+    const String triggerIconClassName = 'text-[18px] text-primary';
+    const String badgeClassName = '''
+      min-w-[14px] h-[14px] px-1 rounded-full
+      bg-primary
+      flex items-center justify-center
+    ''';
+    const String badgeTextClassName = 'text-[9px] font-bold text-black';
+    const String panelClassName = 'w-96 bg-primary rounded-md';
+
+    await tester.pumpWidget(
+      wrap(
+        NotificationDropdown(
+          notificationStream: streamController.stream,
+          triggerClassName: triggerClassName,
+          triggerIconClassName: triggerIconClassName,
+          badgeClassName: badgeClassName,
+          badgeTextClassName: badgeTextClassName,
+          panelClassName: panelClassName,
+        ),
+      ),
+    );
+
+    streamController.add([makeNotification()]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is WPopover && w.className == panelClassName,
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is WDiv && w.className == triggerClassName,
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is WIcon && w.className == triggerIconClassName,
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate((w) => w is WDiv && w.className == badgeClassName),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is WText && w.className == badgeTextClassName,
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('the dropdown preview renders without error', (tester) async {

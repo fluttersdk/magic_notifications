@@ -142,6 +142,81 @@ $modes</dict>
       .writeAsStringSync(_pbxproj);
 }
 
+/// Writes a HAND-WRITTEN `lib/config/notifications.dart` declaring [getter].
+///
+/// Modelled on a real adopter's config: the getter is named after the
+/// `notifications.*` config root (so it is NOT the stub's `notificationConfig`)
+/// and the app id is resolved from the environment rather than inlined.
+void _writeHandWrittenConfig(Directory tempDir, String getter) {
+  Directory('${tempDir.path}/lib/config').createSync(recursive: true);
+  File('${tempDir.path}/lib/config/notifications.dart').writeAsStringSync('''
+import '../app/support/env_strings.dart' show envString;
+
+/// Notifications configuration.
+Map<String, dynamic> get $getter => {
+  'notifications': {
+    'push': {
+      'driver': 'onesignal',
+      'app_id': envString('ONESIGNAL_APP_ID', ''),
+    },
+    'database': {
+      'enabled': true,
+      'polling_interval': 30,
+    },
+    'soft_prompt': {
+      'enabled': true,
+    },
+  },
+};
+''');
+}
+
+/// Writes a `lib/main.dart` already wired to a config declaring [getter].
+void _writeWiredMain(Directory tempDir, String getter) {
+  File('${tempDir.path}/lib/main.dart').writeAsStringSync('''
+import 'package:magic/magic.dart';
+import 'config/app.dart';
+import 'config/notifications.dart';
+
+void main() async {
+  await Magic.init(
+    configFactories: [
+      () => appConfig,
+      () => $getter,
+    ],
+  );
+}
+''');
+}
+
+/// Asserts the install invariant directly off disk: whatever getter
+/// `lib/config/notifications.dart` declares after the run is the one
+/// `lib/main.dart` names in its notifications configFactory.
+///
+/// Written as a set comparison rather than a substring check so a main.dart
+/// left naming BOTH the old and the new getter still fails: one of the two
+/// does not exist, and the project would not compile.
+void _expectMainNamesTheDeclaredGetter(Directory tempDir) {
+  final config = File('${tempDir.path}/lib/config/notifications.dart');
+  expect(config.existsSync(), isTrue);
+  final declared = RegExp(r'Map<\s*String\s*,\s*dynamic\s*>\s+get\s+(\w+)\s*=>')
+      .firstMatch(config.readAsStringSync())
+      ?.group(1);
+  expect(declared, isNotNull, reason: 'the config on disk declares a getter');
+
+  final main = File('${tempDir.path}/lib/main.dart').readAsStringSync();
+  final named = RegExp(r'\(\)\s*=>\s*(\w+),')
+      .allMatches(main)
+      .map((match) => match.group(1)!)
+      .where((name) => name != 'appConfig')
+      .toSet();
+  expect(
+    named,
+    <String>{declared!},
+    reason: 'main.dart must name the getter the config file actually declares',
+  );
+}
+
 /// Default option map mirroring the parsed CLI surface for non-interactive runs.
 Map<String, dynamic> _options(Map<String, dynamic> overrides) =>
     <String, dynamic>{
@@ -427,6 +502,224 @@ void main() async {
       final providerCount =
           'NotificationServiceProvider(app)'.allMatches(appContent).length;
       expect(providerCount, 1, reason: 'provider must be injected only once');
+    });
+  });
+
+  group('InstallCommand main.dart wiring', () {
+    /// Runs a fresh non-interactive android install (no --force, so an existing
+    /// config file is left exactly as the project wrote it).
+    Future<ArtisanContext> installAndroid() async {
+      final fresh = _TestInstallCommand(tempDir.path);
+      final ctx = _ctx(fresh, const {
+        'app-id': '12345678-1234-1234-1234-123456789012',
+        'platforms': 'android',
+      });
+      expect(await fresh.handle(ctx), 0);
+      return ctx;
+    }
+
+    test('appends the getter the existing config declares, not the stub name',
+        () async {
+      _writeHandWrittenConfig(tempDir, 'notificationsConfig');
+
+      await installAndroid();
+
+      final mainContent =
+          File('${tempDir.path}/lib/main.dart').readAsStringSync();
+      expect(mainContent, contains("import 'config/notifications.dart';"));
+      expect(
+        mainContent,
+        contains('() => notificationsConfig,'),
+        reason: 'the factory must name the getter the config actually declares',
+      );
+      expect(
+        mainContent,
+        isNot(contains('() => notificationConfig,')),
+        reason: 'the stub getter name does not exist in this project',
+      );
+    });
+
+    test('a project already wired is untouched whatever the getter is called',
+        () async {
+      _writeHandWrittenConfig(tempDir, 'notificationsConfig');
+      final mainPath = '${tempDir.path}/lib/main.dart';
+      File(mainPath).writeAsStringSync('''
+import 'package:magic/magic.dart';
+import 'config/app.dart';
+import 'config/notifications.dart';
+
+void main() async {
+  await Magic.init(
+    configFactories: [
+      () => appConfig,
+      () => notificationsConfig,
+    ],
+  );
+}
+''');
+      final before = File(mainPath).readAsStringSync();
+
+      await installAndroid();
+
+      expect(File(mainPath).readAsStringSync(), before);
+    });
+
+    test('a config declaring no getter is skipped rather than guessed at',
+        () async {
+      Directory('${tempDir.path}/lib/config').createSync(recursive: true);
+      File('${tempDir.path}/lib/config/notifications.dart').writeAsStringSync(
+        '// Hand-rolled: this file declares nothing the installer can name.\n'
+        'const int placeholder = 1;\n',
+      );
+
+      final ctx = await installAndroid();
+
+      final mainContent =
+          File('${tempDir.path}/lib/main.dart').readAsStringSync();
+      expect(
+        mainContent,
+        isNot(contains('config/notifications.dart')),
+        reason: 'a wrong symbol is worse than a missing one',
+      );
+      expect(
+        (ctx.output as BufferedOutput).content,
+        contains('lib/config/notifications.dart'),
+        reason: 'the operator has to be told main.dart was left alone',
+      );
+    });
+
+    test('a commented-out import does not read as already wired', () async {
+      _writeHandWrittenConfig(tempDir, 'notificationsConfig');
+      final mainPath = '${tempDir.path}/lib/main.dart';
+      File(mainPath).writeAsStringSync('''
+import 'package:magic/magic.dart';
+import 'config/app.dart';
+// import 'config/notifications.dart';
+
+void main() async {
+  await Magic.init(
+    configFactories: [
+      () => appConfig,
+    ],
+  );
+}
+''');
+
+      await installAndroid();
+
+      expect(
+        File(mainPath).readAsStringSync(),
+        contains('() => notificationsConfig,'),
+      );
+    });
+  });
+
+  group('InstallCommand --force config regeneration', () {
+    /// Runs a fresh non-interactive android install with `--force`, which
+    /// rewrites `lib/config/notifications.dart` from the stub.
+    Future<ArtisanContext> forceInstall() async {
+      final fresh = _TestInstallCommand(tempDir.path);
+      final ctx = _ctx(fresh, const {
+        'app-id': '12345678-1234-1234-1234-123456789012',
+        'platforms': 'android',
+        'force': true,
+      });
+      expect(await fresh.handle(ctx), 0);
+      return ctx;
+    }
+
+    test('re-points an already-wired main.dart at the regenerated getter',
+        () async {
+      _writeHandWrittenConfig(tempDir, 'notificationsConfig');
+      _writeWiredMain(tempDir, 'notificationsConfig');
+
+      await forceInstall();
+
+      final mainContent =
+          File('${tempDir.path}/lib/main.dart').readAsStringSync();
+      expect(
+        mainContent,
+        contains('() => notificationConfig,'),
+        reason: '--force regenerated the config, so the wiring follows it',
+      );
+      expect(
+        mainContent,
+        isNot(contains('() => notificationsConfig,')),
+        reason: 'the old getter no longer exists anywhere in the project',
+      );
+      _expectMainNamesTheDeclaredGetter(tempDir);
+    });
+
+    test('holds the invariant when main.dart was never wired', () async {
+      _writeHandWrittenConfig(tempDir, 'notificationsConfig');
+
+      await forceInstall();
+
+      _expectMainNamesTheDeclaredGetter(tempDir);
+    });
+
+    test('holds the invariant on a fresh project', () async {
+      await forceInstall();
+
+      _expectMainNamesTheDeclaredGetter(tempDir);
+    });
+
+    test('re-running --force changes nothing once the names agree', () async {
+      _writeHandWrittenConfig(tempDir, 'notificationsConfig');
+      _writeWiredMain(tempDir, 'notificationsConfig');
+
+      await forceInstall();
+      final afterFirst =
+          File('${tempDir.path}/lib/main.dart').readAsStringSync();
+      await forceInstall();
+
+      expect(
+          File('${tempDir.path}/lib/main.dart').readAsStringSync(), afterFirst);
+      _expectMainNamesTheDeclaredGetter(tempDir);
+    });
+
+    test('leaves a wired main.dart alone when the old getter is unreadable',
+        () async {
+      Directory('${tempDir.path}/lib/config').createSync(recursive: true);
+      File('${tempDir.path}/lib/config/notifications.dart').writeAsStringSync(
+        '// Hand-rolled: this file declares nothing the installer can name.\n'
+        'const int placeholder = 1;\n',
+      );
+      _writeWiredMain(tempDir, 'somethingElse');
+      final before = File('${tempDir.path}/lib/main.dart').readAsStringSync();
+
+      final ctx = await forceInstall();
+
+      expect(
+        File('${tempDir.path}/lib/main.dart').readAsStringSync(),
+        before,
+        reason: 'the name to replace is unknowable, and guessing is what '
+            'broke the project in the first place',
+      );
+      expect(
+        (ctx.output as BufferedOutput).content,
+        contains('lib/main.dart'),
+        reason: 'the operator has to be told the wiring needs a hand fix',
+      );
+    });
+
+    test('does not touch main.dart when the config was left in place',
+        () async {
+      _writeHandWrittenConfig(tempDir, 'notificationsConfig');
+      _writeWiredMain(tempDir, 'notificationsConfig');
+      final before = File('${tempDir.path}/lib/main.dart').readAsStringSync();
+
+      final fresh = _TestInstallCommand(tempDir.path);
+      expect(
+        await fresh.handle(_ctx(fresh, const {
+          'app-id': '12345678-1234-1234-1234-123456789012',
+          'platforms': 'android',
+        })),
+        0,
+      );
+
+      expect(File('${tempDir.path}/lib/main.dart').readAsStringSync(), before);
+      _expectMainNamesTheDeclaredGetter(tempDir);
     });
   });
 
