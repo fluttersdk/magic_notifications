@@ -1322,10 +1322,25 @@ class NotificationManager {
   Future<PushPromptAdvice> pushPromptAdvice({DateTime? declinedAt}) async {
     // 1. Read the device once. Everything below is derived from this reading,
     //    so a caller never has to reconcile two reads taken a moment apart.
+    //
+    //    The read is guarded the same way `pushDeliverySnapshot()` guards its
+    //    own, and for the same reason: `reachability()` reaches a platform
+    //    channel, a throw there is a failure to ASK rather than an answer, and
+    //    letting it escape would take down the widget that called this to
+    //    decide whether to render a reminder. `unavailable` is the honest
+    //    reading of a device that cannot say, and it resolves to
+    //    `PushPromptAction.none`, so a host shows nothing rather than a control
+    //    that cannot work.
     final PushDriver? driver = pushDriverOrNull;
-    final PushReachability reachability = driver == null
-        ? PushReachability.unavailable
-        : await driver.reachability();
+    PushReachability reachability = PushReachability.unavailable;
+
+    if (driver != null) {
+      try {
+        reachability = await driver.reachability();
+      } catch (e) {
+        NotificationLog.error('Failed to read push reachability: $e');
+      }
+    }
     final PushPromptAction action = _promptAction(driver, reachability);
 
     // 2. Nothing to offer is the end of it, whatever the timestamps say.

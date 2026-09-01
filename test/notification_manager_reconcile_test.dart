@@ -968,6 +968,22 @@ void main() {
       expect(advice.action, PushPromptAction.request);
     });
 
+    test(
+        'a reachability read that throws answers unavailable rather than '
+        'taking the caller down with it', () async {
+      use(_ThrowingReachabilityDriver());
+
+      // The only caller of this is a widget deciding whether to render a
+      // reminder. A throw here is a failure to ASK, not an answer, and letting
+      // it escape would blank the surface that asked. `pushDeliverySnapshot()`
+      // has always guarded its own read the same way; this one had not.
+      final PushPromptAdvice advice = await manager.pushPromptAdvice();
+
+      expect(advice.reachability, PushReachability.unavailable);
+      expect(advice.action, PushPromptAction.none);
+      expect(advice.show, isFalse);
+    });
+
     test('the interval governs when a decline may be reminded again', () async {
       configure(NotificationManager.repromptAfterHoursKey, 24);
       use(_RecordingPushDriver(permission: PushPermissionState.notDetermined));
@@ -1383,5 +1399,14 @@ class _ThrowingRequestDriver extends _RecordingPushDriver {
     await super.requestPermission();
 
     throw StateError('the SDK is not initialized');
+  }
+}
+
+/// A driver whose reachability read throws, standing in for a platform channel
+/// that answers neither yes nor no.
+class _ThrowingReachabilityDriver extends _RecordingPushDriver {
+  @override
+  Future<PushReachability> reachability() async {
+    throw StateError('the platform channel is gone');
   }
 }
