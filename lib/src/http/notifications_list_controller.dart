@@ -60,8 +60,21 @@ class NotificationsListController extends MagicController
     super.onInit();
   }
 
+  /// The session a read belongs to.
+  ///
+  /// Clearing what is on screen is only half of it, which is the same lesson
+  /// `NotificationManager` already learned for the bell: a read issued for the
+  /// person who just signed out is still in the air and answers with THEIR
+  /// rows. `fetchPaginatedNotifications` carries no epoch of its own, and
+  /// `logoutPush` clears before its first await, so without this the order is
+  /// clear, then A's page lands, then B's first frame paints it. The window is
+  /// narrow and it is also the refresh that runs whenever the list is opened,
+  /// so "sign out while the spinner is up" reaches it.
+  int _session = 0;
+
   /// Forget the page held for the session that just ended.
   void _clearSession() {
+    _session++;
     _currentPage = 1;
     pageNotifier.value = null;
     setSuccess(false);
@@ -85,6 +98,8 @@ class NotificationsListController extends MagicController
   /// host that bound no logging provider would otherwise have `Log.error`
   /// throw here and lose the error state this catch exists to set.
   Future<void> loadPage(int page) async {
+    final int session = _session;
+
     setLoading();
 
     try {
@@ -93,6 +108,10 @@ class NotificationsListController extends MagicController
         perPage: perPage,
       );
 
+      // The session ended while this was in the air, so the rows belong to
+      // whoever asked for them and not to whoever is holding the device now.
+      if (session != _session) return;
+
       _currentPage = page;
       pageNotifier.value = result;
       setSuccess(true);
@@ -100,6 +119,12 @@ class NotificationsListController extends MagicController
       NotificationLog.error(
         '[NotificationsListController.loadPage] $e\n$stackTrace',
       );
+
+      // Guarded too: a read that failed for the PREVIOUS person must not drop
+      // the next one's freshly cleared screen into an error state they have no
+      // way to explain.
+      if (session != _session) return;
+
       setError(trans('notifications.load_failed'));
     }
   }

@@ -62,12 +62,23 @@ class NotificationPreferencesController extends MagicController
   /// BACKEND, and the honest state before any read for this session is "no
   /// reason to say otherwise" rather than a false "not configured".
   void _clearSession() {
+    _session++;
     _saving.clear();
     _isFetching = false;
     matrixNotifier.value = <String, dynamic>{};
     pushProvisionedNotifier.value = true;
     setSuccess(false);
   }
+
+  /// The session a read or a write belongs to.
+  ///
+  /// Clearing the matrix is only half of it, the same half `NotificationManager`
+  /// already learned about for the bell: a fetch issued for the person who just
+  /// signed out is still in the air and answers with THEIR matrix, and clearing
+  /// `_saving` mid-flight means an in-flight toggle's rollback can write their
+  /// cell back into the emptied one too. Every publish below is gated on the
+  /// epoch captured when its request started.
+  int _session = 0;
 
   /// The cells with a write in flight, keyed by type and channel.
   ///
@@ -83,22 +94,27 @@ class NotificationPreferencesController extends MagicController
   Future<void> fetchPreferences() async {
     if (_isFetching) return;
     _isFetching = true;
+    final int session = _session;
     setLoading();
 
     try {
       // 1. Fetch the current notification preference matrix.
       final response = await Http.get('/notification-preferences');
 
-      // 2. Stop early when the backend returns an unsuccessful response.
+      // 2. Drop the answer when the session ended under it: this matrix belongs
+      //    to whoever asked for it, not to whoever holds the device now.
+      if (session != _session) return;
+
+      // 3. Stop early when the backend returns an unsuccessful response.
       if (!response.successful) {
         setError(trans('notifications.fetch_error'));
         return;
       }
 
-      // 3. Publish the push-provisioning flag the same response carries.
+      // 4. Publish the push-provisioning flag the same response carries.
       _publishPushProvisioned(response);
 
-      // 4. Normalize and publish the matrix for reactive UI updates.
+      // 5. Normalize and publish the matrix for reactive UI updates.
       final data = response.data['data'];
       if (data is Map) {
         matrixNotifier.value = _normalizeMap(data);
@@ -108,9 +124,15 @@ class NotificationPreferencesController extends MagicController
       NotificationLog.error(
         '[NotificationPreferencesController.fetchPreferences] $e\n$stackTrace',
       );
+
+      if (session != _session) return;
+
       setError(trans('errors.unexpected'));
     } finally {
-      _isFetching = false;
+      // Only when this read still owns the flag. `_clearSession` already
+      // lowered it, and a stale read lowering it again would clear a flag a
+      // NEWER fetch had raised, letting a third one run beside it.
+      if (session == _session) _isFetching = false;
     }
   }
 
@@ -156,6 +178,13 @@ class NotificationPreferencesController extends MagicController
     final String cell = '$type.$channel';
     if (!_saving.add(cell)) return;
 
+    // The session this write belongs to. Every publish below is gated on it,
+    // including the two rollbacks: `_clearSession` empties the matrix and the
+    // in-flight set together, so a toggle that was in the air when the session
+    // ended would otherwise restore the PREVIOUS person's cell into the next
+    // person's empty matrix, which reads as a preference they never set.
+    final int session = _session;
+
     // 1. Snapshot the CELL, not the matrix: a neighbouring cell can now be
     //    written at the same time, and restoring a whole-matrix snapshot taken
     //    before that edit would undo a write the backend accepted, with nothing
@@ -178,7 +207,10 @@ class NotificationPreferencesController extends MagicController
         data: {'type': type, 'channel': channel, 'is_enabled': isEnabled},
       );
 
-      // 4. Revert on failure.
+      // 4. Drop the answer when the session ended under it.
+      if (session != _session) return;
+
+      // 5. Revert on failure.
       if (!response.successful) {
         _revertChannel(type, channel, previous);
         NotificationLog.error(
@@ -189,17 +221,23 @@ class NotificationPreferencesController extends MagicController
         return;
       }
 
-      // 5. The write response republishes the provisioning flag, so a save
+      // 6. The write response republishes the provisioning flag, so a save
       // keeps the heads-up in sync without a second fetch.
       _publishPushProvisioned(response);
     } catch (e, stackTrace) {
-      _revertChannel(type, channel, previous);
       NotificationLog.error(
         '[NotificationPreferencesController.updateTypePreference] '
         '$e\n$stackTrace',
       );
+
+      if (session != _session) return;
+
+      _revertChannel(type, channel, previous);
     } finally {
-      _saving.remove(cell);
+      // Only when this write still owns the cell: `_clearSession` already
+      // emptied the set, and removing a cell a NEWER toggle re-added would let
+      // a third one run beside it.
+      if (session == _session) _saving.remove(cell);
     }
   }
 

@@ -827,9 +827,24 @@ class NotificationManager {
 
     if (_pushIntent == wanted) return;
 
+    final String? previous = _pushIntent;
+
     _pushIntent = wanted;
     _pushIdentityConverged = false;
     _pushIdentityError = null;
+
+    // A different person now holds this device, so everything held for the last
+    // one goes, exactly as it does on sign-out. [logoutPush] cannot cover this:
+    // an account switcher, or a token refresh that resolves to a different
+    // subject, moves from `user_A` straight to `user_B` with no sign-out
+    // between them, and this is the only line that sees it happen.
+    //
+    // Gated on the PREVIOUS intent being non-null, so a first sign-in and a
+    // cold-boot restore do not fire it: there is nobody before them to clear
+    // after. A sign-out reaches this too and clears a second time, which is
+    // harmless, because [logoutPush] clears unconditionally in front of a
+    // `want(null)` that returns early on a device whose intent is already null.
+    if (previous != null) _clearCachedNotifications();
 
     await _persistPushIntent(wanted);
   }

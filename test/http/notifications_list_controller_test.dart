@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magic/magic.dart';
 import 'package:magic_notifications/magic_notifications.dart';
@@ -160,6 +162,61 @@ void main() {
       expect(controller.pageNotifier.value?.data, hasLength(1));
     });
 
+    test('a read in flight at sign-out cannot publish the previous rows',
+        () async {
+      // The window `_clearSession` alone does not close: `logoutPush` clears
+      // before its first await, so a read issued for A is still on its way back
+      // and lands into the emptied notifier, and B's first frame paints it.
+      // This is the refresh that runs whenever the list is opened, so "sign out
+      // with the spinner up" reaches it.
+      //
+      // A real gated driver rather than `Http.fake`: `FakeRequestHandler`
+      // returns a `MagicResponse` synchronously, so a handler answering a
+      // Future does not match the type, never registers as a stub, and the read
+      // fails for a reason that has nothing to do with the race. That version
+      // of this test passed against a build with the guard removed.
+      final _GatedNetworkDriver network = _GatedNetworkDriver();
+      Magic.app.setInstance('network', network);
+
+      controller.onInit();
+      final Future<void> reading = controller.loadPage(2);
+      await Future<void>.delayed(Duration.zero);
+
+      await Notify.logoutPush();
+
+      network.answer(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'theirs',
+          'type': 'monitor_down',
+          'data': {'title': 'A private incident', 'body': 'Body'},
+          'read_at': null,
+          'created_at': DateTime.now().toIso8601String(),
+        },
+      ]);
+      await reading;
+
+      expect(controller.pageNotifier.value, isNull);
+      expect(controller.currentPage, 1);
+    });
+
+    test('switching straight from one account to another clears too', () async {
+      fakePages(lastPage: 3);
+
+      controller.onInit();
+      await Notify.initializePush('user_A');
+      await controller.loadPage(2);
+
+      expect(controller.pageNotifier.value, isNotNull);
+
+      // No sign-out between them. An account switcher, or a token refresh that
+      // resolves to a different subject, moves the device straight from one
+      // person to the next, and `logoutPush` never runs.
+      await Notify.initializePush('user_B');
+
+      expect(controller.pageNotifier.value, isNull);
+      expect(controller.currentPage, 1);
+    });
+
     test('signing out drops the page the previous person was reading',
         () async {
       fakePages(lastPage: 3);
@@ -210,4 +267,38 @@ void main() {
       expect(controller.isSuccess, isFalse);
     });
   });
+}
+
+/// A network driver whose reads hang until the test answers them.
+///
+/// The window under test only exists while a read is in the air, so the test
+/// has to hold one there across a sign-out.
+class _GatedNetworkDriver extends FakeNetworkDriver {
+  final List<Completer<MagicResponse>> _pending = <Completer<MagicResponse>>[];
+
+  @override
+  Future<MagicResponse> get(
+    String url, {
+    Map<String, dynamic>? query,
+    Map<String, String>? headers,
+  }) {
+    final Completer<MagicResponse> completer = Completer<MagicResponse>();
+    _pending.add(completer);
+
+    return completer.future;
+  }
+
+  /// Answers the oldest read still waiting with [rows].
+  void answer(List<Map<String, dynamic>> rows) {
+    expect(_pending, isNotEmpty, reason: 'No read was waiting for an answer.');
+    _pending.removeAt(0).complete(
+          MagicResponse(
+            data: <String, dynamic>{
+              'data': rows,
+              'meta': <String, dynamic>{'current_page': 2, 'last_page': 3},
+            },
+            statusCode: 200,
+          ),
+        );
+  }
 }
