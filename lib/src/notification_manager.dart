@@ -95,6 +95,12 @@ class NotificationManager {
   /// on the next auth bump. A consumer wires the login path to auth state, and
   /// that bumps on every cold-boot restore and every team switch; asking on
   /// each of those is a dialog the operator has already answered.
+  ///
+  /// A pass with NO DRIVER to ask through is not a pass and does not take the
+  /// turn. It is claimed after that one synchronous read and before every
+  /// await, which keeps the property above exactly as it was: the ordering
+  /// exists to beat a second login in the same breath, and a driver read that
+  /// cannot suspend gives one nowhere to arrive.
   bool _autoRequestRaised = false;
 
   /// The failure of the last identity operation, retained rather than only
@@ -145,6 +151,11 @@ class NotificationManager {
       StreamController<PushNotificationEvent>.broadcast();
   final StreamController<PushNotificationEvent> _pushClickedController =
       StreamController<PushNotificationEvent>.broadcast();
+
+  /// Drivers as they are attached, for a host that has to act on one it did not
+  /// have at the moment it needed it. See [onPushDriverAttached].
+  final StreamController<PushDriver> _pushDriverAttachedController =
+      StreamController<PushDriver>.broadcast();
 
   /// Notification poller for periodic fetching
   NotificationPoller? _poller;
@@ -662,6 +673,12 @@ class NotificationManager {
         driver.onNotificationClicked.listen(_onPushClicked);
     _pushIdentitySubscription =
         driver.onIdentityChanged.listen(_onPushIdentityChanged);
+
+    // Announced LAST, so a listener that reads the manager back sees a fully
+    // attached driver rather than one halfway through being wired.
+    if (!_pushDriverAttachedController.isClosed) {
+      _pushDriverAttachedController.add(driver);
+    }
   }
 
   /// Stops listening to the attached driver.
@@ -686,6 +703,30 @@ class NotificationManager {
   /// device is currently subscribed as.
   Stream<PushNotificationEvent> get onPushClicked =>
       _pushClickedController.stream;
+
+  /// Announces every push driver this manager attaches, as it attaches it.
+  ///
+  /// It exists for one ordering, and that ordering is the ORDINARY launch
+  /// rather than an edge case. A driver is resolved inside
+  /// `NotificationServiceProvider.boot()`, while a host's auth provider is
+  /// normally registered ahead of it (it has to be: notifications follow a
+  /// session). So a cold boot that restores a stored session bumps the auth
+  /// state from the earlier provider, and whatever the host wired to that bump
+  /// runs while [pushDriverOrNull] is still null. Nothing about that is a race;
+  /// the provider order decides it.
+  ///
+  /// Anything a host does WITH a driver on that path (posting the device's
+  /// delivery state to its own backend is the case that asked for this) would
+  /// otherwise run once, against nothing, with no way to run again: the
+  /// driver's own streams cannot cover it, because subscribing to them is the
+  /// very thing that needs a driver.
+  ///
+  /// Broadcast, and it deliberately does NOT replay: a subscriber arriving
+  /// after an attachment reads [pushDriverOrNull] for the current answer and
+  /// listens here for the next one. Delivery is asynchronous, so a listener
+  /// cannot re-enter the attachment that announced it.
+  Stream<PushDriver> get onPushDriverAttached =>
+      _pushDriverAttachedController.stream;
 
   /// The external id this device should be subscribed as, `null` for nobody.
   String? get pushIntent => _pushIntent;
@@ -1413,21 +1454,30 @@ class NotificationManager {
     // 1. Absent means off, and so does a value that is not a boolean.
     if (Config.get<bool>(autoRequestOnLoginKey) != true) return;
 
-    // 2. One turn per process, claimed before the first await so two logins in
-    //    the same breath cannot both take it.
-    if (_autoRequestRaised) return;
-    _autoRequestRaised = true;
-
+    // 2. Nothing to ask through, and this is read BEFORE the turn is claimed.
+    //    A host's auth provider is normally registered ahead of the
+    //    notifications one, so a cold boot that restores a stored session
+    //    declares an identity while `NotificationServiceProvider` (the only
+    //    thing that resolves a driver) has not booted: claiming the turn there
+    //    spends the single ask having asked nobody, and no OS prompt can be
+    //    raised for the rest of the launch. See [onPushDriverAttached] for the
+    //    signal a host uses to come back once a driver exists.
     final PushDriver? driver = pushDriverOrNull;
     if (driver == null) return;
 
+    // 3. One turn per process, claimed before the first await so two logins in
+    //    the same breath cannot both take it. The read above is synchronous, so
+    //    reading it first costs that property nothing.
+    if (_autoRequestRaised) return;
+    _autoRequestRaised = true;
+
     try {
-      // 3. `off` is the only state worth asking in: `on` is already
+      // 4. `off` is the only state worth asking in: `on` is already
       //    subscribed, `blocked` has spent the prompt, `unavailable` has no
       //    platform to ask.
       if (await driver.reachability() != PushReachability.off) return;
 
-      // 4. Reachable is not the same as promptable. A device that was asked
+      // 5. Reachable is not the same as promptable. A device that was asked
       //    once, granted, and then opted out reads `off` too, and a request
       //    there resolves without showing anybody anything.
       if (!await driver.canRaisePermissionRequest()) return;

@@ -795,6 +795,34 @@ void main() {
       expect(identical(manager.pushDriver, driver), isTrue);
     });
 
+    test('attaching a driver announces it, so a late one can be acted on',
+        () async {
+      final List<String> announced = <String>[];
+      final StreamSubscription<PushDriver> subscription =
+          manager.onPushDriverAttached.listen(
+        (PushDriver driver) => announced.add(driver.name),
+      );
+      addTearDown(subscription.cancel);
+
+      // Subscribed with no driver at all, which is the only state a host that
+      // needs this signal can subscribe from: its own provider boots ahead of
+      // the one that resolves a driver.
+      expect(manager.pushDriverOrNull, isNull);
+
+      final _RecordingPushDriver driver = _RecordingPushDriver();
+      addTearDown(driver.dispose);
+      Notify.extend(driver.name, () => driver);
+      addTearDown(Notify.forgetDrivers);
+
+      // A registration alone builds nothing, so the announcement rides the
+      // ATTACHMENT, which is the moment a driver becomes usable.
+      expect(announced, isEmpty);
+      expect(identical(manager.pushDriver, driver), isTrue);
+      await pumpEventQueue();
+
+      expect(announced, <String>['recording']);
+    });
+
     test('forgetDrivers drops the registry and the resolved instance', () {
       final _RecordingPushDriver driver = _RecordingPushDriver();
       addTearDown(driver.dispose);
@@ -855,6 +883,38 @@ void main() {
       // dialog the operator already answered.
       await manager.initializePushWithUserId('user_A');
       await manager.want('user_B');
+      await pumpEventQueue();
+
+      expect(driver.permissionRequests, 1);
+    });
+
+    test('a declaration made before any driver exists does not spend the ask',
+        () async {
+      configure(NotificationManager.autoRequestOnLoginKey, true);
+
+      // The ordering a consumer's provider list actually produces, and the one
+      // no fixture in this file had: the auth provider that restores a stored
+      // session is registered AHEAD of the notifications one (it has to be,
+      // notifications follow a session), so its state bump declares an identity
+      // while nothing has resolved a driver yet.
+      await manager.want('user_A');
+      await pumpEventQueue();
+
+      final _RecordingPushDriver driver = use(
+        _RecordingPushDriver(permission: PushPermissionState.notDetermined),
+      );
+
+      await manager.want('user_B');
+      await pumpEventQueue();
+
+      // Claiming the one-shot before reading the driver spends it having asked
+      // nobody: no OS prompt can be raised for the rest of the launch, on a
+      // device that has never been asked, in an app that switched the key on.
+      expect(driver.permissionRequests, 1);
+
+      // And it is still a one-shot. The pass that actually reached a platform
+      // is the one that took the turn.
+      await manager.want('user_C');
       await pumpEventQueue();
 
       expect(driver.permissionRequests, 1);
