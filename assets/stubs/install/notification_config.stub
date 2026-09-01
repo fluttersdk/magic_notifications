@@ -72,6 +72,40 @@ Map<String, dynamic> get notificationConfig => {
       // Mobile only. No browser API opens site settings from a page, so on web
       // this is inert and a blocked user can only be told where the switch is.
       'fallback_to_settings': true,
+
+      // Whether the attributes this app describes its users with are sent to
+      // OneSignal at all.
+      //
+      // OFF, and an absent key is off too. What travels this path is an email
+      // address and whatever the app puts in a tag, which is usually a name:
+      // personal data leaving for a third party, under that vendor's
+      // retention and export rules. An adopter opts IN to that deliberately;
+      // finding out afterwards that an installed package has been sending it
+      // is the outcome this default exists to make impossible.
+      //
+      // It gates the WHOLE seam rather than the email alone, because this
+      // package cannot tell one tag from another: {'first_name': 'Ada'} is as
+      // personal as an address, {'plan': 'pro'} is not, and both arrive as two
+      // strings.
+      //
+      // Nothing is sent while there is no description either. The app
+      // registers one, once:
+      //
+      //   Notify.describePushUserUsing((externalId) => PushUserAttributes(
+      //         email: Auth.user()?.email,
+      //         tags: {'first_name': ..., 'last_name': ...},
+      //       ));
+      //
+      // and the identity lifecycle applies it on every login, takes it back on
+      // every account switch, and detaches it on sign-out.
+      //
+      // TAGS WRITTEN FROM A CLIENT ARE USER-TAMPERABLE. Anybody holding the
+      // app can write any value under any key from a console, so a tag is fine
+      // for choosing an audience and for personalising a message, and it is
+      // not fine for anything a backend later trusts. A plan tier or an
+      // entitlement belongs in a server-side tag write over OneSignal's REST
+      // API, from the system that already owns the fact.
+      'share_user_attributes': false,
     },
     'database': {
       'enabled': true,

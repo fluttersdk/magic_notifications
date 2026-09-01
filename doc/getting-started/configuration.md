@@ -6,6 +6,7 @@
 - <a name="toc-config-map"></a>[Full Config Map Reference](#config-map)
 - <a name="toc-push"></a>[notifications.push](#push)
 - <a name="toc-permission"></a>[Asking for permission](#permission)
+- <a name="toc-attributes"></a>[Describing the user](#attributes)
 - <a name="toc-database"></a>[notifications.database](#database)
 - <a name="toc-mail"></a>[notifications.mail](#mail)
 - <a name="toc-soft-prompt"></a>[notifications.soft_prompt](#soft-prompt)
@@ -39,6 +40,7 @@ Map<String, dynamic> get notificationConfig => {
       'auto_request_on_login': false,
       'reprompt_after_hours': 0,
       'fallback_to_settings': true,
+      'share_user_attributes': false,
     },
     'database': {
       'enabled': true,
@@ -73,6 +75,7 @@ Controls the push notification channel and its driver.
 | `auto_request_on_login` | `bool` | `false` | Whether the package may raise the OS permission prompt by itself, once, after an identity is declared through `Notify.initializePush(userId)`. Ships off, and an absent key is off: an app that upgrades without touching its config keeps asking on its own terms. See [Asking for permission](#permission) below for when it actually fires and why web needs care. |
 | `reprompt_after_hours` | `int` | `0` | How long before the app's OWN reminder may be shown again to somebody who turned it down. `0` (and an absent key) means never. Read by `NotificationManager.pushPromptAdvice()`; this package never stores the decline timestamp. |
 | `fallback_to_settings` | `bool` | `true` | Mobile only. Whether `requestPermission()` on an already-denied device opens the app's settings page instead of resolving silently. On by default, which is what the OneSignal driver always did; turn it off for an app that would rather ask once and drop it. Inert on web, which has no such API. |
+| `share_user_attributes` | `bool` | `false` | Whether the attributes this app describes its users with (an email address, and whatever it puts in a tag) are sent to the push platform at all. Ships off, and an absent key is off: this is personal data leaving for a third party, so an adopter opts in deliberately. See [Describing the user](#attributes) below. |
 | `self_test_enabled` | `bool` | `false` | Gates `PushChannel.send()`, the client-triggered surface that asks the backend to push a test notification to the caller's own devices. Ships off: it is a new authenticated capability whose only effect is making the platform emit a real push, and that is worth switching on deliberately once an app actually calls for it, not something worth having live from day one. Turning it on takes both halves: the backend carries the matching `magic-starter.onesignal.self_test_enabled` switch, also off by default, and answers `501` while it is off, so setting only this key changes which side refuses. |
 
 > [!NOTE]
@@ -149,6 +152,96 @@ platform call.
 The decline timestamp stays yours. A decline is your UI's event, recorded
 wherever you already keep device state; a copy inside this package would be a
 second answer to drift out of sync with the first.
+
+---
+
+## <a name="attributes"></a>Describing the user
+
+OneSignal segments and personalises on what it knows about a person: an email
+subscription, and tags. This package owns the transport and the identity
+lifecycle; your app owns the values, because "email, first name, last name" is
+one product's answer and the next app has different fields or is not permitted
+to send an address at all.
+
+Register the description once, at boot, next to wherever you register the
+driver:
+
+```dart
+Notify.describePushUserUsing((String externalId) {
+  final user = Auth.user();
+  if (user == null) return null; // nothing to describe for this identity
+
+  return PushUserAttributes(
+    email: user.email,
+    tags: <String, String>{
+      'first_name': user.firstName,
+      'last_name': user.lastName,
+      'locale': user.locale,
+    },
+  );
+});
+```
+
+`externalId` is the same string you passed to `Notify.initializePush()`, so an
+app that keeps its user state elsewhere can look the right person up. The
+resolver is called on every login and every account switch, so nothing
+re-registers per login and no login path has to remember to push a profile
+after it. Returning `null` says there is nothing to describe, which is the
+answer for a guest or for somebody who has not consented.
+
+Nothing is sent until `share_user_attributes` is `true`. An app that registers
+no description behaves exactly as it did before this existed.
+
+### What an account switch does
+
+Everything this package wrote is removed **before** the `login` or `logout`
+that moves the device on, while the SDK still points at the person it was
+written for. The SDK's own migration guide is the reason
+(`onesignal_flutter`, `MIGRATION_GUIDE.md`): a `login` to an id that does not
+exist yet creates the user *and applies the operations already performed under
+the device-scoped user to it*, and a `logout` leaves exactly such a
+device-scoped user behind. A removal issued after the switch therefore follows
+the next person onto their record, and on a shared device that is the whole
+problem.
+
+The cost is that the previous person's tags come off their OneSignal record
+when they leave this device, and the resolver puts them straight back on their
+next login anywhere. The alternative is leaving a name and an email address
+attached to a subscription that has moved to somebody else.
+
+Only what this package wrote is ever removed. A tag set from the OneSignal
+dashboard, from your backend, or from another client is not this device's to
+delete.
+
+### Two things to get right
+
+**A tag written from a client is user-tamperable.** Anybody holding the app can
+call the SDK from a browser console and write whatever they like under any
+key. That is fine for choosing an audience and fine for personalising a
+message. It is not fine for anything a backend later trusts: a plan tier, an
+entitlement, a role, a quota. Those belong in a server-side tag write over
+OneSignal's REST API, from the system that already owns the fact. This package
+ships no such path and will not; it has no server credentials and no business
+holding any.
+
+**An email address and a name are personal data going to a third party.** That
+is what `share_user_attributes` gates, and why it ships off. It gates the whole
+seam rather than the email alone, because this package cannot tell one tag from
+another: `{'first_name': 'Ada'}` is as personal as an address and
+`{'plan': 'pro'}` is not, and both arrive here as two strings.
+
+### Platform parity
+
+Both drivers implement the same four calls (`setTags`, `removeTags`,
+`addEmail`, `removeEmail`) against the same v16 user model, so a description
+behaves identically on mobile and on the web. The one difference is a browser's
+to make: the web SDK is whatever script your `web/index.html` loads, so the
+driver checks that `User.addEmail` exists before it uses it and reports through
+the log when it does not, instead of accepting an address that went nowhere.
+
+A custom `PushDriver` inherits `removeTags` (a loop over `removeTag`) and
+inherits an `addEmail` that sends nothing and says so in the log, so a platform
+with no email channel is honest rather than quiet.
 
 ---
 

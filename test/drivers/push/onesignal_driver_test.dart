@@ -77,6 +77,32 @@ void main() {
           expect(await driver.reachability(), PushReachability.unavailable);
         }
       });
+
+      test('the attribute writes reach no SDK either', () async {
+        final driver = OneSignalDriver();
+
+        // The manager applies these from the identity pass, which runs on a
+        // signed-out cold boot before anything has initialised the SDK. With
+        // the guard gone each of them is a platform-channel call with nothing
+        // on the other end, and the throw lands inside a reconcile.
+        await expectLater(driver.addEmail('ada@example.com'), completes);
+        await expectLater(driver.removeEmail('ada@example.com'), completes);
+        await expectLater(driver.removeTags(<String>['first_name']), completes);
+      });
+    });
+
+    // The transport a driver INHERITS. `removeTags` is the one attribute call
+    // with a correct generic implementation, so the base class carries it and
+    // both OneSignal drivers override it with their SDK's batch call; the two
+    // have to leave the device in the same state.
+    group('the inherited attribute transport', () {
+      test('removeTags falls back to one removeTag per key', () async {
+        final driver = _RecordingTagDriver();
+
+        await driver.removeTags(<String>['first_name', 'last_name']);
+
+        expect(driver.removed, <String>['first_name', 'last_name']);
+      });
     });
 
     // What a permission request does on a DENIED device. The request itself
@@ -209,6 +235,18 @@ void main() {
       expect(driver.subjectGuard, isNull);
     });
   });
+}
+
+/// A driver that implements the single-tag removal and nothing more, so what
+/// the base class derives from it is what runs.
+class _RecordingTagDriver extends _FakePushDriver {
+  /// The keys the base class asked for, one at a time.
+  final List<String> removed = <String>[];
+
+  @override
+  Future<void> removeTag(String key) async {
+    removed.add(key);
+  }
 }
 
 /// A driver double that reaches no SDK, for the guard-wiring tests.

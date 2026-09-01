@@ -365,6 +365,20 @@ void main() {
       });
     });
 
+    group('the attribute transport', () {
+      test('every write is inert before initialization', () async {
+        // The manager applies these from the identity pass, which runs on a
+        // signed-out cold boot before anything has initialised the SDK. With
+        // the guard gone each one reaches into a `window.OneSignal` that does
+        // not exist, and the throw lands inside a reconcile.
+        await expectLater(driver.addEmail('ada@example.com'), completes);
+        await expectLater(driver.removeEmail('ada@example.com'), completes);
+        await expectLater(
+            driver.setTags(<String, String>{'a': 'b'}), completes);
+        await expectLater(driver.removeTags(<String>['a']), completes);
+      });
+    });
+
     group('initialize', () {
       test('does not report initialized when the SDK never ran init', () async {
         // On the VM the js-interop conditional import resolves to the no-op

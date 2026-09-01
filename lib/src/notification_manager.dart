@@ -12,6 +12,7 @@ import 'models/paginated_notifications.dart';
 import 'models/push_delivery_snapshot.dart';
 import 'models/push_prompt_advice.dart';
 import 'models/push_subscription.dart';
+import 'models/push_user_attributes.dart';
 import 'notification_poller.dart';
 import 'support/notification_log.dart';
 
@@ -109,6 +110,26 @@ class NotificationManager {
   /// moved while it was running", which is the difference between a duplicate
   /// login and a device left subscribed as somebody who signed out.
   String? _reconciledIntent;
+
+  /// How the host describes whoever this device is subscribed as, or `null`
+  /// when it describes nobody.
+  PushUserAttributesResolver? _describePushUser;
+
+  /// What this process last wrote to the push platform, and `null` when it has
+  /// written nothing since the last identity change.
+  ///
+  /// Held so the write can be TAKEN BACK. Only what this package wrote is ever
+  /// removed: a tag somebody set from the dashboard, from a backend, or from
+  /// another client is not this device's to delete.
+  PushUserAttributes? _writtenAttributes;
+
+  /// The external id [_writtenAttributes] was written for.
+  ///
+  /// Separate from the intent because they answer different questions: the
+  /// intent is who this device SHOULD be subscribed as, this is who it last
+  /// described. A pass compares them to decide whether there is anything to
+  /// write at all.
+  String? _writtenAttributesFor;
 
   /// The driver the manager is currently listening to, held so its subject
   /// guard can be taken back when it is detached.
@@ -234,11 +255,20 @@ class NotificationManager {
   /// test's caller joins and waits on, and a read left in the air lands on
   /// whoever comes after it; leaking those through the one seam that exists to
   /// stop exactly that is the worst place for them to hide.
+  ///
+  /// The host's user description goes with them, for the same reason the
+  /// driver registry does: it is a registration, and one made in a previous
+  /// test would otherwise describe the person in the next. What it wrote is
+  /// forgotten rather than taken back, because this seam does not touch a
+  /// device; a driver it just dropped is not one to issue removals through.
   void forgetDrivers() {
     _channels.clear();
     _pushFactories.clear();
     _pushDriver = null;
     _resolvedPushDriver = null;
+    _describePushUser = null;
+    _writtenAttributes = null;
+    _writtenAttributesFor = null;
     _detachPushDriver();
     _pushIntent = null;
     _pushIntentLoaded = false;
@@ -787,30 +817,42 @@ class NotificationManager {
       if (actual == intent) {
         _pushIdentityConverged = true;
         _pushIdentityError = null;
-
-        return;
-      }
-
-      if (intent == null) {
-        await driver.logout();
       } else {
-        await driver.login(intent);
+        // Before the identity moves, never after. Everything this process
+        // wrote belongs to the person the device is about to stop being, and
+        // the same call issued afterwards deletes tags off the record of
+        // whoever has just arrived. See [describePushUserUsing] for what the
+        // SDK does and does not promise here.
+        await _retirePushAttributes(driver);
+
+        if (intent == null) {
+          await driver.logout();
+        } else {
+          await driver.login(intent);
+        }
+
+        // The read-back. `login` and `logout` mutate the SDK's LOCAL user
+        // immediately and queue the server half, so agreement here rules out a
+        // call that never landed at all and nothing more; the SDK's own
+        // observers, in [_onPushIdentityChanged], are the confirmation that it
+        // reached the server.
+        final String? readBack = _blankToNull(await driver.currentExternalId());
+        _pushIdentityConverged = readBack == intent;
+        _pushIdentityError = null;
+
+        if (!_pushIdentityConverged) {
+          NotificationLog.error(
+            'Push identity did not take: wanted "${intent ?? 'nobody'}", '
+            'the device reports "${readBack ?? 'nobody'}".',
+          );
+        }
       }
 
-      // The read-back. `login` and `logout` mutate the SDK's LOCAL user
-      // immediately and queue the server half, so agreement here rules out a
-      // call that never landed at all and nothing more; the SDK's own
-      // observers, in [_onPushIdentityChanged], are the confirmation that it
-      // reached the server.
-      final String? readBack = _blankToNull(await driver.currentExternalId());
-      _pushIdentityConverged = readBack == intent;
-      _pushIdentityError = null;
-
-      if (!_pushIdentityConverged) {
-        NotificationLog.error(
-          'Push identity did not take: wanted "${intent ?? 'nobody'}", '
-          'the device reports "${readBack ?? 'nobody'}".',
-        );
+      // Only onto an identity that actually landed. Writing an email address
+      // and a name onto a device still carrying the previous person is the
+      // leak this whole pass exists to prevent, wearing a different hat.
+      if (_pushIdentityConverged) {
+        await _applyPushAttributes(driver, intent);
       }
     } catch (e) {
       // Recorded on the manager, not only logged: nothing retries, so a caller
@@ -987,6 +1029,201 @@ class NotificationManager {
     if (value == null || value.isEmpty) return null;
 
     return value;
+  }
+
+  // ========================================
+  // Push User Attributes
+  // ========================================
+
+  /// The config key deciding whether anything a host describes is sent to the
+  /// push platform at all.
+  ///
+  /// Absent means off, and off is the shipped state. What travels this path is
+  /// an email address and whatever a host puts in a tag, which on the product
+  /// that asked for it is a person's first and last name: personal data
+  /// leaving the app for a third party under that vendor's own retention and
+  /// export rules. An adopter opts IN to that, deliberately, per deployment;
+  /// discovering afterwards that a package they installed has been sending it
+  /// is the outcome this default exists to make impossible.
+  ///
+  /// It gates the WHOLE seam rather than the email alone, because this package
+  /// cannot tell one tag from another: `{'first_name': 'Ada'}` is as personal
+  /// as an address and `{'plan': 'pro'}` is not, and both arrive here as two
+  /// strings. Sorting them would be this package guessing at a classification
+  /// only the host can make.
+  static const String shareUserAttributesKey =
+      'notifications.push.share_user_attributes';
+
+  /// Registers how this app describes whoever signs in, once.
+  ///
+  /// The package owns the transport and the identity lifecycle; the host owns
+  /// the values. [describe] is called with the external id the device is being
+  /// subscribed as, on every login and on every account switch, so nothing has
+  /// to re-register per login and no login path has to remember to push a
+  /// profile after it.
+  ///
+  /// ```dart
+  /// Notify.describePushUserUsing((String externalId) => PushUserAttributes(
+  ///       email: Auth.user()?.email,
+  ///       tags: <String, String>{'first_name': ..., 'last_name': ...},
+  ///     ));
+  /// ```
+  ///
+  /// Nothing is sent until [shareUserAttributesKey] is switched on, and a host
+  /// that never calls this behaves exactly as it did before it existed.
+  /// Passing `null` unregisters.
+  ///
+  /// ### What OneSignal does on a login to a different external id
+  ///
+  /// From the SDK's own migration guide (`onesignal_flutter-5.6.0`,
+  /// `MIGRATION_GUIDE.md:195-196`), which is the reason this package takes its
+  /// writes back itself rather than trusting the switch:
+  ///
+  ///  - `login` to an id that EXISTS retrieves that user and sets the context
+  ///    from the server's copy, and operations performed under a device-scoped
+  ///    user "will not be applied to the now logged in user (they will be
+  ///    lost)";
+  ///  - `login` to an id that does NOT exist creates the user "and the context
+  ///    set from the current local state", and operations performed under a
+  ///    device-scoped user "***will*** be applied to the newly created user";
+  ///  - `logout` reverts to a fresh device-scoped user, and the push
+  ///    subscription (which is owned by the DEVICE, unlike tags and email
+  ///    subscriptions) transfers to whoever logs in next.
+  ///
+  /// So the documented promise covers a device-scoped user's operations, and
+  /// the one branch it promises anything about at all is the branch that
+  /// CARRIES them onto the next person. A sign-out followed by a first login
+  /// for somebody new is the ordinary shape of a shared device, and it is
+  /// precisely the branch where a write left behind lands on the wrong record.
+  /// The guide says nothing either way about a straight switch from one
+  /// identified user to another.
+  ///
+  /// That is not a guarantee to build a privacy boundary on, so this package
+  /// does not: everything it wrote is removed WHILE the SDK still points at
+  /// the person it was written for, before the `login` or `logout` that moves
+  /// the device on. The cost is that the previous person's tags come off their
+  /// OneSignal record when they leave this device, and the resolver puts them
+  /// straight back on their next login anywhere; the alternative is leaving a
+  /// name and an email address attached to a subscription that has moved to
+  /// somebody else.
+  void describePushUserUsing(PushUserAttributesResolver? describe) {
+    _describePushUser = describe;
+  }
+
+  /// Writes what the host describes [intent] with, unless this process has
+  /// already written exactly that for exactly that identity.
+  ///
+  /// Runs on every reconcile, which is what makes "register once" true: a cold
+  /// boot has written nothing yet and writes, a team switch has already
+  /// written for the same person and writes nothing, and a described value
+  /// that changed reaches the platform at the next pass.
+  ///
+  /// Failure is logged and dropped rather than raised, and that asymmetry is
+  /// the point: a tag is segmentation, the identity is what keeps somebody
+  /// else's outage off this screen, and a refused attribute write must not be
+  /// reported as an identity that did not land.
+  Future<void> _applyPushAttributes(PushDriver driver, String? intent) async {
+    if (intent == null) return;
+
+    final PushUserAttributes previous =
+        _writtenAttributes ?? PushUserAttributes.none;
+
+    try {
+      final PushUserAttributes wanted = _describedAttributes(intent);
+      if (_writtenAttributesFor == intent && previous == wanted) return;
+
+      // Ownership is claimed BEFORE the writes. A pass that fails halfway has
+      // put something on the device, and a record saying it wrote nothing is
+      // how that half survives the next account switch; removing a tag that
+      // never landed costs nothing, since both SDKs treat it as absent.
+      _writtenAttributes = wanted;
+      _writtenAttributesFor = intent;
+
+      // 1. The described state first. A key present in both is OVERWRITTEN by
+      //    this write, so retiring the leftovers afterwards never leaves a tag
+      //    missing for a moment the way a clear-then-write would.
+      if (wanted.tags.isNotEmpty) await driver.setTags(wanted.tags);
+
+      final String? email = wanted.email;
+      if (email != null && email != previous.email) {
+        await driver.addEmail(email);
+      }
+
+      // 2. Then whatever THIS PACKAGE wrote that is no longer described. A tag
+      //    set from the dashboard, a backend or another client is not this
+      //    device's to delete, so only the keys it put there are taken back.
+      final List<String> retired = previous.tags.keys
+          .where((String key) => !wanted.tags.containsKey(key))
+          .toList();
+      if (retired.isNotEmpty) await driver.removeTags(retired);
+
+      final String? retiredEmail = previous.email;
+      if (retiredEmail != null && retiredEmail != wanted.email) {
+        await driver.removeEmail(retiredEmail);
+      }
+    } catch (e) {
+      NotificationLog.error(
+        'Failed to describe "$intent" to the push platform: $e',
+      );
+    }
+  }
+
+  /// Takes back everything this process wrote for the identity the device
+  /// currently carries.
+  ///
+  /// Called with the SDK still pointing at that person, which is the only
+  /// moment a removal reaches the right record: a device-scoped user's
+  /// operations are applied to the next user a `login` CREATES, so a removal
+  /// issued after a sign-out follows the next person onto their brand-new
+  /// record, and one issued after a switch runs against the person who has
+  /// just arrived.
+  ///
+  /// Failure is logged and the pass continues to its identity call. Of the two
+  /// available failures, a tag that could not be removed is a leak of
+  /// segmentation data on one vendor's record; a device left subscribed as
+  /// somebody who signed out pages the wrong person about somebody else's
+  /// outage. The identity call is not held behind the softer one.
+  Future<void> _retirePushAttributes(PushDriver driver) async {
+    final PushUserAttributes written =
+        _writtenAttributes ?? PushUserAttributes.none;
+
+    // Dropped before the calls rather than after them: whatever becomes of
+    // them, they are no longer this process's to re-apply or to remove a
+    // second time against whoever arrives next.
+    _writtenAttributes = null;
+    _writtenAttributesFor = null;
+
+    if (written.isEmpty) return;
+
+    try {
+      if (written.tags.isNotEmpty) {
+        await driver.removeTags(written.tags.keys.toList());
+      }
+
+      final String? email = written.email;
+      if (email != null) await driver.removeEmail(email);
+    } catch (e) {
+      NotificationLog.error(
+        'Failed to take back the push attributes of the previous identity: $e',
+      );
+    }
+  }
+
+  /// What the host describes [externalId] with, or nothing at all.
+  ///
+  /// The three ways of saying nothing (a deployment that has not opted in, a
+  /// host that registered no resolver, and a resolver answering `null` for a
+  /// guest) collapse onto one value here, so the write path has one shape
+  /// rather than three null checks.
+  PushUserAttributes _describedAttributes(String externalId) {
+    if (Config.get<bool>(shareUserAttributesKey) != true) {
+      return PushUserAttributes.none;
+    }
+
+    final PushUserAttributesResolver? describe = _describePushUser;
+    if (describe == null) return PushUserAttributes.none;
+
+    return describe(externalId) ?? PushUserAttributes.none;
   }
 
   /// Initialize push notifications.

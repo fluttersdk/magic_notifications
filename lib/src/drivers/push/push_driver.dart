@@ -1,4 +1,5 @@
 import '../../models/push_subscription.dart';
+import '../../support/notification_log.dart';
 
 /// Event fired when a push notification is received or clicked.
 class PushNotificationEvent {
@@ -168,6 +169,51 @@ abstract class PushDriver {
 
   /// Removes a specific tag.
   Future<void> removeTag(String key);
+
+  /// Removes several tags at once.
+  ///
+  /// Derived rather than abstract, because a driver that can remove one tag can
+  /// remove several and the loop is the same everywhere; a driver whose SDK
+  /// offers a batch call overrides this and spends one platform round trip
+  /// instead of one per key. Both OneSignal drivers do.
+  ///
+  /// The caller it exists for is the identity lifecycle: when the person on a
+  /// device changes, everything this package wrote for the previous one comes
+  /// off in a single step, and a per-key loop across a platform channel is a
+  /// window in which half of somebody's tags are gone and half are not.
+  Future<void> removeTags(List<String> keys) async {
+    for (final String key in keys) {
+      await removeTag(key);
+    }
+  }
+
+  /// Attaches [email] to the identity this device carries.
+  ///
+  /// ADD rather than set, which is the verb both OneSignal SDKs use: a user
+  /// owns zero or more email subscriptions and this attaches one more. What
+  /// makes it read as "the address for this identity" is the manager, which
+  /// detaches the address it previously attached whenever the described one
+  /// changes and takes it back entirely when the identity does.
+  ///
+  /// **The default sends nothing and says so.** A driver whose platform has no
+  /// email channel is a legitimate implementation, but a host that described
+  /// somebody by their email address is entitled to know the address went
+  /// nowhere; going quiet is how a deployment finds out months later that the
+  /// campaigns it built never had an address to send to.
+  Future<void> addEmail(String email) async {
+    NotificationLog.error(
+      'The "$name" push driver carries no email transport, so the address '
+      'described for this identity was not sent.',
+    );
+  }
+
+  /// Detaches [email] from the identity this device carries.
+  ///
+  /// The default is a no-op, deliberately without the report its [addEmail]
+  /// twin makes: a driver that never attached an address has nothing to
+  /// detach, and reporting a removal that was never needed would put an error
+  /// in the log on every sign-out for the whole platform.
+  Future<void> removeEmail(String email) async {}
 
   /// Stream of notification received events (app in foreground).
   Stream<PushNotificationEvent> get onNotificationReceived;

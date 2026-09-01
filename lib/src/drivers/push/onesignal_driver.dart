@@ -270,6 +270,38 @@ class OneSignalDriver extends PushDriver {
     await OneSignal.User.removeTag(key);
   }
 
+  /// Removes [keys] in one platform call rather than one per key.
+  ///
+  /// The base class loops, which is correct and costs a platform-channel round
+  /// trip per tag; the SDK takes the whole list, and the identity lifecycle
+  /// removes a whole tag set at once.
+  @override
+  Future<void> removeTags(List<String> keys) async {
+    if (!_initialized) return;
+    await OneSignal.User.removeTags(keys);
+  }
+
+  /// Attaches [email] as an email subscription on the current OneSignal user.
+  ///
+  /// The v16 user model owns zero or more email subscriptions, so this ADDS
+  /// one; the manager is what keeps it to a single current address.
+  @override
+  Future<void> addEmail(String email) async {
+    if (!_initialized) return;
+    await OneSignal.User.addEmail(email);
+  }
+
+  /// Detaches [email] from the current OneSignal user.
+  ///
+  /// An address the user does not carry is a no-op inside the SDK: it answers
+  /// false and makes no request, which is what lets the manager retire an
+  /// address it is not certain landed.
+  @override
+  Future<void> removeEmail(String email) async {
+    if (!_initialized) return;
+    await OneSignal.User.removeEmail(email);
+  }
+
   @override
   Stream<PushNotificationEvent> get onNotificationReceived =>
       _receivedController.stream;

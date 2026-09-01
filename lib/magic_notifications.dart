@@ -11,6 +11,7 @@ export 'src/models/push_delivery_snapshot.dart';
 export 'src/models/push_message.dart';
 export 'src/models/push_prompt_advice.dart';
 export 'src/models/push_subscription.dart';
+export 'src/models/push_user_attributes.dart';
 
 // Core
 export 'src/notification_manager.dart';

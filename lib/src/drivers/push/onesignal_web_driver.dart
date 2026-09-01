@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 
 import '../../exceptions/notification_exception.dart';
 import '../../models/push_subscription.dart';
+import '../../support/notification_log.dart';
 import 'onesignal_js_interop.dart';
 import 'push_driver.dart';
 
@@ -346,6 +347,53 @@ class OneSignalWebDriver extends PushDriver {
   Future<void> removeTag(String key) async {
     if (!_initialized) return;
     await OneSignalJsInterop.removeTag(key);
+  }
+
+  /// Removes [keys] in one SDK call rather than one per key.
+  ///
+  /// The base class loops, which is correct and crosses the JS boundary once
+  /// per tag; the web SDK takes the whole list, and the identity lifecycle
+  /// removes a whole tag set at once.
+  @override
+  Future<void> removeTags(List<String> keys) async {
+    if (!_initialized) return;
+    await OneSignalJsInterop.removeTags(keys);
+  }
+
+  /// Attaches [email] as an email subscription on the current OneSignal user.
+  ///
+  /// Reports rather than passes when the SDK on this page has no such method.
+  /// The email subscription API belongs to the v16 user model and the mobile
+  /// SDK carries it unconditionally, but a browser loads whatever script the
+  /// page's `index.html` names, which this package does not control: an
+  /// address that silently went nowhere is how a deployment finds out months
+  /// later that its campaigns never had one.
+  @override
+  Future<void> addEmail(String email) async {
+    if (!_initialized) return;
+    if (await OneSignalJsInterop.addEmail(email)) return;
+
+    NotificationLog.error(
+      'The OneSignal Web SDK loaded on this page exposes no User.addEmail, so '
+      'the address described for this identity was not sent. Check that '
+      'web/index.html loads the v16 script.',
+    );
+  }
+
+  /// Detaches [email] from the current OneSignal user.
+  ///
+  /// Reported for the same reason [addEmail] is, and louder than it looks: an
+  /// address this package could not take back stays attached to a user who
+  /// signed out of this browser.
+  @override
+  Future<void> removeEmail(String email) async {
+    if (!_initialized) return;
+    if (await OneSignalJsInterop.removeEmail(email)) return;
+
+    NotificationLog.error(
+      'The OneSignal Web SDK loaded on this page exposes no User.removeEmail, '
+      'so an address attached to the previous identity is still on it.',
+    );
   }
 
   @override

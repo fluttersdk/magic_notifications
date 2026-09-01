@@ -64,6 +64,17 @@ Future<void> removeTag(String key) async {}
 /// No-op on non-web platforms.
 Future<void> removeTags(List<String> keys) async {}
 
+/// Adds an email subscription to the current user.
+///
+/// Always reports `false` on non-web platforms: there is no SDK here, so
+/// nothing carried the address.
+Future<bool> addEmail(String email) async => false;
+
+/// Removes an email subscription from the current user.
+///
+/// Always reports `false` on non-web platforms, for the same reason.
+Future<bool> removeEmail(String email) async => false;
+
 /// Gets the current permission state.
 ///
 /// Always returns `false` on non-web platforms.

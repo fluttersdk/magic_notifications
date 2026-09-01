@@ -211,6 +211,48 @@ Future<void> removeTags(List<String> keys) async {
   }
 }
 
+/// Adds an email subscription to the current user.
+///
+/// Answers whether the SDK actually carried the call: the method is probed for
+/// before it is used, because the page's SDK build is outside this package's
+/// control and a v16 script older than the email subscription API would
+/// otherwise take an address nobody ever sent. A caller that is told `false`
+/// can say so; one handed a silent no-op cannot.
+Future<bool> addEmail(String email) async {
+  final oneSignal = _getOneSignal();
+  final user = oneSignal['User'] as JSObject?;
+  if (user == null) return false;
+
+  final method = user['addEmail'];
+  if (method == null || method.isUndefinedOrNull) return false;
+
+  final result = user.callMethod('addEmail'.toJS, email.toJS);
+  if (result != null && !result.isUndefinedOrNull) {
+    await (result as JSPromise).toDart;
+  }
+
+  return true;
+}
+
+/// Removes an email subscription from the current user.
+///
+/// Probed for the same reason [addEmail] is, and answering the same way.
+Future<bool> removeEmail(String email) async {
+  final oneSignal = _getOneSignal();
+  final user = oneSignal['User'] as JSObject?;
+  if (user == null) return false;
+
+  final method = user['removeEmail'];
+  if (method == null || method.isUndefinedOrNull) return false;
+
+  final result = user.callMethod('removeEmail'.toJS, email.toJS);
+  if (result != null && !result.isUndefinedOrNull) {
+    await (result as JSPromise).toDart;
+  }
+
+  return true;
+}
+
 /// Gets the current push permission state.
 bool getPermission() {
   try {

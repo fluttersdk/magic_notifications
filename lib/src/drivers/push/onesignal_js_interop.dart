@@ -115,6 +115,23 @@ class OneSignalJsInterop {
   /// See: https://documentation.onesignal.com/docs/web-sdk-reference#removetag-removetags
   static Future<void> removeTags(List<String> keys) => impl.removeTags(keys);
 
+  /// Adds an email subscription to the current user.
+  ///
+  /// Answers whether the SDK on this page carried the call. The email
+  /// subscription API belongs to the v16 user model, and a page pinned to an
+  /// older script does not expose it; a `false` lets the driver report an
+  /// address that went nowhere instead of passing over it.
+  ///
+  /// See: https://documentation.onesignal.com/docs/web-sdk-reference#addemail
+  static Future<bool> addEmail(String email) => impl.addEmail(email);
+
+  /// Removes an email subscription from the current user.
+  ///
+  /// Answers whether the SDK on this page carried the call, as [addEmail] does.
+  ///
+  /// See: https://documentation.onesignal.com/docs/web-sdk-reference#removeemail
+  static Future<bool> removeEmail(String email) => impl.removeEmail(email);
+
   /// Gets the current push permission state.
   ///
   /// Returns `true` if permission is granted, `false` otherwise.

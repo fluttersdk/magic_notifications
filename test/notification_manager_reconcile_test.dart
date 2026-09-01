@@ -71,12 +71,36 @@ class _RecordingPushDriver extends PushDriver {
   final StreamController<PushIdentityChange> identity =
       StreamController<PushIdentityChange>.broadcast();
 
+  /// The tags this device carries right now, as the SDK's local user holds
+  /// them: a write merges, a removal drops one key.
+  final Map<String, String> tags = <String, String>{};
+
+  /// The email subscriptions attached to the identity this device carries.
+  ///
+  /// A set rather than a single value, because both OneSignal SDKs ADD an
+  /// email subscription: a user owns zero or more, and an address that is
+  /// never removed simply stays.
+  final Set<String> emails = <String>{};
+
   /// The calls that CHANGE the device's identity, which is what a reconcile is
-  /// judged on; neither a read-back nor a permission request is one.
+  /// judged on.
+  ///
+  /// Named rather than subtracted: a read-back, a permission request and an
+  /// attribute write are all calls this driver records and none of them moves
+  /// the device from one person to another, so the list says which calls
+  /// count instead of growing an exclusion every time a new one is recorded.
   List<String> get identityCalls => calls
       .where((String call) =>
-          call != 'currentExternalId' && call != 'requestPermission')
+          call == 'initialize' || call == 'logout' || call.startsWith('login:'))
       .toList();
+
+  /// Every call but the read-back, in the order it was made.
+  ///
+  /// The ORDER is the assertion the attribute tests turn on: a removal issued
+  /// after the identity call runs against the person who has just arrived, not
+  /// against the one who left.
+  List<String> get orderedCalls =>
+      calls.where((String call) => call != 'currentExternalId').toList();
 
   @override
   String get name => 'recording';
@@ -144,10 +168,32 @@ class _RecordingPushDriver extends PushDriver {
   Future<void> optOut() async {}
 
   @override
-  Future<void> setTags(Map<String, String> tags) async {}
+  Future<void> setTags(Map<String, String> tags) async {
+    calls.add('setTags:${tags.keys.join(',')}');
+    this.tags.addAll(tags);
+  }
+
+  /// [PushDriver.removeTags] is deliberately NOT overridden here, so the base
+  /// class's own loop over this method is what the manager's clear path
+  /// actually runs; a driver whose SDK batches removals overrides it, and the
+  /// two have to reach the same device state.
+  @override
+  Future<void> removeTag(String key) async {
+    calls.add('removeTag:$key');
+    tags.remove(key);
+  }
 
   @override
-  Future<void> removeTag(String key) async {}
+  Future<void> addEmail(String email) async {
+    calls.add('addEmail:$email');
+    emails.add(email);
+  }
+
+  @override
+  Future<void> removeEmail(String email) async {
+    calls.add('removeEmail:$email');
+    emails.remove(email);
+  }
 
   @override
   Stream<PushNotificationEvent> get onNotificationReceived => received.stream;
@@ -1112,6 +1158,219 @@ void main() {
       expect(snapshot.reachability, PushReachability.unavailable);
     });
   });
+
+  group('the user attributes a host describes', () {
+    /// Sets [key] for one test and takes it back afterwards.
+    void configure(String key, Object value) {
+      Config.set(key, value);
+      addTearDown(() => Config.forget(key));
+    }
+
+    /// Opts this deployment in to sending what the host describes.
+    void optInToSharing() {
+      configure(NotificationManager.shareUserAttributesKey, true);
+    }
+
+    /// What a host would describe each of two people with.
+    ///
+    /// Two different shapes on purpose: Grace carries one tag where Ada
+    /// carries two, so a key that belongs only to the person who left has
+    /// somewhere to survive if nothing takes it back.
+    PushUserAttributes? describe(String externalId) {
+      return switch (externalId) {
+        'user_A' => const PushUserAttributes(
+            email: 'ada@example.com',
+            tags: <String, String>{
+              'first_name': 'Ada',
+              'last_name': 'Lovelace',
+            },
+          ),
+        'user_B' => const PushUserAttributes(
+            email: 'grace@example.com',
+            tags: <String, String>{'first_name': 'Grace'},
+          ),
+        _ => null,
+      };
+    }
+
+    test('a login applies what the host described for that identity', () async {
+      optInToSharing();
+      final _RecordingPushDriver driver = use(_RecordingPushDriver());
+      manager.describePushUserUsing(describe);
+
+      await manager.initializePushWithUserId('user_A');
+
+      expect(driver.emails, <String>{'ada@example.com'});
+      expect(driver.tags, <String, String>{
+        'first_name': 'Ada',
+        'last_name': 'Lovelace',
+      });
+    });
+
+    test('an account switch leaves nothing of the previous person behind',
+        () async {
+      optInToSharing();
+      final _RecordingPushDriver driver = use(_RecordingPushDriver());
+      manager.describePushUserUsing(describe);
+
+      await manager.initializePushWithUserId('user_A');
+      driver.calls.clear();
+
+      // The person on this device changed. Everything Ada was described with
+      // has to be off it before Grace's first push is addressed.
+      await manager.initializePushWithUserId('user_B');
+
+      expect(driver.emails, <String>{'grace@example.com'});
+      expect(driver.tags, <String, String>{'first_name': 'Grace'});
+
+      // And the removals were issued while the SDK still pointed at Ada.
+      // Issued after the login they run against GRACE's own user record, where
+      // a tag she set from another device is not this device's to take back.
+      final int login = driver.orderedCalls.indexOf('login:user_B');
+      expect(login, greaterThanOrEqualTo(0));
+      expect(
+        driver.orderedCalls.indexOf('removeEmail:ada@example.com'),
+        inExclusiveRange(-1, login),
+      );
+      expect(
+        driver.orderedCalls.indexOf('removeTag:last_name'),
+        inExclusiveRange(-1, login),
+      );
+    });
+
+    test('a sign-out detaches the email and the tags before it logs out',
+        () async {
+      optInToSharing();
+      final _RecordingPushDriver driver = use(_RecordingPushDriver());
+      manager.describePushUserUsing(describe);
+
+      await manager.initializePushWithUserId('user_A');
+      driver.calls.clear();
+
+      await manager.logoutPush();
+
+      expect(driver.emails, isEmpty);
+      expect(driver.tags, isEmpty);
+
+      // Before the logout, because a write made after it lands on the
+      // device-scoped user the SDK creates, and the operations of a
+      // device-scoped user are applied to the next user login CREATES.
+      final int logout = driver.orderedCalls.indexOf('logout');
+      expect(logout, greaterThanOrEqualTo(0));
+      expect(
+        driver.orderedCalls.indexOf('removeEmail:ada@example.com'),
+        inExclusiveRange(-1, logout),
+      );
+    });
+
+    test('the description is registered once and serves every later login',
+        () async {
+      optInToSharing();
+      final _RecordingPushDriver driver = use(_RecordingPushDriver());
+      manager.describePushUserUsing(describe);
+
+      await manager.initializePushWithUserId('user_A');
+      await manager.logoutPush();
+      driver.calls.clear();
+
+      // Nothing re-registers here. A host wires this at boot, and the identity
+      // lifecycle is what re-applies it.
+      await manager.initializePushWithUserId('user_A');
+
+      expect(driver.emails, <String>{'ada@example.com'});
+      expect(driver.tags, <String, String>{
+        'first_name': 'Ada',
+        'last_name': 'Lovelace',
+      });
+    });
+
+    test('a device already carrying the intent still gets its attributes',
+        () async {
+      optInToSharing();
+      final _RecordingPushDriver driver = use(
+        _RecordingPushDriver(subscribedAs: 'user_A'),
+      );
+      manager.describePushUserUsing(describe);
+
+      await manager.initializePushWithUserId('user_A');
+
+      // A cold boot onto a device the SDK already has logged in issues no
+      // identity call at all, and the attributes still have to land: nothing
+      // in this process has written them yet.
+      expect(driver.identityCalls, isEmpty);
+      expect(driver.emails, <String>{'ada@example.com'});
+    });
+
+    test('a host that describes nothing behaves exactly as it does today',
+        () async {
+      optInToSharing();
+      final _RecordingPushDriver driver = use(_RecordingPushDriver());
+
+      await manager.initializePushWithUserId('user_A');
+      await manager.logoutPush();
+
+      expect(driver.orderedCalls, <String>['login:user_A', 'logout']);
+      expect(driver.tags, isEmpty);
+      expect(driver.emails, isEmpty);
+    });
+
+    test('nothing is sent until the deployment opts in', () async {
+      final _RecordingPushDriver driver = use(_RecordingPushDriver());
+      manager.describePushUserUsing(describe);
+
+      await manager.initializePushWithUserId('user_A');
+
+      // An absent key is off, which is the state every existing deployment
+      // upgrades into: an email address reaching a third party must be a
+      // decision somebody made, not one they discover afterwards.
+      expect(driver.orderedCalls, <String>['login:user_A']);
+      expect(driver.emails, isEmpty);
+      expect(driver.tags, isEmpty);
+    });
+
+    test('an attribute write that fails leaves the identity converged',
+        () async {
+      optInToSharing();
+      final _RecordingPushDriver driver = use(_ThrowingTagDriver());
+      manager.describePushUserUsing(describe);
+
+      await manager.initializePushWithUserId('user_A');
+
+      // Tags are the soft half. The device carrying the right subject is what
+      // keeps somebody else's outage off this screen, and a segmentation write
+      // that failed must not be reported as an identity that did not land.
+      expect(driver.identityCalls, <String>['login:user_A']);
+      expect(manager.isPushIdentityConverged, isTrue);
+      expect(manager.pushIdentityError, isNull);
+    });
+
+    test('forgetDrivers drops the description with the drivers', () async {
+      optInToSharing();
+      manager.describePushUserUsing(describe);
+
+      manager.forgetDrivers();
+
+      final _RecordingPushDriver driver = use(_RecordingPushDriver());
+      await manager.initializePushWithUserId('user_A');
+
+      // The registration is a registration like a driver factory, so the one
+      // seam every test resets has to take it too, or a description registered
+      // in one test describes the person in the next.
+      expect(driver.emails, isEmpty);
+      expect(driver.tags, isEmpty);
+    });
+  });
+}
+
+/// A driver whose tag write throws, standing in for an SDK that rejects the
+/// attribute call while the identity call itself lands.
+class _ThrowingTagDriver extends _RecordingPushDriver {
+  @override
+  Future<void> setTags(Map<String, String> tags) async {
+    await super.setTags(tags);
+
+    throw StateError('the SDK refused the tags');
+  }
 }
 
 /// A driver whose permission request throws, standing in for a platform

@@ -4,6 +4,7 @@ import '../drivers/push/push_driver.dart';
 import '../exceptions/notification_exception.dart';
 import '../models/database_notification.dart';
 import '../models/paginated_notifications.dart';
+import '../models/push_user_attributes.dart';
 import '../notification_manager.dart';
 import '../ui/notification_view_registry.dart';
 import '../ui/views/notification_preferences_view.dart';
@@ -204,6 +205,25 @@ class Notify {
   static Future<void> logoutPush() async {
     await manager.logoutPush();
   }
+
+  /// Registers how this app describes whoever signs in, once, for every later
+  /// login and account switch.
+  ///
+  /// ```dart
+  /// Notify.describePushUserUsing((String externalId) => PushUserAttributes(
+  ///       email: Auth.user()?.email,
+  ///       tags: <String, String>{'first_name': ..., 'last_name': ...},
+  ///     ));
+  /// ```
+  ///
+  /// Nothing is sent until `notifications.push.share_user_attributes` is
+  /// switched on, and it ships off: an address and a name reaching a third
+  /// party is a decision an adopter makes deliberately. See
+  /// [NotificationManager.describePushUserUsing] for what the OneSignal SDK
+  /// does and does not promise on a login to a different external id, and why
+  /// this package takes its own writes back.
+  static void describePushUserUsing(PushUserAttributesResolver? describe) =>
+      manager.describePushUserUsing(describe);
 
   /// Registers [factory] as the push driver named [name].
   /// See [NotificationManager.extend].
