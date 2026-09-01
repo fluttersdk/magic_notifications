@@ -19,15 +19,15 @@ void main() {
     });
   });
 
-  group('PushNotSupportedException', () {
+  group('UnsupportedPlatformException', () {
     test('extends NotificationException', () {
-      final e = PushNotSupportedException();
+      const e = UnsupportedPlatformException('Push is not supported here');
       expect(e, isA<NotificationException>());
     });
 
-    test('has default message', () {
-      final e = PushNotSupportedException();
-      expect(e.message, contains('not supported'));
+    test('carries the message it was given', () {
+      const e = UnsupportedPlatformException('Push is not supported here');
+      expect(e.message, 'Push is not supported here');
     });
   });
 }

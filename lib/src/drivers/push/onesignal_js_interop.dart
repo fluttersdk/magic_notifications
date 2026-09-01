@@ -1,7 +1,11 @@
-// Conditional imports to provide platform-specific implementations
+// Conditional imports to provide platform-specific implementations.
+//
+// Guards on the js-interop library rather than the legacy HTML one, because
+// the legacy library is absent under a wasm web compile; the old guard would
+// select this no-op stub in that build instead of the real web implementation.
 // ignore: unused_import
 import 'onesignal_js_interop_stub.dart'
-    if (dart.library.html) 'onesignal_js_interop_web.dart' as impl;
+    if (dart.library.js_interop) 'onesignal_js_interop_web.dart' as impl;
 
 /// OneSignal JavaScript SDK interop layer.
 ///
