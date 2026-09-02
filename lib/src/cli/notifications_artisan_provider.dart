@@ -16,7 +16,7 @@ import 'commands/uninstall_command.dart';
 /// the release's single source of truth. `install_command_test.dart` reads
 /// both and fails when they disagree, so the seven banners cannot drift behind
 /// a release the way seven hand-written literals did.
-const String magicNotificationsVersion = '0.1.0';
+const String magicNotificationsVersion = '0.2.0';
 
 /// ArtisanServiceProvider for Magic Notifications.
 ///
