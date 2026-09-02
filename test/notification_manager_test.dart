@@ -436,6 +436,53 @@ void main() {
       expect(manager.pollingInterval, const Duration(seconds: 30));
     });
 
+    test('the getter is pure, and the warning is issued once', () {
+      // `pollingInterval` is PUBLIC, so a consumer may surface it in a
+      // `build()`. A getter that logged on read would then write a line per
+      // frame, and `_watchRealtimeConnection` rebuilds the poller on every
+      // socket drop, so a flapping connection would repeat the same warning
+      // for as long as it flaps and bury the incident it is flapping over.
+      final FakeLogManager log = Log.fake();
+      addTearDown(Log.unfake);
+
+      // The fake matters: `start()` does an immediate read, and without one
+      // that read fails and logs its own error. My first version of this test
+      // counted TOTAL entries and went red on that fetch failure, which is a
+      // measurement of the harness rather than of the guard.
+      Http.fake((request) {
+        return MagicResponse(
+          data: <String, dynamic>{'data': <Map<String, dynamic>>[]},
+          statusCode: 200,
+        );
+      });
+
+      configure(6000);
+
+      // Ten reads of a value that IS out of range.
+      for (int i = 0; i < 10; i++) {
+        expect(manager.pollingInterval, const Duration(seconds: 600));
+      }
+
+      log.assertNothingLogged();
+
+      // Counted by CONTENT rather than by total, so an unrelated line cannot
+      // pass or fail this on the guard's behalf.
+      int clampWarnings() => log.entries
+          .where((FakeLogEntry entry) => entry.message.contains('Clamping'))
+          .length;
+
+      // Building the poller is the moment worth saying something.
+      manager.startPolling();
+      expect(clampWarnings(), 1);
+
+      // A stop and a start rebuilds the poller, and must not say it twice.
+      manager.stopPolling();
+      manager.startPolling();
+      expect(clampWarnings(), 1);
+
+      manager.stopPolling();
+    });
+
     test('the poller actually fires on the configured interval', () {
       // The unit cases above would all pass against a poller that ignored the
       // getter, which is the defect this PR fixes. This one pins the wiring by
