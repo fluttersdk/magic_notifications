@@ -169,6 +169,16 @@ void main() {
       );
     });
 
+    test('the default list view can delete a notification', () {
+      // The list renders its per-row delete control only when `onDelete` is
+      // non-null, so a null here left `Notify.deleteNotification` and the
+      // `DELETE /notifications/{id}` route behind it with no surface: working
+      // code nothing could reach.
+      final view = Notify.view.make('notifications.list');
+
+      expect((view as NotificationsListView).onDelete, isNotNull);
+    });
+
     test('a host registration replaces the package default', () {
       addTearDown(() {
         Notify.view.register(

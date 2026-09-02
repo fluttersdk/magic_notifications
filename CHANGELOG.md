@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **The default notification list can delete a notification, which it never could.** `Notify.view`'s seeded `notifications.list` builder passed no `onDelete`, and the list renders its per-row delete control only when that callback is non-null, so the affordance never appeared. `deleteNotification()` and the `DELETE /notifications/{id}` route behind it were working code with no surface. The default now passes `deleteNotification`. The parameter stays nullable: a host that does not want its people deleting notifications registers its own screen over the default, which is the seam `registerDefault` exists for.
+
 ## [0.1.0] - 2026-09-02
 
 ### Breaking Changes
