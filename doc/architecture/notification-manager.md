@@ -334,7 +334,7 @@ Future<void> markAsRead(String id) async {
   try {
     await Http.post('/notifications/$id/read');
   } catch (e) {
-    _safeLogError('Failed to mark notification as read: $e');
+    NotificationLog.error('Failed to mark notification as read: $e');
     // 3. Rollback on failure
     await fetchNotifications();
   }
