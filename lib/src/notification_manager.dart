@@ -575,6 +575,21 @@ class NotificationManager {
   /// Delete notification.
   ///
   /// Removes notification locally and from backend.
+  ///
+  /// Optimistic: the row leaves the list before the request, so the screen
+  /// feels immediate. A failed request rolls it back, logs, and then RETHROWS.
+  ///
+  /// The rethrow is the load-bearing part. This used to complete normally on
+  /// failure, which left a caller no way to tell a delete that worked from one
+  /// that did not, so the only thing a person saw was the row leaving and
+  /// coming back with nothing said. A caller that wants the old silence can
+  /// still catch; a caller that wants to say something now can.
+  ///
+  /// [markAsRead] and [markAllAsRead] deliberately still swallow. Their failure
+  /// is recoverable by looking again and costs a person nothing, while a delete
+  /// that silently did not happen is the one mutation where the screen and the
+  /// server disagree about something destructive. Changing all three at once
+  /// would also widen the break far past the defect being fixed.
   Future<void> deleteNotification(String id) async {
     // Optimistically remove from local state
     final removed = _notifications.where((n) => n.id == id).toList();
@@ -589,6 +604,8 @@ class NotificationManager {
       // Revert optimistic update on failure
       _notifications.addAll(removed);
       _notificationController.add(_notifications);
+
+      rethrow;
     }
   }
 

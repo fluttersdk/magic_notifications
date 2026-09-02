@@ -197,6 +197,46 @@ void main() {
     expect(find.text('Your monitor is down'), findsOneWidget);
   });
 
+  testWidgets('a delete that throws is handled, not left to the gesture', (
+    tester,
+  ) async {
+    // `deleteNotification` rethrows a failed request now, so the row's `onTap`
+    // is the boundary: unhandled, the throw escapes into the gesture callback
+    // and Flutter reports it as a framework error while the person still sees
+    // nothing about the delete that did not happen.
+    fakeNotifications([
+      makeNotificationMap(id: '1', title: 'Monitor Down', body: 'Body'),
+    ]);
+
+    int attempts = 0;
+
+    await tester.pumpWidget(
+      wrap(
+        NotificationsListView(
+          onDelete: (String id) async {
+            attempts++;
+
+            throw StateError('delete refused');
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.byIcon(Icons.delete_outline));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(attempts, 1);
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'the view caught it rather than letting the gesture report it',
+    );
+    expect(find.text('Monitor Down'), findsOneWidget);
+  });
+
   testWidgets('renders the mark-all-as-read button when unread items exist', (
     tester,
   ) async {

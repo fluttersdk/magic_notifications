@@ -115,6 +115,53 @@ void main() {
       expect(controller.currentPage, 2);
     });
 
+    test('refresh() leaves a page that no longer exists', () async {
+      // Deleting the last row of the last page. The reader is on page 3, the
+      // list now ends at page 2, and the paginator says so by answering
+      // `current_page: 3, last_page: 2`. Re-reading page 3 and stopping there
+      // would leave them on "nothing here yet" with their notifications one
+      // page back and no control on screen saying so.
+      fakePages(lastPage: 3);
+      await controller.loadPage(3);
+
+      Http.fake((request) {
+        final int page =
+            int.tryParse('${request.queryParameters?['page'] ?? '1'}') ?? 1;
+
+        return MagicResponse(
+          data: <String, dynamic>{
+            'data': page > 2
+                ? <Map<String, dynamic>>[]
+                : <Map<String, dynamic>>[
+                    <String, dynamic>{
+                      'id': 'page-$page',
+                      'type': 'monitor_down',
+                      'data': {'title': 'Item on page $page', 'body': 'Body'},
+                      'read_at': null,
+                      'created_at': DateTime.now().toIso8601String(),
+                    },
+                  ],
+            'meta': <String, dynamic>{
+              'current_page': page,
+              'last_page': 2,
+              'per_page': 15,
+              'total': 2,
+            },
+          },
+          statusCode: 200,
+        );
+      });
+
+      await controller.refresh();
+
+      expect(controller.currentPage, 2);
+      expect(
+        controller.pageNotifier.value?.data.first.title,
+        'Item on page 2',
+        reason: 'it read the real last page, not just moved a counter',
+      );
+    });
+
     test('loadPage() reports an error instead of publishing an empty page',
         () async {
       Http.fake((request) {

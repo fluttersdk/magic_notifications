@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+- **`NotificationManager.deleteNotification` (and `Notify.deleteNotification`) now rethrows a failed request.** It used to log, roll the row back, and complete NORMALLY, which left a caller no way to tell a delete that worked from one that did not: the only thing a person saw was the row leaving the list and coming back, with nothing said. The rollback is unchanged; the future now carries the failure. A caller that wants the old silence adds a `catch`. `markAsRead` and `markAllAsRead` deliberately still swallow: their failure is recoverable by looking again, while a delete that silently did not happen is the one mutation where the screen and the server disagree about something destructive.
+
+### Fixed
+- **A failed delete says so.** The list row's delete now catches the rethrown failure and surfaces `notifications.delete_failed` through `Magic.error`, then re-reads the page either way. **Hosts must add a `notifications.delete_failed` key**; without it the message renders as the raw key.
+- **Deleting the last row of the last page no longer strands the reader on an empty page.** `NotificationsListController.refresh()` re-read the page the reader was on, so deleting the only row of page 3 in a list that now ends at page 2 answered an empty page and showed "nothing here yet" while the notifications sat one page back. It now detects the paginator's own `current_page > last_page` and reads `last_page` instead. Keyed on that rather than on an empty `data` list, because emptiness lies in both directions: a failed read leaves the previous page in place, and a backend that answers an empty page while still claiming more pages exist would send the reader backwards for no reason.
+- **The delete icon's hover tone had no `dark:` peer.** `hover:text-red-500` was written alone, so dark mode hovered to a red tuned for a white background. Paired with `dark:hover:text-red-400`, matching the surface tone beside it which was already paired.
+- **The default notification list can delete a notification, which it never could.** `Notify.view`'s seeded `notifications.list` builder passed no `onDelete`, and the list renders its per-row delete control only when that callback is non-null, so the affordance never appeared. `deleteNotification()` and the `DELETE /notifications/{id}` route behind it were working code with no surface. The default now passes `deleteNotification`. The parameter stays nullable: a host that does not want its people deleting notifications registers its own screen over the default, which is the seam `registerDefault` exists for.
+
 ## [0.1.0] - 2026-09-02
 
 ### Breaking Changes

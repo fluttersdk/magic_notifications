@@ -73,8 +73,17 @@ class Notify {
     // `has()` both keys are spoken for before anybody has chosen anything, and
     // a downstream package deciding whether to install its own default would
     // always lose to them. `hasOverride()` is the question that has an answer.
+    // `onDelete` is wired here because the list renders its per-row delete
+    // control only when the callback is non-null, and this is the screen an app
+    // gets when it has not chosen one. Left null, `deleteNotification` and the
+    // `DELETE /notifications/{id}` route behind it had no surface at all: a
+    // working endpoint nothing could reach. The parameter stays nullable, so a
+    // host that does not want its people deleting notifications still registers
+    // its own screen; the default now simply offers what the package can do.
     registry.registerDefault(
-        'notifications.list', () => const NotificationsListView());
+      'notifications.list',
+      () => NotificationsListView(onDelete: deleteNotification),
+    );
     registry.registerDefault(
       'notifications.preferences',
       () => const NotificationPreferencesView(),
