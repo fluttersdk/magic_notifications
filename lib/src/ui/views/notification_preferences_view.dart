@@ -372,15 +372,26 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
   }
 
   /// Returns a user-friendly label for a notification channel.
+  ///
+  /// `sms` is a named arm rather than a fallback case because
+  /// `magic-starter-laravel` offers it in the matrix out of the box, so the
+  /// fallback was reachable on a default install: it rendered the machine name
+  /// with its first letter raised ("Sms"), which is neither the right casing
+  /// nor translated, sitting beside three properly localised siblings.
   String _channelLabel(String channel) {
     return switch (channel.toLowerCase()) {
       'mail' => trans('notifications.channel_email'),
       'database' => trans('notifications.channel_in_app'),
       'push' => trans('notifications.channel_push'),
+      'sms' => trans('notifications.channel_sms'),
       _ => _capitalize(channel),
     };
   }
 
+  /// Last-resort label for a channel this package has no name for.
+  ///
+  /// Reached only by a channel a host registered itself, where the machine
+  /// name is the only thing available to show.
   String _capitalize(String text) {
     if (text.isEmpty) return text;
     return text[0].toUpperCase() + text.substring(1).replaceAll('_', ' ');

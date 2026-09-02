@@ -375,6 +375,71 @@ void main() {
       );
     });
   });
+
+  group('the polling interval', () {
+    tearDown(() {
+      manager.stopPolling();
+      Config.forget('notifications.database.polling_interval');
+      Http.unfake();
+    });
+
+    test('comes from config, not from the poller default', () async {
+      // This key was validated by the CLI, reported by `notifications:doctor`
+      // and shipped in every install stub, and the runtime never read it: the
+      // poller was constructed with no argument so its own 30-second default
+      // always won. A consumer who set 10 got 30, with nothing to say why.
+      int reads = 0;
+
+      Http.fake((request) {
+        reads++;
+
+        return MagicResponse(
+          data: <String, dynamic>{'data': <Map<String, dynamic>>[]},
+          statusCode: 200,
+        );
+      });
+
+      Config.set('notifications.database.polling_interval', 1);
+
+      manager.startPolling();
+
+      // The immediate read on start, plus roughly two one-second ticks. On the
+      // pre-fix code the timer is 30 seconds away, so only the immediate read
+      // has happened by now.
+      await Future<void>.delayed(const Duration(milliseconds: 2400));
+
+      expect(reads, greaterThanOrEqualTo(3));
+    });
+
+    test('falls back to 30 seconds when the configured value cannot fire',
+        () async {
+      // Zero and negatives are refused rather than passed through, because
+      // `Timer.periodic` accepts them and then fires on every event-loop turn:
+      // a mistyped config value would take the app's network down instead of
+      // polling a little too often.
+      int reads = 0;
+
+      Http.fake((request) {
+        reads++;
+
+        return MagicResponse(
+          data: <String, dynamic>{'data': <Map<String, dynamic>>[]},
+          statusCode: 200,
+        );
+      });
+
+      Config.set('notifications.database.polling_interval', 0);
+
+      manager.startPolling();
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+
+      expect(
+        reads,
+        1,
+        reason: 'only the immediate read on start should have happened',
+      );
+    });
+  });
 }
 
 /// One notification row as the API and the socket both shape it.

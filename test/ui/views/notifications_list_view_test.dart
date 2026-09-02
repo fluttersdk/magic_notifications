@@ -31,6 +31,8 @@ void main() {
         'notifications.mark_all_read': 'Mark all as read',
         'notifications.load_failed': 'Could not load notifications',
         'notifications.empty': 'Nothing here yet',
+        'notifications.delete': 'Delete notification',
+        'notifications.delete_failed': 'Could not delete it',
         'common.page_of': 'Page :current of :total',
       }),
     );
@@ -235,6 +237,137 @@ void main() {
       reason: 'the view caught it rather than letting the gesture report it',
     );
     expect(find.text('Monitor Down'), findsOneWidget);
+  });
+
+  testWidgets('a declined delete costs no reload', (tester) async {
+    // The list is a separately paginated fetch, so a real delete has to be
+    // followed by a reload. The row used to reload after EVERY tap, because
+    // `onDelete` returned nothing and there was no way to tell a delete from a
+    // host that had asked and been told no. A `magic_starter` app asks for
+    // confirmation, so declining one cost a full GET for a list that had not
+    // changed.
+    int fetches = 0;
+
+    Http.fake((request) {
+      fetches++;
+
+      return MagicResponse(
+        data: <String, dynamic>{
+          'data': <Map<String, dynamic>>[
+            makeNotificationMap(id: '1', title: 'Monitor Down', body: 'Body'),
+          ],
+          'meta': <String, dynamic>{
+            'current_page': 1,
+            'last_page': 1,
+            'per_page': 15,
+            'total': 1,
+          },
+        },
+        statusCode: 200,
+      );
+    });
+
+    await tester.pumpWidget(
+      wrap(
+        NotificationsListView(
+          // What a declined confirmation dialog looks like from here.
+          onDelete: (String id) async => false,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final int afterMount = fetches;
+    expect(afterMount, greaterThan(0), reason: 'the mount fetch must have run');
+
+    await tester.tap(find.byIcon(Icons.delete_outline));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(
+      fetches,
+      afterMount,
+      reason: 'declining cost a request for a list that did not change',
+    );
+    expect(find.text('Monitor Down'), findsOneWidget);
+  });
+
+  testWidgets('a completed delete does reload', (tester) async {
+    // The other half, and the reason the reload cannot simply be dropped: a
+    // row leaving page one pulls one up from page two, which only the server
+    // can answer.
+    int fetches = 0;
+
+    Http.fake((request) {
+      fetches++;
+
+      return MagicResponse(
+        data: <String, dynamic>{
+          'data': <Map<String, dynamic>>[
+            makeNotificationMap(id: '1', title: 'Monitor Down', body: 'Body'),
+          ],
+          'meta': <String, dynamic>{
+            'current_page': 1,
+            'last_page': 1,
+            'per_page': 15,
+            'total': 1,
+          },
+        },
+        statusCode: 200,
+      );
+    });
+
+    await tester.pumpWidget(
+      wrap(
+        NotificationsListView(onDelete: (String id) async => true),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final int afterMount = fetches;
+
+    await tester.tap(find.byIcon(Icons.delete_outline));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(fetches, greaterThan(afterMount));
+  });
+
+  testWidgets('the delete control has an accessible name', (tester) async {
+    // The control is a bare glyph, so without a semantic label a screen reader
+    // announced "button" on every row with nothing saying what it does, and an
+    // E2E driver had no handle to resolve it by.
+    fakeNotifications([
+      makeNotificationMap(id: '1', title: 'Monitor Down', body: 'Body'),
+    ]);
+
+    await tester.pumpWidget(
+      wrap(NotificationsListView(onDelete: (String id) async => true)),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // Read the annotation off the widget tree rather than through
+    // `find.bySemanticsLabel`: that finder resolves against
+    // `renderObject.debugSemantics`, which is only populated once the
+    // semantics pipeline has run, and it answers "none found" rather than
+    // complaining when it has not. So it reports zero whether or not the
+    // label is there, which is a green test in reverse.
+    final Iterable<Semantics> annotations = tester
+        .widgetList<Semantics>(
+          find.ancestor(
+            of: find.byIcon(Icons.delete_outline),
+            matching: find.byType(Semantics),
+          ),
+        )
+        .where((Semantics node) => node.properties.label != null);
+
+    expect(
+      annotations.map((Semantics node) => node.properties.label),
+      contains('Delete notification'),
+    );
   });
 
   testWidgets('renders the mark-all-as-read button when unread items exist', (

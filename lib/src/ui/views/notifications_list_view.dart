@@ -22,7 +22,21 @@ class NotificationsListView
   final Future<void> Function()? onMarkAllAsRead;
 
   /// Deletes one notification. No delete affordance renders when `null`.
-  final Future<void> Function(String id)? onDelete;
+  ///
+  /// Answers whether the row is gone: `true` after a delete the server
+  /// accepted, `false` when nothing happened because the host decided not to
+  /// go ahead. A host that asks for confirmation returns `false` on a decline,
+  /// and that is the whole reason this returns a value at all. The list is a
+  /// separately paginated fetch, so a real delete has to be followed by a
+  /// reload (a row leaving page one pulls one up from page two); with no answer
+  /// to read, the row had to reload after EVERY tap, and declining a
+  /// confirmation dialog cost a full `GET /notifications` for a list that had
+  /// not changed.
+  ///
+  /// A throw is a third outcome and is not the same as `false`: the manager
+  /// removes the row optimistically and puts it back when the request fails,
+  /// so what the server still holds is unknown and the list reloads.
+  final Future<bool> Function(String id)? onDelete;
 
   /// Navigates to a notification's action URL, or `null` for [MagicRoute].
   final void Function(String path)? onNavigate;
@@ -346,24 +360,39 @@ class _NotificationsListViewState extends MagicStatefulViewState<
             ),
           if (widget.onDelete != null)
             WAnchor(
+              // The glyph carries no text, so without this a screen reader
+              // announced a bare "button" on every row with nothing saying
+              // what it does, and an E2E driver had no handle to resolve it by.
+              semanticLabel: trans('notifications.delete'),
               onTap: () async {
+                // Three outcomes, and only two of them are worth a reload.
+                //
                 // The callback can throw: `deleteNotification` rethrows a
                 // failed request after rolling the row back. Caught here rather
                 // than left to escape into the gesture callback, and answered
                 // with a message, because the rollback on its own just puts the
                 // row back and a person watching it return learns nothing.
+                bool reload = true;
+
                 try {
-                  await widget.onDelete?.call(notification.id);
+                  // `false` means the host chose not to go ahead, which is what
+                  // a declined confirmation dialog looks like from here. The
+                  // list is unchanged, so reloading it would spend a request to
+                  // re-read what is already on screen.
+                  reload = await widget.onDelete!(notification.id);
                 } catch (e) {
                   NotificationLog.error('Failed to delete notification: $e');
                   Magic.error(
                     trans('notifications.title'),
                     trans('notifications.delete_failed'),
                   );
-                } finally {
-                  // Either way: after a success the list reconciles with the
-                  // server, after a failure it re-reads what the server still
-                  // holds rather than trusting the rolled-back local copy.
+                  // A failure leaves the local copy rolled back and the
+                  // server's own state unknown, so re-read it rather than
+                  // trusting what is in hand.
+                  reload = true;
+                }
+
+                if (reload) {
                   await controller.refresh();
                 }
               },

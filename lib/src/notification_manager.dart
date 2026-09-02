@@ -1755,8 +1755,34 @@ class NotificationManager {
     // up. `stopRealtime()` (or a dropped connection) restores the timer.
     if (isRealtime) return;
 
-    _poller ??= NotificationPoller(this);
+    _poller ??= NotificationPoller(this, interval: _pollingInterval);
     _poller!.start();
+  }
+
+  /// How often the HTTP fallback asks the server for new notifications.
+  ///
+  /// Read from `notifications.database.polling_interval` (seconds). This used
+  /// to be unread: the poller was constructed with no argument, so its own
+  /// 30-second default always won while the CLI went on validating the key,
+  /// `notifications:doctor` went on reporting it, and every install stub went
+  /// on shipping it. A consumer who set it to 10 got 30 and had nothing to
+  /// tell them why.
+  ///
+  /// A missing, non-numeric or non-positive value falls back to 30 rather than
+  /// throwing: this runs on a timer a consumer wired to its auth state, and a
+  /// mistyped config value should not be the thing that takes notification
+  /// delivery down. Zero and negatives are refused specifically because
+  /// `Timer.periodic` accepts them and then fires continuously.
+  Duration get _pollingInterval {
+    final int? configured = Config.get<int>(
+      'notifications.database.polling_interval',
+    );
+
+    if (configured == null || configured <= 0) {
+      return const Duration(seconds: 30);
+    }
+
+    return Duration(seconds: configured);
   }
 
   /// Stop polling completely.
@@ -1931,7 +1957,11 @@ class NotificationManager {
       // The subscription stays: realtime is still the intent, polling is the
       // stand-in. Without it a socket that never comes back is a bell that never
       // updates again.
-      _poller ??= NotificationPoller(this);
+      //
+      // Same configured interval as `startPolling()`: this is the same fallback
+      // timer reached by a different route, and two routes onto one timer must
+      // not disagree about how often it fires.
+      _poller ??= NotificationPoller(this, interval: _pollingInterval);
       _poller!.start();
     });
   }
