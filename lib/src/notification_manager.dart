@@ -1755,9 +1755,24 @@ class NotificationManager {
     // up. `stopRealtime()` (or a dropped connection) restores the timer.
     if (isRealtime) return;
 
-    _poller ??= NotificationPoller(this, interval: _pollingInterval);
+    _poller ??= NotificationPoller(this, interval: pollingInterval);
     _poller!.start();
   }
+
+  /// The shortest and longest polling interval this package will use.
+  ///
+  /// Not invented here: `notifications:doctor` already reports a value outside
+  /// 5 to 600 seconds as an issue
+  /// (`lib/src/cli/commands/doctor_command.dart`), and
+  /// `doc/getting-started/configuration.md` publishes the same range. The
+  /// runtime used to ignore the key entirely, which meant it never had to
+  /// agree; now that it reads it, disagreeing would be worse than either
+  /// behaviour on its own.
+  static const int _minPollingSeconds = 5;
+  static const int _maxPollingSeconds = 600;
+
+  /// The fallback interval, and the value every install stub ships.
+  static const Duration _defaultPollingInterval = Duration(seconds: 30);
 
   /// How often the HTTP fallback asks the server for new notifications.
   ///
@@ -1768,18 +1783,52 @@ class NotificationManager {
   /// on shipping it. A consumer who set it to 10 got 30 and had nothing to
   /// tell them why.
   ///
-  /// A missing, non-numeric or non-positive value falls back to 30 rather than
-  /// throwing: this runs on a timer a consumer wired to its auth state, and a
-  /// mistyped config value should not be the thing that takes notification
-  /// delivery down. Zero and negatives are refused specifically because
-  /// `Timer.periodic` accepts them and then fires continuously.
-  Duration get _pollingInterval {
-    final int? configured = Config.get<int>(
-      'notifications.database.polling_interval',
-    );
+  /// Three things can be wrong with the configured value, and none of them
+  /// throws, because this runs on a timer a consumer wired to its auth state
+  /// and a mistyped config value must not be what takes notification delivery
+  /// down. Each one is LOGGED instead, since silently substituting a different
+  /// number is the same shape of defect as silently ignoring the key:
+  ///
+  /// - Absent: the default, and not worth a line. This is the common case.
+  /// - Present but not an `int` (a `'30'` from a string-backed source, or a
+  ///   `30.0`): `Config.get<int>` type-checks rather than casting, so it
+  ///   answers null and this reads as absent. Logged, because the host wrote
+  ///   something and is not getting it.
+  /// - Outside 5 to 600: clamped to the nearest bound rather than replaced by
+  ///   the default, so `1` becomes 5 rather than jumping to 30. Zero and
+  ///   negatives clamp up for a specific reason: `Timer.periodic` accepts them
+  ///   and then fires on every event-loop turn.
+  Duration get pollingInterval {
+    const String key = 'notifications.database.polling_interval';
 
-    if (configured == null || configured <= 0) {
-      return const Duration(seconds: 30);
+    final int? configured = Config.get<int>(key);
+
+    if (configured == null) {
+      // Tell absent from unusable: `Config.has` is true for a value this
+      // getter could not read, which is the case worth a line.
+      if (Config.has(key)) {
+        NotificationLog.warning(
+          'Ignoring $key: expected an int in seconds, got '
+          '${Config.get<Object>(key)}. Using '
+          '${_defaultPollingInterval.inSeconds}s.',
+        );
+      }
+
+      return _defaultPollingInterval;
+    }
+
+    if (configured < _minPollingSeconds || configured > _maxPollingSeconds) {
+      final int clamped = configured.clamp(
+        _minPollingSeconds,
+        _maxPollingSeconds,
+      );
+
+      NotificationLog.warning(
+        'Clamping $key from ${configured}s to ${clamped}s: the supported '
+        'range is $_minPollingSeconds to $_maxPollingSeconds seconds.',
+      );
+
+      return Duration(seconds: clamped);
     }
 
     return Duration(seconds: configured);
@@ -1961,7 +2010,7 @@ class NotificationManager {
       // Same configured interval as `startPolling()`: this is the same fallback
       // timer reached by a different route, and two routes onto one timer must
       // not disagree about how often it fires.
-      _poller ??= NotificationPoller(this, interval: _pollingInterval);
+      _poller ??= NotificationPoller(this, interval: pollingInterval);
       _poller!.start();
     });
   }

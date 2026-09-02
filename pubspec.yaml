@@ -55,3 +55,7 @@ dev_dependencies:
     sdk: flutter
   test: ^1.25.0
   flutter_lints: ^6.0.0
+  # Declared so the polling-interval test can elapse a timer instead of
+  # sleeping. It already arrives transitively through flutter_test; naming it
+  # here is what makes importing it legal.
+  fake_async: ^1.3.0

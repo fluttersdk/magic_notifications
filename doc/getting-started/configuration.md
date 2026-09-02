@@ -260,6 +260,26 @@ Controls the in-app (database) notification channel and its polling behavior.
 dart run magic_notifications configure --polling-interval 60
 ```
 
+The runtime reads this key on every `startPolling()`, including the automatic
+restart when a realtime socket drops, so a change takes effect on the next
+start rather than needing a rebuild. Three things it does with a value it
+cannot use, each of them logged rather than thrown, because this is a timer
+wired to your auth state and a mistyped number must not take notification
+delivery down:
+
+| Configured | Used | Why |
+|---|---|---|
+| absent | 30 | the documented default |
+| below 5, including `0` and negatives | 5 | `Timer.periodic` accepts `0` and then fires on every event-loop turn |
+| above 600 | 600 | the range this table publishes, now enforced rather than only reported |
+| not an `int` (`'30'`, `30.0`) | 30 | the value is type-checked rather than cast, so it reads as absent |
+
+> [!NOTE]
+> Releases before this one never read the key at all: the poller was
+> constructed without it, so its own 30-second default always won while
+> `notifications:doctor` went on validating the range. If you set a value and
+> saw no change, that is why, and it works now.
+
 ---
 
 ## <a name="mail"></a>notifications.mail

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magic/magic.dart';
 import 'package:magic_notifications/magic_notifications.dart';
@@ -383,61 +384,93 @@ void main() {
       Http.unfake();
     });
 
-    test('comes from config, not from the poller default', () async {
-      // This key was validated by the CLI, reported by `notifications:doctor`
-      // and shipped in every install stub, and the runtime never read it: the
-      // poller was constructed with no argument so its own 30-second default
-      // always won. A consumer who set 10 got 30, with nothing to say why.
-      int reads = 0;
+    /// Sets [value] for one test and takes it back afterwards.
+    void configure(Object value) {
+      Config.set('notifications.database.polling_interval', value);
+      addTearDown(
+        () => Config.forget('notifications.database.polling_interval'),
+      );
+    }
 
-      Http.fake((request) {
-        reads++;
-
-        return MagicResponse(
-          data: <String, dynamic>{'data': <Map<String, dynamic>>[]},
-          statusCode: 200,
-        );
-      });
-
-      Config.set('notifications.database.polling_interval', 1);
-
-      manager.startPolling();
-
-      // The immediate read on start, plus roughly two one-second ticks. On the
-      // pre-fix code the timer is 30 seconds away, so only the immediate read
-      // has happened by now.
-      await Future<void>.delayed(const Duration(milliseconds: 2400));
-
-      expect(reads, greaterThanOrEqualTo(3));
+    test('an absent key answers the shipped default', () {
+      expect(manager.pollingInterval, const Duration(seconds: 30));
     });
 
-    test('falls back to 30 seconds when the configured value cannot fire',
-        () async {
-      // Zero and negatives are refused rather than passed through, because
-      // `Timer.periodic` accepts them and then fires on every event-loop turn:
-      // a mistyped config value would take the app's network down instead of
-      // polling a little too often.
-      int reads = 0;
+    test('a value inside the supported range is used as it stands', () {
+      configure(45);
 
-      Http.fake((request) {
-        reads++;
+      expect(manager.pollingInterval, const Duration(seconds: 45));
+    });
 
-        return MagicResponse(
-          data: <String, dynamic>{'data': <Map<String, dynamic>>[]},
-          statusCode: 200,
-        );
+    test('a value below the supported range clamps up to the floor', () {
+      // Clamped rather than replaced by the default, so 1 becomes 5 rather
+      // than jumping to 30: a host asking for "as often as you can" gets as
+      // often as this package allows.
+      configure(1);
+
+      expect(manager.pollingInterval, const Duration(seconds: 5));
+    });
+
+    test('zero and negatives clamp up rather than firing continuously', () {
+      // `Timer.periodic` accepts both and then fires on every event-loop
+      // turn, which is why these cannot simply pass through.
+      configure(0);
+      expect(manager.pollingInterval, const Duration(seconds: 5));
+
+      configure(-10);
+      expect(manager.pollingInterval, const Duration(seconds: 5));
+    });
+
+    test('a value above the supported range clamps down to the ceiling', () {
+      configure(6000);
+
+      expect(manager.pollingInterval, const Duration(seconds: 600));
+    });
+
+    test('a present value of the wrong type falls back to the default', () {
+      // `Config.get<int>` type-checks rather than casting, so a string-backed
+      // source answers null here and this reads as absent. The host wrote
+      // something and is not getting it, which is why it is logged.
+      configure('30');
+
+      expect(manager.pollingInterval, const Duration(seconds: 30));
+    });
+
+    test('the poller actually fires on the configured interval', () {
+      // The unit cases above would all pass against a poller that ignored the
+      // getter, which is the defect this PR fixes. This one pins the wiring by
+      // elapsing a fake clock rather than sleeping on a real one, so it is
+      // exact and costs no wall time.
+      fakeAsync((FakeAsync async) {
+        int reads = 0;
+
+        Http.fake((request) {
+          reads++;
+
+          return MagicResponse(
+            data: <String, dynamic>{'data': <Map<String, dynamic>>[]},
+            statusCode: 200,
+          );
+        });
+
+        Config.set('notifications.database.polling_interval', 5);
+
+        manager.startPolling();
+        async.flushMicrotasks();
+
+        // The immediate read on start.
+        expect(reads, 1);
+
+        // Three ticks of a five-second timer. On the pre-fix code the timer is
+        // thirty seconds away and only the first tick has landed by now.
+        async.elapse(const Duration(seconds: 16));
+        async.flushMicrotasks();
+
+        expect(reads, 4);
+
+        manager.stopPolling();
+        Config.forget('notifications.database.polling_interval');
       });
-
-      Config.set('notifications.database.polling_interval', 0);
-
-      manager.startPolling();
-      await Future<void>.delayed(const Duration(milliseconds: 1200));
-
-      expect(
-        reads,
-        1,
-        reason: 'only the immediate read on start should have happened',
-      );
     });
   });
 }
