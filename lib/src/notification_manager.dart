@@ -1805,26 +1805,36 @@ class NotificationManager {
   /// where [_pollingIntervalForPoller] issues it.
   Duration get pollingInterval => _resolvePollingInterval().interval;
 
-  /// The interval to build a poller with, warning at most once per manager.
+  /// The interval to build a poller with, saying at most once what is wrong.
   ///
-  /// Once, not per call, because `_watchRealtimeConnection` nulls the poller on
-  /// every reconnect and rebuilds it on the next drop: a flapping socket would
-  /// otherwise repeat the same warning for as long as it flaps, which turns a
-  /// diagnostic into noise and buries the incident the socket is flapping over.
+  /// De-duplicated on the warning TEXT rather than with a single "have I
+  /// warned" flag. Both halves of that matter:
+  ///
+  /// - The same warning is not repeated, because `_watchRealtimeConnection`
+  ///   nulls the poller on every reconnect and rebuilds it on the next drop, so
+  ///   a flapping socket would otherwise repeat one line for as long as it
+  ///   flaps and bury the incident it is flapping over.
+  /// - A DIFFERENT warning still gets through. A single flag was one flag for
+  ///   two distinct problems, so a host that started with a `'30'` (wrong type,
+  ///   warned), then set the key to `1` and restarted polling, took the
+  ///   five-second clamp silently. Narrow, since it needs a config change at
+  ///   runtime, and a wrong reason to stay quiet either way.
   Duration _pollingIntervalForPoller() {
     final ({Duration interval, String? warning}) resolved =
         _resolvePollingInterval();
 
-    if (resolved.warning != null && !_warnedAboutPollingInterval) {
-      _warnedAboutPollingInterval = true;
-      NotificationLog.warning(resolved.warning!);
+    final String? warning = resolved.warning;
+
+    if (warning != null && warning != _lastPollingIntervalWarning) {
+      _lastPollingIntervalWarning = warning;
+      NotificationLog.warning(warning);
     }
 
     return resolved.interval;
   }
 
-  /// Whether the configured-interval warning has already been issued.
-  bool _warnedAboutPollingInterval = false;
+  /// The configured-interval warning last issued, or null if none has been.
+  String? _lastPollingIntervalWarning;
 
   /// Resolves the configured interval and, separately, whatever is wrong with
   /// it, so the caller decides whether this is a moment to say so.

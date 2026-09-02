@@ -483,6 +483,42 @@ void main() {
       manager.stopPolling();
     });
 
+    test('a second, different warning is not suppressed by the first', () {
+      // The flag this replaced was one flag for two distinct problems, so once
+      // either had fired the other never would for the life of the manager. A
+      // host that starts with a wrong-typed value (warns), then sets an
+      // out-of-range one and restarts polling, took the clamp silently.
+      final FakeLogManager log = Log.fake();
+      addTearDown(Log.unfake);
+
+      Http.fake((request) {
+        return MagicResponse(
+          data: <String, dynamic>{'data': <Map<String, dynamic>>[]},
+          statusCode: 200,
+        );
+      });
+
+      int warningsMatching(String fragment) => log.entries
+          .where((FakeLogEntry entry) => entry.message.contains(fragment))
+          .length;
+
+      configure('30');
+      manager.startPolling();
+      expect(warningsMatching('Ignoring'), 1);
+      expect(warningsMatching('Clamping'), 0);
+
+      // A different problem, on a poller rebuilt from scratch.
+      manager.stopPolling();
+      configure(1);
+      manager.startPolling();
+
+      expect(warningsMatching('Clamping'), 1);
+      // And the first one is still not repeated.
+      expect(warningsMatching('Ignoring'), 1);
+
+      manager.stopPolling();
+    });
+
     test('the poller actually fires on the configured interval', () {
       // The unit cases above would all pass against a poller that ignored the
       // getter, which is the defect this PR fixes. This one pins the wiring by
