@@ -370,6 +370,19 @@ Future<void> deleteNotification(String id) async {
 >
 > A caller that wants the old silence adds a `catch`. `NotificationsListView` catches it and reports `notifications.delete_failed` through `Magic.error`, which is a key the HOST must supply: this package ships no translation catalogue, and a missing key renders as itself.
 
+> [!IMPORTANT]
+> **`NotificationsListView.onDelete` is `Future<bool> Function(String id)?`, and the `bool` is load-bearing.** The screen is a separately paginated fetch, so a delete the server accepted has to be followed by a reload: a row leaving page one pulls one up from page two, and only the server knows which. So the answer decides whether that reload happens.
+>
+> | Outcome | Meaning | The list |
+> |---|---|---|
+> | `true` | the row is gone | reloads the current page |
+> | `false` | the host chose not to go ahead | is left alone |
+> | throws | the request failed and the manager rolled the row back | reloads, because what the server holds is now unknown |
+>
+> `false` is what a confirmation dialog needs. Before the callback could answer, the row reloaded after EVERY tap, so a host that asks before deleting spent a full `GET /notifications` every time somebody declined. A callback that always deletes returns `true`; a callback that can refuse returns `false` on that path.
+>
+> Two more keys the HOST must supply, for the same reason as `delete_failed`: **`notifications.delete`** names the row's delete control for a screen reader (it is a bare glyph with no text of its own), and **`notifications.channel_sms`** labels the SMS row on the preferences screen. Without them each renders as its own key.
+
 > [!TIP]
 > The `Notify` facade exposes all these operations as static methods (`Notify.markAsRead`, `Notify.deleteNotification`, etc.), which simply delegate to the same manager instance.
 

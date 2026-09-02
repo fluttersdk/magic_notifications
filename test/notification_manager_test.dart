@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magic/magic.dart';
 import 'package:magic_notifications/magic_notifications.dart';
@@ -373,6 +374,186 @@ void main() {
         manager.fetchPaginatedNotifications(),
         throwsA(isA<NotificationException>()),
       );
+    });
+  });
+
+  group('the polling interval', () {
+    tearDown(() {
+      manager.stopPolling();
+      Config.forget('notifications.database.polling_interval');
+      Http.unfake();
+    });
+
+    /// Sets [value] for one test and takes it back afterwards.
+    void configure(Object value) {
+      Config.set('notifications.database.polling_interval', value);
+      addTearDown(
+        () => Config.forget('notifications.database.polling_interval'),
+      );
+    }
+
+    test('an absent key answers the shipped default', () {
+      expect(manager.pollingInterval, const Duration(seconds: 30));
+    });
+
+    test('a value inside the supported range is used as it stands', () {
+      configure(45);
+
+      expect(manager.pollingInterval, const Duration(seconds: 45));
+    });
+
+    test('a value below the supported range clamps up to the floor', () {
+      // Clamped rather than replaced by the default, so 1 becomes 5 rather
+      // than jumping to 30: a host asking for "as often as you can" gets as
+      // often as this package allows.
+      configure(1);
+
+      expect(manager.pollingInterval, const Duration(seconds: 5));
+    });
+
+    test('zero and negatives clamp up rather than firing continuously', () {
+      // `Timer.periodic` accepts both and then fires on every event-loop
+      // turn, which is why these cannot simply pass through.
+      configure(0);
+      expect(manager.pollingInterval, const Duration(seconds: 5));
+
+      configure(-10);
+      expect(manager.pollingInterval, const Duration(seconds: 5));
+    });
+
+    test('a value above the supported range clamps down to the ceiling', () {
+      configure(6000);
+
+      expect(manager.pollingInterval, const Duration(seconds: 600));
+    });
+
+    test('a present value of the wrong type falls back to the default', () {
+      // `Config.get<int>` type-checks rather than casting, so a string-backed
+      // source answers null here and this reads as absent. The host wrote
+      // something and is not getting it, which is why it is logged.
+      configure('30');
+
+      expect(manager.pollingInterval, const Duration(seconds: 30));
+    });
+
+    test('the getter is pure, and the warning is issued once', () {
+      // `pollingInterval` is PUBLIC, so a consumer may surface it in a
+      // `build()`. A getter that logged on read would then write a line per
+      // frame, and `_watchRealtimeConnection` rebuilds the poller on every
+      // socket drop, so a flapping connection would repeat the same warning
+      // for as long as it flaps and bury the incident it is flapping over.
+      final FakeLogManager log = Log.fake();
+      addTearDown(Log.unfake);
+
+      // The fake matters: `start()` does an immediate read, and without one
+      // that read fails and logs its own error. My first version of this test
+      // counted TOTAL entries and went red on that fetch failure, which is a
+      // measurement of the harness rather than of the guard.
+      Http.fake((request) {
+        return MagicResponse(
+          data: <String, dynamic>{'data': <Map<String, dynamic>>[]},
+          statusCode: 200,
+        );
+      });
+
+      configure(6000);
+
+      // Ten reads of a value that IS out of range.
+      for (int i = 0; i < 10; i++) {
+        expect(manager.pollingInterval, const Duration(seconds: 600));
+      }
+
+      log.assertNothingLogged();
+
+      // Counted by CONTENT rather than by total, so an unrelated line cannot
+      // pass or fail this on the guard's behalf.
+      int clampWarnings() => log.entries
+          .where((FakeLogEntry entry) => entry.message.contains('Clamping'))
+          .length;
+
+      // Building the poller is the moment worth saying something.
+      manager.startPolling();
+      expect(clampWarnings(), 1);
+
+      // A stop and a start rebuilds the poller, and must not say it twice.
+      manager.stopPolling();
+      manager.startPolling();
+      expect(clampWarnings(), 1);
+
+      manager.stopPolling();
+    });
+
+    test('a second, different warning is not suppressed by the first', () {
+      // The flag this replaced was one flag for two distinct problems, so once
+      // either had fired the other never would for the life of the manager. A
+      // host that starts with a wrong-typed value (warns), then sets an
+      // out-of-range one and restarts polling, took the clamp silently.
+      final FakeLogManager log = Log.fake();
+      addTearDown(Log.unfake);
+
+      Http.fake((request) {
+        return MagicResponse(
+          data: <String, dynamic>{'data': <Map<String, dynamic>>[]},
+          statusCode: 200,
+        );
+      });
+
+      int warningsMatching(String fragment) => log.entries
+          .where((FakeLogEntry entry) => entry.message.contains(fragment))
+          .length;
+
+      configure('30');
+      manager.startPolling();
+      expect(warningsMatching('Ignoring'), 1);
+      expect(warningsMatching('Clamping'), 0);
+
+      // A different problem, on a poller rebuilt from scratch.
+      manager.stopPolling();
+      configure(1);
+      manager.startPolling();
+
+      expect(warningsMatching('Clamping'), 1);
+      // And the first one is still not repeated.
+      expect(warningsMatching('Ignoring'), 1);
+
+      manager.stopPolling();
+    });
+
+    test('the poller actually fires on the configured interval', () {
+      // The unit cases above would all pass against a poller that ignored the
+      // getter, which is the defect this PR fixes. This one pins the wiring by
+      // elapsing a fake clock rather than sleeping on a real one, so it is
+      // exact and costs no wall time.
+      fakeAsync((FakeAsync async) {
+        int reads = 0;
+
+        Http.fake((request) {
+          reads++;
+
+          return MagicResponse(
+            data: <String, dynamic>{'data': <Map<String, dynamic>>[]},
+            statusCode: 200,
+          );
+        });
+
+        Config.set('notifications.database.polling_interval', 5);
+
+        manager.startPolling();
+        async.flushMicrotasks();
+
+        // The immediate read on start.
+        expect(reads, 1);
+
+        // Three ticks of a five-second timer. On the pre-fix code the timer is
+        // thirty seconds away and only the first tick has landed by now.
+        async.elapse(const Duration(seconds: 16));
+        async.flushMicrotasks();
+
+        expect(reads, 4);
+
+        manager.stopPolling();
+        Config.forget('notifications.database.polling_interval');
+      });
     });
   });
 }

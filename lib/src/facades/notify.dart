@@ -82,7 +82,7 @@ class Notify {
     // its own screen; the default now simply offers what the package can do.
     registry.registerDefault(
       'notifications.list',
-      () => NotificationsListView(onDelete: deleteNotification),
+      () => NotificationsListView(onDelete: _deleteAndReport),
     );
     registry.registerDefault(
       'notifications.preferences',
@@ -180,6 +180,21 @@ class Notify {
   /// Removes notification locally and from backend.
   static Future<void> deleteNotification(String id) async {
     await manager.deleteNotification(id);
+  }
+
+  /// Deletes [id] and reports that it happened, for [NotificationsListView].
+  ///
+  /// The view's `onDelete` answers whether the row is gone so it can skip the
+  /// reload when a host declined. This default never declines, and
+  /// [deleteNotification] either completes or rethrows, so reaching the return
+  /// is the success case. It stays a wrapper rather than a `bool` on
+  /// [deleteNotification] itself: a method that can only ever answer `true` or
+  /// throw has nothing to report, and callers who want the failure already get
+  /// it as an exception.
+  static Future<bool> _deleteAndReport(String id) async {
+    await deleteNotification(id);
+
+    return true;
   }
 
   // ========================================

@@ -1755,8 +1755,124 @@ class NotificationManager {
     // up. `stopRealtime()` (or a dropped connection) restores the timer.
     if (isRealtime) return;
 
-    _poller ??= NotificationPoller(this);
+    _poller ??= NotificationPoller(this, interval: _pollingIntervalForPoller());
     _poller!.start();
+  }
+
+  /// The shortest and longest polling interval this package will use.
+  ///
+  /// Not invented here: `notifications:doctor` already reports a value outside
+  /// 5 to 600 seconds as an issue
+  /// (`lib/src/cli/commands/doctor_command.dart`), and
+  /// `doc/getting-started/configuration.md` publishes the same range. The
+  /// runtime used to ignore the key entirely, which meant it never had to
+  /// agree; now that it reads it, disagreeing would be worse than either
+  /// behaviour on its own.
+  static const int _minPollingSeconds = 5;
+  static const int _maxPollingSeconds = 600;
+
+  /// The fallback interval, and the value every install stub ships.
+  static const Duration _defaultPollingInterval = Duration(seconds: 30);
+
+  /// How often the HTTP fallback asks the server for new notifications.
+  ///
+  /// Read from `notifications.database.polling_interval` (seconds). This used
+  /// to be unread: the poller was constructed with no argument, so its own
+  /// 30-second default always won while the CLI went on validating the key,
+  /// `notifications:doctor` went on reporting it, and every install stub went
+  /// on shipping it. A consumer who set it to 10 got 30 and had nothing to
+  /// tell them why.
+  ///
+  /// Three things can be wrong with the configured value, and none of them
+  /// throws, because this runs on a timer a consumer wired to its auth state
+  /// and a mistyped config value must not be what takes notification delivery
+  /// down. Each one is LOGGED instead, since silently substituting a different
+  /// number is the same shape of defect as silently ignoring the key:
+  ///
+  /// - Absent: the default, and not worth a line. This is the common case.
+  /// - Present but not an `int` (a `'30'` from a string-backed source, or a
+  ///   `30.0`): `Config.get<int>` type-checks rather than casting, so it
+  ///   answers null and this reads as absent. Logged, because the host wrote
+  ///   something and is not getting it.
+  /// - Outside 5 to 600: clamped to the nearest bound rather than replaced by
+  ///   the default, so `1` becomes 5 rather than jumping to 30. Zero and
+  ///   negatives clamp up for a specific reason: `Timer.periodic` accepts them
+  ///   and then fires on every event-loop turn.
+  /// This getter is PURE: it reads config and returns, and it logs nothing.
+  /// That matters because it is public, so a consumer may well surface it in a
+  /// `build()`, and a getter that logged on read would then write a line per
+  /// frame. The warning belongs to the moment the poller is BUILT, which is
+  /// where [_pollingIntervalForPoller] issues it.
+  Duration get pollingInterval => _resolvePollingInterval().interval;
+
+  /// The interval to build a poller with, saying at most once what is wrong.
+  ///
+  /// De-duplicated on the warning TEXT rather than with a single "have I
+  /// warned" flag. Both halves of that matter:
+  ///
+  /// - The same warning is not repeated, because `_watchRealtimeConnection`
+  ///   nulls the poller on every reconnect and rebuilds it on the next drop, so
+  ///   a flapping socket would otherwise repeat one line for as long as it
+  ///   flaps and bury the incident it is flapping over.
+  /// - A DIFFERENT warning still gets through. A single flag was one flag for
+  ///   two distinct problems, so a host that started with a `'30'` (wrong type,
+  ///   warned), then set the key to `1` and restarted polling, took the
+  ///   five-second clamp silently. Narrow, since it needs a config change at
+  ///   runtime, and a wrong reason to stay quiet either way.
+  Duration _pollingIntervalForPoller() {
+    final ({Duration interval, String? warning}) resolved =
+        _resolvePollingInterval();
+
+    final String? warning = resolved.warning;
+
+    if (warning != null && warning != _lastPollingIntervalWarning) {
+      _lastPollingIntervalWarning = warning;
+      NotificationLog.warning(warning);
+    }
+
+    return resolved.interval;
+  }
+
+  /// The configured-interval warning last issued, or null if none has been.
+  String? _lastPollingIntervalWarning;
+
+  /// Resolves the configured interval and, separately, whatever is wrong with
+  /// it, so the caller decides whether this is a moment to say so.
+  ({Duration interval, String? warning}) _resolvePollingInterval() {
+    const String key = 'notifications.database.polling_interval';
+
+    final int? configured = Config.get<int>(key);
+
+    if (configured == null) {
+      // Tell absent from unusable: `Config.has` is true for a value this
+      // getter could not read, which is the case worth a line.
+      if (Config.has(key)) {
+        return (
+          interval: _defaultPollingInterval,
+          warning: 'Ignoring $key: expected an int in seconds, got '
+              '${Config.get<Object>(key)}. Using '
+              '${_defaultPollingInterval.inSeconds}s.',
+        );
+      }
+
+      return (interval: _defaultPollingInterval, warning: null);
+    }
+
+    if (configured < _minPollingSeconds || configured > _maxPollingSeconds) {
+      final int clamped = configured.clamp(
+        _minPollingSeconds,
+        _maxPollingSeconds,
+      );
+
+      return (
+        interval: Duration(seconds: clamped),
+        warning:
+            'Clamping $key from ${configured}s to ${clamped}s: the supported '
+                'range is $_minPollingSeconds to $_maxPollingSeconds seconds.',
+      );
+    }
+
+    return (interval: Duration(seconds: configured), warning: null);
   }
 
   /// Stop polling completely.
@@ -1931,7 +2047,12 @@ class NotificationManager {
       // The subscription stays: realtime is still the intent, polling is the
       // stand-in. Without it a socket that never comes back is a bell that never
       // updates again.
-      _poller ??= NotificationPoller(this);
+      //
+      // Same configured interval as `startPolling()`: this is the same fallback
+      // timer reached by a different route, and two routes onto one timer must
+      // not disagree about how often it fires.
+      _poller ??=
+          NotificationPoller(this, interval: _pollingIntervalForPoller());
       _poller!.start();
     });
   }
