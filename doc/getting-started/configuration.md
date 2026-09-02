@@ -260,12 +260,20 @@ Controls the in-app (database) notification channel and its polling behavior.
 dart run magic_notifications configure --polling-interval 60
 ```
 
-The runtime reads this key on every `startPolling()`, including the automatic
-restart when a realtime socket drops, so a change takes effect on the next
-start rather than needing a rebuild. Three things it does with a value it
-cannot use, each of them logged rather than thrown, because this is a timer
-wired to your auth state and a mistyped number must not take notification
-delivery down:
+The runtime reads this key when it BUILDS the poller, which is the first
+`startPolling()` and any `startPolling()` after a `stopPolling()`, including
+the automatic handoff when a realtime socket drops (that path stops the poller
+first). So a change takes effect on the next start rather than needing a
+rebuild.
+
+It does NOT take effect across `pausePolling()` and `resumePolling()`: those
+keep the same poller instance, so it keeps the interval it was constructed
+with. Call `stopPolling()` and then `startPolling()` if you need a new value to
+apply to a poller that is already running.
+
+Three things the reader does with a value it cannot use, each of them logged
+rather than thrown, because this is a timer wired to your auth state and a
+mistyped number must not take notification delivery down:
 
 | Configured | Used | Why |
 |---|---|---|
