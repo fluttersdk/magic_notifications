@@ -317,7 +317,7 @@ Events are emitted to the stream in four situations:
 
 ## <a name="optimistic"></a>Optimistic Updates with Rollback
 
-Read-mutate operations apply changes locally before the HTTP request completes, then revert on failure:
+Read-mutate operations apply changes locally before the HTTP request completes, then revert on failure. Whether the caller is TOLD about that failure differs per operation, and the note below the `deleteNotification` snippet says which is which:
 
 ```dart
 Future<void> markAsRead(String id) async {
@@ -341,9 +341,9 @@ Future<void> markAsRead(String id) async {
 }
 ```
 
-The same pattern applies to `markAllAsRead()` and `deleteNotification()`. Rollback always calls `fetchNotifications()` to restore authoritative server state rather than trying to undo the local mutation, which avoids edge cases from concurrent updates.
+The same pattern applies to `markAllAsRead()`. Rollback always calls `fetchNotifications()` to restore authoritative server state rather than trying to undo the local mutation, which avoids edge cases from concurrent updates.
 
-`deleteNotification` preserves the removed items for rollback:
+`deleteNotification` preserves the removed items for rollback, and then **rethrows**:
 
 ```dart
 Future<void> deleteNotification(String id) async {
@@ -354,12 +354,21 @@ Future<void> deleteNotification(String id) async {
   try {
     await Http.delete('/notifications/$id');
   } catch (e) {
-    _safeLogError('Failed to delete notification: $e');
+    NotificationLog.error('Failed to delete notification: $e');
     _notifications.addAll(removed);
     _notificationController.add(_notifications);
+
+    rethrow;
   }
 }
 ```
+
+> [!IMPORTANT]
+> `deleteNotification` is the one mutation here that does NOT swallow, and that is deliberate. It used to complete normally on failure, which left a caller no way to tell a delete that worked from one that did not: the only thing a person saw was the row leaving the list and coming back, with nothing said. The rollback is unchanged; the future now carries the failure.
+>
+> `markAsRead` and `markAllAsRead` still swallow. Their failure is recoverable by looking again and costs a person nothing, while a delete that silently did not happen is the case where the screen and the server disagree about something destructive.
+>
+> A caller that wants the old silence adds a `catch`. `NotificationsListView` catches it and reports `notifications.delete_failed` through `Magic.error`, which is a key the HOST must supply: this package ships no translation catalogue, and a missing key renders as itself.
 
 > [!TIP]
 > The `Notify` facade exposes all these operations as static methods (`Notify.markAsRead`, `Notify.deleteNotification`, etc.), which simply delegate to the same manager instance.
