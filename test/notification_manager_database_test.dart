@@ -81,10 +81,16 @@ void main() {
       );
     });
 
-    test('deleteNotification() completes without error', () async {
+    test('deleteNotification() reports a failed request instead of hiding it',
+        () async {
+      // This case used to assert `completes`, which was the defect written down
+      // as the requirement: no network is bound here, so the `DELETE` throws and
+      // the manager swallowed it, and a caller holding a normally-completed
+      // future had no way to tell a delete that worked from one that did not.
+      // The row went away, came back, and nothing was said.
       await expectLater(
         manager.deleteNotification('test-id'),
-        completes,
+        throwsA(anything),
       );
     });
 

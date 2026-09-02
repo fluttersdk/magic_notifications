@@ -137,7 +137,30 @@ class NotificationsListController extends MagicController
   ///
   /// This is what every mutation on the screen (mark as read, mark all as
   /// read, delete) follows with, so the user stays where they were.
-  Future<void> refresh() => loadPage(_currentPage);
+  ///
+  /// Staying put has one exception: a delete can remove the last row of the
+  /// last page. Re-reading page 3 of a list that now ends at page 2 leaves the
+  /// reader staring at "nothing here yet" while their notifications sit one
+  /// page back, with no control on screen saying so.
+  ///
+  /// The signal is the paginator's own `current_page > last_page`, not an empty
+  /// `data` list. Emptiness is the symptom and it lies in both directions: a
+  /// read that failed leaves the PREVIOUS page on [pageNotifier], and a fixture
+  /// or a backend that answers an empty page while still claiming more pages
+  /// exist would send the reader backwards for no reason. Being past the end is
+  /// the fact, and it is what the server reports when asked for a page that no
+  /// longer exists.
+  ///
+  /// It jumps to `lastPage` rather than stepping back one, so a list that lost
+  /// several pages while this screen was open lands on a real page in one read.
+  Future<void> refresh() async {
+    await loadPage(_currentPage);
+
+    final PaginatedNotifications? page = pageNotifier.value;
+    if (page == null || page.currentPage <= page.lastPage) return;
+
+    await loadPage(page.lastPage < 1 ? 1 : page.lastPage);
+  }
 
   @override
   void dispose() {

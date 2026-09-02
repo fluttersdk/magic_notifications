@@ -5,6 +5,7 @@ import 'package:magic/magic.dart';
 import '../../facades/notify.dart';
 import '../../http/notifications_list_controller.dart';
 import '../../models/database_notification.dart';
+import '../../support/notification_log.dart';
 
 /// The full notification list screen.
 ///
@@ -346,15 +347,36 @@ class _NotificationsListViewState extends MagicStatefulViewState<
           if (widget.onDelete != null)
             WAnchor(
               onTap: () async {
-                await widget.onDelete?.call(notification.id);
-                controller.refresh();
+                // The callback can throw: `deleteNotification` rethrows a
+                // failed request after rolling the row back. Caught here rather
+                // than left to escape into the gesture callback, and answered
+                // with a message, because the rollback on its own just puts the
+                // row back and a person watching it return learns nothing.
+                try {
+                  await widget.onDelete?.call(notification.id);
+                } catch (e) {
+                  NotificationLog.error('Failed to delete notification: $e');
+                  Magic.error(
+                    trans('notifications.title'),
+                    trans('notifications.delete_failed'),
+                  );
+                } finally {
+                  // Either way: after a success the list reconciles with the
+                  // server, after a failure it re-reads what the server still
+                  // holds rather than trusting the rolled-back local copy.
+                  await controller.refresh();
+                }
               },
               child: WDiv(
                 className:
                     'p-2 ml-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20',
                 child: WIcon(
                   Icons.delete_outline,
-                  className: 'text-lg text-fg-muted hover:text-red-500',
+                  // The hover tone needs its `dark:` peer like every other
+                  // colour token: `red-500` was written alone, so dark mode
+                  // hovered to a red tuned for a white background.
+                  className:
+                      'text-lg text-fg-muted hover:text-red-500 dark:hover:text-red-400',
                 ),
               ),
             ),
