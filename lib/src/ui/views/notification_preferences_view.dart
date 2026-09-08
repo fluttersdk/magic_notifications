@@ -53,6 +53,10 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
     NotificationPreferencesController, NotificationPreferencesView> {
   static const _iconLocked = Icons.lock_outline;
   static const _iconBack = Icons.chevron_left;
+
+  /// The bulk card's heading glyph: sliders, for "this row sets several at
+  /// once", rather than a bell, which every row below it already is.
+  static const _iconBulk = Icons.tune_outlined;
   static const _channelIcons = <String, IconData>{
     'mail': Icons.mail_outline,
     'database': Icons.inbox_outlined,
@@ -221,6 +225,25 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
       'w-full bg-surface-container border border-color-border '
       'rounded-2xl overflow-hidden flex flex-col';
 
+  /// The bulk card's shell: [_cardClassName] one surface step up.
+  ///
+  /// `surface-container-high` is the token the theme already reserves for a
+  /// panel nested inside another, which is what this is against the matrix it
+  /// summarises. Its rows are deliberately identical to the per-type rows, so
+  /// the surface is the only thing carrying "these are shortcuts".
+  static const String _bulkCardClassName =
+      'w-full bg-surface-container-high border border-color-border '
+      'rounded-2xl overflow-hidden flex flex-col';
+
+  /// The glyph tile in the bulk card's heading.
+  ///
+  /// The per-type cards head with text alone, so a tile here is a second signal
+  /// costing no vertical space: the heading row already reserves this height for
+  /// its two lines of text.
+  static const String _bulkTileClassName =
+      'size-9 shrink-0 flex items-center justify-center rounded-lg '
+      'bg-primary-container';
+
   /// The card above the matrix: one switch per channel, applying to every type.
   ///
   /// The matrix is the precise control and this is the fast one. A team that
@@ -246,18 +269,33 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
       // shell with the same channel labels, so without a handle neither a test
       // nor an E2E driver can say which card it is looking at.
       key: const ValueKey('notifications.bulk'),
-      className: _cardClassName,
+      // Its own surface, one step up from the per-type cards below, and a solid
+      // border where they carry the hairline. The rows inside are identical to
+      // theirs by design (same control, same touch target, same semantics), so
+      // the card is the only thing that can say "this one is a shortcut and the
+      // real settings are underneath". Rendered in the same tokens as those
+      // cards, it read as the first of them.
+      className: _bulkCardClassName,
       children: [
         WDiv(
-          className: 'px-6 pt-6 pb-3 flex flex-col gap-1',
+          className: 'px-6 pt-6 pb-3 flex flex-row items-start gap-3',
           children: [
-            WText(
-              trans('notifications.bulk_title'),
-              className: 'text-lg font-semibold text-fg',
+            WDiv(
+              className: _bulkTileClassName,
+              child: WIcon(_iconBulk, className: 'text-[18px] text-primary'),
             ),
-            WText(
-              trans('notifications.bulk_description'),
-              className: 'text-sm text-fg-muted',
+            WDiv(
+              className: 'min-w-0 flex-1 flex flex-col gap-1',
+              children: [
+                WText(
+                  trans('notifications.bulk_title'),
+                  className: 'text-lg font-semibold text-fg',
+                ),
+                WText(
+                  trans('notifications.bulk_description'),
+                  className: 'text-sm text-fg-muted',
+                ),
+              ],
             ),
           ],
         ),

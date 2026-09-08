@@ -182,6 +182,47 @@ void main() {
     expect(push.value, isFalse);
   });
 
+  /// The bulk card does not look like the cards it summarises.
+  ///
+  /// Its rows are deliberately identical to a per-type row (same control, same
+  /// touch target, same semantics), so the card shell is the only thing that can
+  /// say "this one is a shortcut and the real settings are underneath". Rendered
+  /// in the same tokens it read as the first per-type card, which is how it
+  /// shipped and what this pins.
+  testWidgets('the bulk card carries its own surface, not the matrix one', (
+    tester,
+  ) async {
+    fakeTwoTypeMatrix();
+
+    await tester
+        .pumpWidget(wrap(Notify.view.make('notifications.preferences')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final WDiv bulk = tester.widget<WDiv>(
+      find.byKey(const ValueKey('notifications.bulk')),
+    );
+    final WDiv type = tester.widget<WDiv>(
+      find.byKey(const ValueKey('notifications.type.incident_opened')),
+    );
+
+    // Structural, over the className: the widget test runs in one brightness,
+    // so a rendered colour cannot carry this and the token can.
+    expect(bulk.className, contains('bg-surface-container-high'));
+    expect(type.className, isNot(contains('bg-surface-container-high')));
+    expect(bulk.className, isNot(equals(type.className)));
+
+    // And a second signal that costs no vertical space, because the heading row
+    // already reserves this height for its two lines of text.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('notifications.bulk')),
+        matching: find.byIcon(Icons.tune_outlined),
+      ),
+      findsOneWidget,
+    );
+  });
+
   /// The bulk switch reads the cells it would write, not the cells that exist.
   ///
   /// `incident_opened.mail` is locked and on; `incident_resolved.mail` is
