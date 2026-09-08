@@ -158,32 +158,57 @@ The backend must implement two endpoints:
 
 ### GET /notification-preferences Response
 
+A type x channel matrix. Each cell carries `enabled` and `locked`; a locked cell
+is one the backend refuses to change (a security mail, an account alert), and the
+screen renders its switch disabled rather than letting a tap earn a 422.
+
 ```json
 {
   "data": {
-    "push_enabled": true,
-    "email_enabled": false,
-    "in_app_enabled": true,
-    "type_preferences": {
-      "monitor_down": { "push": true, "email": true, "in_app": true },
-      "monitor_up": { "push": false, "email": false, "in_app": true }
+    "monitor_down": {
+      "label": "Monitor down",
+      "channels": {
+        "mail": { "enabled": true, "locked": false },
+        "database": { "enabled": true, "locked": true },
+        "push": { "enabled": false, "locked": false }
+      }
     }
-  }
+  },
+  "meta": { "push_provisioned": true }
 }
 ```
+
+`meta.push_provisioned` is the backend saying whether it has a push `app_id` at
+all. When it is `false` the push row still renders, with a hint under it, because
+the preference is a real choice even while nothing can deliver it yet.
 
 ### PUT /notification-preferences Request Body
 
+One cell, which is what a switch in the matrix sends:
+
+```json
+{ "type": "monitor_down", "channel": "push", "is_enabled": false }
+```
+
+Or a batch, which is what the bulk row above the matrix sends:
+
 ```json
 {
-  "push_enabled": true,
-  "email_enabled": true,
-  "in_app_enabled": true,
-  "type_preferences": {
-    "monitor_down": { "push": true, "email": true, "in_app": true }
-  }
+  "preferences": [
+    { "type": "monitor_down", "channel": "push", "is_enabled": false },
+    { "type": "monitor_up", "channel": "push", "is_enabled": false }
+  ]
 }
 ```
+
+> [!IMPORTANT]
+> The bulk row needs the batch shape. A backend that accepts only the single
+> shape answers 422 and the control is dead, so an adopter running a hand-rolled
+> endpoint has to add it. `magic-starter-laravel` has accepted both since 0.0.7.
+>
+> The batch is one request on purpose. A loop of one-request-per-type has a way
+> to half-succeed, and a half-succeeded bulk renders exactly like a complete one:
+> the switch reads "off" while the one type that failed keeps delivering.
 
 ---
 

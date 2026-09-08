@@ -224,7 +224,7 @@ class NotificationDropdown extends StatelessWidget {
       className: '''
         px-4 py-3 w-full
         border-b border-gray-200 dark:border-gray-700
-        flex flex-row items-center justify-between
+        flex flex-row items-center justify-between gap-3
       ''',
       children: [
         WText(
@@ -236,10 +236,27 @@ class NotificationDropdown extends StatelessWidget {
             onTap: onMarkAllAsRead,
             child: WText(
               trans('notifications.mark_all_read'),
+              // `truncate` is the whole fix, and it needs a bounded box to bite
+              // in. Wind gives it one here without a wrapper: with NO child
+              // claiming a grow share, the row wraps each child in `Flexible`
+              // (`w_div.dart:705-708`), so the action is capped at its share and
+              // ellipsizes. Turkish ("Tümünü okundu olarak işaretle") used to
+              // wrap to two lines inside the 320-wide panel and push the title
+              // off its baseline.
+              //
+              // Two shapes were tried and are recorded so they are not tried
+              // again. A `flex-1 min-w-0` wrapper works at normal text size and
+              // is WORSE, because a grow claim strips the `Flexible` off the
+              // TITLE too, and at an accessibility text scale the title then
+              // overflows the row instead of shrinking. And an inner
+              // `justify-end` row around the action overflowed by 648 px:
+              // `WAnchor` takes no className, so it cannot carry a flex claim of
+              // its own.
+              //
               // Brand-relative on both ends: `text-primary` resolves to the
               // ADOPTER's brand, so a hover jumping to a fixed palette green
               // reads as deliberate only while that brand happens to be green.
-              className: 'text-xs text-primary hover:text-primary/80',
+              className: 'text-xs text-primary hover:text-primary/80 truncate',
             ),
           ),
       ],

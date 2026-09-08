@@ -382,6 +382,8 @@ Future<void> deleteNotification(String id) async {
 > `false` is what a confirmation dialog needs. Before the callback could answer, the row reloaded after EVERY tap, so a host that asks before deleting spent a full `GET /notifications` every time somebody declined. A callback that always deletes returns `true`; a callback that can refuse returns `false` on that path.
 >
 > Two more keys the HOST must supply, for the same reason as `delete_failed`: **`notifications.delete`** names the row's delete control for a screen reader (it is a bare glyph with no text of its own), and **`notifications.channel_sms`** labels the SMS row on the preferences screen. Without them each renders as its own key.
+>
+> And two more since the bulk control landed: **`notifications.bulk_title`** and **`notifications.bulk_description`** head the card above the preference matrix. These are new copy on a screen an adopter has ALREADY translated, so an upgrade that does not add them ships the raw keys as visible text.
 
 > [!TIP]
 > The `Notify` facade exposes all these operations as static methods (`Notify.markAsRead`, `Notify.deleteNotification`, etc.), which simply delegate to the same manager instance.
