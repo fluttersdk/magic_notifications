@@ -13,6 +13,10 @@
 
   The card carries a brand border rather than its own surface, and that is a correction to how it first landed: `bg-surface-container-high` is the exact token the shared row shell uses for a switch's OFF track and for a channel chip's base tint, so an off switch had no visible track on this card and a chip merged into it. That is precisely the state the card exists to show.
 
+  The bulk push row carries the same `notifications.channel_push_unconfigured` hint the per-type push rows do, so on a backend reporting `meta.push_provisioned: false` that key now renders once more per screen than before. It is a key adopters already supply.
+
+  A failed batch reverts every cell it wrote, unconditionally. Skipping a cell with a per-cell write in flight was tried and is worse: it protects the batch's OPTIMISTIC value rather than the accepted one, so a type turned on beside a failing bulk-off ends up rendering off over a channel the server delivers on.
+
 - **A key on each preferences card.** `notifications.bulk` and `notifications.type.<typeKey>`, so a test or an E2E driver can say which card it is looking at. Both cards render the same row shell with the same channel labels, and before this an unscoped lookup found two of everything. Each bulk switch also carries `notifications.bulk.<channel>`.
 
 ### Fixed

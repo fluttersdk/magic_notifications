@@ -355,32 +355,28 @@ class NotificationPreferencesController extends MagicController
     }
   }
 
-  /// Put [previous] back on every cell [items] names that still holds what the
-  /// batch wrote.
+  /// Put [previous] back on every cell [items] names.
   ///
   /// Every item in a batch carries the same target value and every one of them
   /// disagreed with it before the write (that is the filter that built the
   /// list), so one value restores them all.
   ///
-  /// The value check is what makes it correct, and it is not defensive. Only the
-  /// BULK row disables itself during a batch; the matrix's own switches stay
-  /// live, so an operator can tap bulk-push-off and then `monitor_up.push` off
-  /// while the batch is in the air. If that single write lands and the batch
-  /// then fails, restoring `monitor_up.push` to its pre-batch `true` would undo
-  /// a write the backend accepted and leave the switch reading on over a
-  /// silenced channel: the exact failure `updateTypePreference`'s cell-scoped
-  /// rollback exists to prevent.
+  /// UNCONDITIONALLY, and a round of review talked me out of that and then back
+  /// into it, so the reasoning is here rather than in a commit nobody reads.
   ///
-  /// Two checks, because one cell can be claimed two ways. A per-cell write
-  /// still IN FLIGHT owns its own rollback, so `_saving` is left to it. A cell
-  /// already moved to the pre-batch value has nothing left to restore.
+  /// The worry was a per-cell write landing beside the batch and being undone by
+  /// its rollback. Skipping a cell in `_saving` to protect it makes things
+  /// strictly worse, because it protects the OPTIMISTIC value rather than the
+  /// accepted one: tap a type's push ON (per-cell PUT in flight, cell reads
+  /// true), tap the bulk row, which `any` now reads as on, so the batch writes
+  /// false; the batch fails, the skip leaves the cell at false, and the per-cell
+  /// PUT then succeeds. The cell renders off over a channel the server delivers
+  /// on. Restoring `previous` there is what gets it right.
   ///
-  /// One narrow window stays open and is accepted rather than papered over: a
-  /// per-cell write that STARTED and FINISHED inside the batch's flight, landing
-  /// on the same value the batch wrote, is indistinguishable from the batch's
-  /// own optimistic write, and the revert puts it back. Closing it would need a
-  /// per-cell record of who wrote last, which is a bigger mechanism than the
-  /// case is worth; the operator's next read corrects it.
+  /// And the order the worry was built on cannot happen. It needs the operator
+  /// to tap a matrix switch to the value the batch is already writing, but the
+  /// batch's own optimistic write has already moved that switch, so the only tap
+  /// available on it is the opposite one, which `previous` restores correctly.
   void _revertChannelAcrossTypes(
     List<Map<String, dynamic>> items,
     String channel,
@@ -389,12 +385,12 @@ class NotificationPreferencesController extends MagicController
     Map<String, dynamic> reverted = matrixNotifier.value;
 
     for (final Map<String, dynamic> item in items) {
-      final String type = item['type'] as String;
-
-      if (_saving.contains('$type.$channel')) continue;
-      if (_channelEnabled(reverted, type, channel) == previous) continue;
-
-      reverted = _withChannelEnabled(reverted, type, channel, previous);
+      reverted = _withChannelEnabled(
+        reverted,
+        item['type'] as String,
+        channel,
+        previous,
+      );
     }
 
     matrixNotifier.value = reverted;
