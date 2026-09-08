@@ -28,6 +28,7 @@ You are preparing a new release for the **Magic Notifications** Flutter plugin. 
 3. **Tests** — All tests must pass (see context above). If failing, STOP and report.
 4. **Analyzer** — Zero issues required (see context above). If issues, STOP and report.
 5. **Version** — Determine the new version from $ARGUMENTS or auto-increment.
+6. **Agent-facing reference** — Update `../magic/skills/magic-framework/references/plugin-notifications.md` against this release and move its first-line stamp to the new version. That file, not this repo's `CLAUDE.md`, is what an agent adopting this package reads: `.pubignore` keeps `CLAUDE.md` and `.claude/` out of the published archive. It lives in another repository, so nothing here forces it; `test/skill_reference_stamp_test.dart` catches a stale stamp when a sibling checkout exists and skips when it does not, which is why this line is here too.
 
 ### Phase 2: Version Bump
 
