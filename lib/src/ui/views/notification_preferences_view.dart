@@ -225,14 +225,20 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
       'w-full bg-surface-container border border-color-border '
       'rounded-2xl overflow-hidden flex flex-col';
 
-  /// The bulk card's shell: [_cardClassName] one surface step up.
+  /// The bulk card's shell: [_cardClassName] with the brand carrying the border.
   ///
-  /// `surface-container-high` is the token the theme already reserves for a
-  /// panel nested inside another, which is what this is against the matrix it
-  /// summarises. Its rows are deliberately identical to the per-type rows, so
-  /// the surface is the only thing carrying "these are shortcuts".
+  /// The SURFACE stays where the per-type cards are, and that is a correction.
+  /// It shipped on `surface-container-high` for one release, which is the exact
+  /// token the shared row shell uses for a switch's OFF track
+  /// ([_bulkSwitchClassName]'s neighbour below) and for a channel chip's base
+  /// tint ([_channelChipClassName]). An off switch therefore had no visible
+  /// track on this card and a not-fully-on chip merged into it, which is
+  /// precisely the state the card exists to show: "push is off everywhere".
+  ///
+  /// The border carries the distinction instead. It cannot collide with
+  /// anything, because no control inside draws a border of its own.
   static const String _bulkCardClassName =
-      'w-full bg-surface-container-high border border-color-border '
+      'w-full bg-surface-container border border-primary '
       'rounded-2xl overflow-hidden flex flex-col';
 
   /// The glyph tile in the bulk card's heading.
@@ -269,12 +275,10 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
       // shell with the same channel labels, so without a handle neither a test
       // nor an E2E driver can say which card it is looking at.
       key: const ValueKey('notifications.bulk'),
-      // Its own surface, one step up from the per-type cards below, and a solid
-      // border where they carry the hairline. The rows inside are identical to
-      // theirs by design (same control, same touch target, same semantics), so
-      // the card is the only thing that can say "this one is a shortcut and the
-      // real settings are underneath". Rendered in the same tokens as those
-      // cards, it read as the first of them.
+      // The brand border is what separates it from the per-type cards below.
+      // The rows inside are identical to theirs by design (same control, same
+      // touch target, same semantics), so the card shell is the only thing that
+      // can say "this one is a shortcut and the real settings are underneath".
       className: _bulkCardClassName,
       children: [
         WDiv(
@@ -342,19 +346,40 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
     String channel, {
     required bool isLast,
   }) {
-    // The state of the cells this row would WRITE, not of every cell that
-    // exists: counting a locked cell would let the switch claim a channel is
-    // fully on while the tap that follows can only reach part of it. The caller
-    // has already dropped a channel with no writable cell at all.
+    // ANY, not every, and the difference is what the one available tap does.
+    //
+    // `every` reads a mixed column as off, so the only tap available on it is
+    // "turn on", and silencing a channel that is on for two types out of three
+    // took two taps THROUGH a state where it delivers on the type the operator
+    // had deliberately off (and the second tap waits for the first batch,
+    // because the row disables itself meanwhile). Silencing is the case this
+    // card exists for.
+    //
+    // `any` reads it as on, so the tap means "off" and reaches every type in
+    // one batch. The cost is that a mixed column looks the same as a full one,
+    // which a two-state switch cannot avoid either way; this side of it is the
+    // one where the obvious tap does the useful thing.
+    //
+    // Only the cells this row would WRITE count: a locked cell cannot be
+    // reached by the tap, so letting it drive the reading would describe a
+    // channel the tap cannot change. The caller has already dropped a channel
+    // with no writable cell at all.
     final bool isEnabled = _writableStates(
       matrix,
       channel,
-    ).every((enabled) => enabled);
+    ).any((enabled) => enabled);
 
     // Disabled while its own batch is out. One tap writes several cells, so a
     // second tap mid-flight would send a second batch over the same cells and
     // the two would settle in an order neither of them chose.
     final bool isSaving = controller.bulkSavingNotifier.value.contains(channel);
+
+    // The same "cannot deliver yet" hint the per-type push rows carry. Leaving
+    // it off here said the bulk push row was fine while every row below it
+    // warned, which reads as the warning being about those types rather than
+    // about the app's push integration.
+    final bool pushProvisioned =
+        widget.pushProvisioned ?? controller.pushProvisionedNotifier.value;
 
     return _buildToggleRow(
       key: ValueKey('notifications.bulk.$channel'),
@@ -362,7 +387,7 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
       isEnabled: isEnabled,
       isLocked: false,
       isBusy: isSaving,
-      showPushHint: false,
+      showPushHint: channel.toLowerCase() == 'push' && !pushProvisioned,
       isLast: isLast,
       onChanged: (newValue) {
         controller.updateChannelAcrossTypes(channel, newValue);

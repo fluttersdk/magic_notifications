@@ -208,9 +208,39 @@ void main() {
 
     // Structural, over the className: the widget test runs in one brightness,
     // so a rendered colour cannot carry this and the token can.
-    expect(bulk.className, contains('bg-surface-container-high'));
-    expect(type.className, isNot(contains('bg-surface-container-high')));
     expect(bulk.className, isNot(equals(type.className)));
+
+    // And the card's surface must not be a token the controls INSIDE it draw
+    // with. It shipped on `bg-surface-container-high` for one release, which is
+    // exactly what a switch's off track and a not-enabled channel chip use, so
+    // an off switch had no visible track on this card and a chip merged into
+    // it: precisely the state the card exists to show. The first version of
+    // this test compared the card against the per-type card only, and both
+    // strings contained the colliding token quite happily.
+    final String cardSurface = bulk.className!
+        .split(' ')
+        .firstWhere((token) => token.startsWith('bg-'));
+
+    final WSwitch offSwitch = tester.widget<WSwitch>(
+      find.byKey(const ValueKey('notifications.bulk.push')),
+    );
+    final WDiv chip = tester
+        .widgetList<WDiv>(
+          find.descendant(
+            of: find.byKey(const ValueKey('notifications.bulk')),
+            matching: find.byType(WDiv),
+          ),
+        )
+        .firstWhere((div) => div.className?.contains('w-10 h-10') ?? false);
+
+    // Whole tokens, not substrings: `bg-surface-container` is a prefix of
+    // `bg-surface-container-high`, so a `contains` check answers true for two
+    // tokens that are different colours.
+    bool drawsWith(String? className, String token) =>
+        (className ?? '').split(RegExp(r'\s+')).contains(token);
+
+    expect(drawsWith(offSwitch.className, cardSurface), isFalse);
+    expect(drawsWith(chip.className, cardSurface), isFalse);
 
     // And a second signal that costs no vertical space, because the heading row
     // already reserves this height for its two lines of text.
@@ -225,11 +255,14 @@ void main() {
 
   /// The bulk switch reads the cells it would write, not the cells that exist.
   ///
-  /// `incident_opened.mail` is locked and on; `incident_resolved.mail` is
-  /// unlocked and on. Counting the locked one would make the control claim mail
-  /// is fully on, and the tap that follows would then try to turn it off and
-  /// change exactly one type, leaving a switch that says off over a channel that
-  /// is still delivering.
+  /// `incident_opened.mail` is locked and OFF; `incident_resolved.mail` is
+  /// unlocked and on. The two disagree on purpose, because that is the only
+  /// shape under which the assertion can fail: with both on, `any` and `every`
+  /// answer the same whether or not the locked cell is counted, and an
+  /// implementation that counts it passes.
+  ///
+  /// Push is off on both types, so the push switch reads off under `any` too,
+  /// which is what pins the reading rather than the mail row alone.
   testWidgets('the bulk switch ignores the cells it cannot write', (
     tester,
   ) async {
@@ -282,7 +315,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('Push is not set up yet'), findsOneWidget);
+    // Two: the bulk push row carries the same heads-up as the per-type one,
+    // because the warning is about the app's push integration and not about
+    // any one notification type.
+    expect(find.text('Push is not set up yet'), findsNWidgets(2));
   });
 
   testWidgets('toggling a channel writes the preference back', (tester) async {
@@ -441,7 +477,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('Push is not set up yet'), findsOneWidget);
+    // Two rows carry the hint now, the bulk one and the per-type one, and both
+    // have to survive the width.
+    expect(find.text('Push is not set up yet'), findsNWidgets(2));
     expect(
       tester.takeException(),
       isNull,

@@ -355,11 +355,32 @@ class NotificationPreferencesController extends MagicController
     }
   }
 
-  /// Put [previous] back on every cell [items] names.
+  /// Put [previous] back on every cell [items] names that still holds what the
+  /// batch wrote.
   ///
   /// Every item in a batch carries the same target value and every one of them
   /// disagreed with it before the write (that is the filter that built the
   /// list), so one value restores them all.
+  ///
+  /// The value check is what makes it correct, and it is not defensive. Only the
+  /// BULK row disables itself during a batch; the matrix's own switches stay
+  /// live, so an operator can tap bulk-push-off and then `monitor_up.push` off
+  /// while the batch is in the air. If that single write lands and the batch
+  /// then fails, restoring `monitor_up.push` to its pre-batch `true` would undo
+  /// a write the backend accepted and leave the switch reading on over a
+  /// silenced channel: the exact failure `updateTypePreference`'s cell-scoped
+  /// rollback exists to prevent.
+  ///
+  /// Two checks, because one cell can be claimed two ways. A per-cell write
+  /// still IN FLIGHT owns its own rollback, so `_saving` is left to it. A cell
+  /// already moved to the pre-batch value has nothing left to restore.
+  ///
+  /// One narrow window stays open and is accepted rather than papered over: a
+  /// per-cell write that STARTED and FINISHED inside the batch's flight, landing
+  /// on the same value the batch wrote, is indistinguishable from the batch's
+  /// own optimistic write, and the revert puts it back. Closing it would need a
+  /// per-cell record of who wrote last, which is a bigger mechanism than the
+  /// case is worth; the operator's next read corrects it.
   void _revertChannelAcrossTypes(
     List<Map<String, dynamic>> items,
     String channel,
@@ -368,12 +389,12 @@ class NotificationPreferencesController extends MagicController
     Map<String, dynamic> reverted = matrixNotifier.value;
 
     for (final Map<String, dynamic> item in items) {
-      reverted = _withChannelEnabled(
-        reverted,
-        item['type'] as String,
-        channel,
-        previous,
-      );
+      final String type = item['type'] as String;
+
+      if (_saving.contains('$type.$channel')) continue;
+      if (_channelEnabled(reverted, type, channel) == previous) continue;
+
+      reverted = _withChannelEnabled(reverted, type, channel, previous);
     }
 
     matrixNotifier.value = reverted;
