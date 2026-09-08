@@ -377,6 +377,15 @@ class NotificationPreferencesController extends MagicController
   /// to tap a matrix switch to the value the batch is already writing, but the
   /// batch's own optimistic write has already moved that switch, so the only tap
   /// available on it is the opposite one, which `previous` restores correctly.
+  ///
+  /// One order does still land wrong, and it is accepted rather than covered:
+  /// when BOTH writes fail, the two rollbacks race. Tap bulk-push-off (batch in
+  /// flight, cell optimistically false), tap that cell on (its own snapshot is
+  /// therefore false), then let both PUTs 500. The batch revert writes true and
+  /// the per-cell revert writes false after it, so the switch reads off while
+  /// the server still holds on. The `_saving` skip reached the same final value
+  /// by a different route, so this is not something the narrowing would have
+  /// fixed; the operator's next read corrects it.
   void _revertChannelAcrossTypes(
     List<Map<String, dynamic>> items,
     String channel,
