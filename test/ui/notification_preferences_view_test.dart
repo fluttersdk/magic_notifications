@@ -114,6 +114,79 @@ void main() {
     });
   }
 
+  /// A matrix whose push column is MIXED across two writable cells.
+  ///
+  /// `fakeTwoTypeMatrix` cannot tell `any` from `every`: its writable mail
+  /// column is a single `true` and its push column is two `false`, and the two
+  /// readings agree on both. This is the only shape where they disagree.
+  void fakeMixedColumnMatrix() {
+    Http.fake((request) {
+      return MagicResponse(
+        data: <String, dynamic>{
+          'data': <String, dynamic>{
+            'incident_opened': <String, dynamic>{
+              'label': 'Incident opened',
+              'channels': <String, dynamic>{
+                'push': <String, dynamic>{'enabled': true, 'locked': false},
+              },
+            },
+            'incident_resolved': <String, dynamic>{
+              'label': 'Incident resolved',
+              'channels': <String, dynamic>{
+                'push': <String, dynamic>{'enabled': false, 'locked': false},
+              },
+            },
+          },
+          'meta': <String, dynamic>{'push_provisioned': true},
+        },
+        statusCode: 200,
+      );
+    });
+  }
+
+  /// A partially-on channel reads ON, so the one tap available silences it.
+  ///
+  /// Under `every` the same column reads off, which leaves "turn on" as the only
+  /// tap: silencing then takes two taps THROUGH a state where the channel
+  /// delivers on the type the operator had deliberately off. Silencing is the
+  /// case this card exists for.
+  testWidgets('a partially-on channel reads on, and one tap silences it', (
+    tester,
+  ) async {
+    fakeMixedColumnMatrix();
+
+    await tester
+        .pumpWidget(wrap(Notify.view.make('notifications.preferences')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final WSwitch push = tester.widget<WSwitch>(
+      find.byKey(const ValueKey('notifications.bulk.push')),
+    );
+    expect(push.value, isTrue);
+
+    final List<Map<String, dynamic>> sent = <Map<String, dynamic>>[];
+    Http.fake((request) {
+      sent.add(request.data as Map<String, dynamic>);
+
+      return MagicResponse(data: <String, dynamic>{}, statusCode: 200);
+    });
+
+    await tester.tap(find.byKey(const ValueKey('notifications.bulk.push')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // The one cell that disagrees with the target, turned OFF. Under `every`
+    // the tap would have carried `is_enabled: true` and turned the other one on.
+    expect(sent.single['preferences'], <Map<String, dynamic>>[
+      <String, dynamic>{
+        'type': 'incident_opened',
+        'channel': 'push',
+        'is_enabled': false,
+      },
+    ]);
+  });
+
   testWidgets('the bulk row reaches every type that offers the channel', (
     tester,
   ) async {
@@ -182,16 +255,18 @@ void main() {
     expect(push.value, isFalse);
   });
 
-  /// The bulk card does not look like the cards it summarises.
+  /// The bulk card is told apart by its border, and its surface stays clear of
+  /// the controls it renders.
   ///
   /// Its rows are deliberately identical to a per-type row (same control, same
   /// touch target, same semantics), so the card shell is the only thing that can
-  /// say "this one is a shortcut and the real settings are underneath". Rendered
-  /// in the same tokens it read as the first per-type card, which is how it
-  /// shipped and what this pins.
-  testWidgets('the bulk card carries its own surface, not the matrix one', (
-    tester,
-  ) async {
+  /// say "this one is a shortcut and the real settings are underneath". It first
+  /// shipped carrying its own surface instead, `bg-surface-container-high`,
+  /// which is exactly the token the row shell uses for a switch's off track and
+  /// a chip's base tint: an off switch had no visible track on it.
+  testWidgets(
+      'the bulk card is bordered, and its surface collides with nothing',
+      (tester) async {
     fakeTwoTypeMatrix();
 
     await tester
@@ -208,9 +283,43 @@ void main() {
 
     // Structural, over the className: the widget test runs in one brightness,
     // so a rendered colour cannot carry this and the token can.
-    expect(bulk.className, contains('bg-surface-container-high'));
-    expect(type.className, isNot(contains('bg-surface-container-high')));
-    expect(bulk.className, isNot(equals(type.className)));
+    // The border is the whole distinction now, so assert it rather than just a
+    // difference: `isNot(equals(...))` passes on any change at all, including
+    // one that leaves the two cards looking identical.
+    expect(bulk.className, contains('border-primary'));
+    expect(type.className, isNot(contains('border-primary')));
+
+    // And the card's surface must not be a token the controls INSIDE it draw
+    // with. It shipped on `bg-surface-container-high` for one release, which is
+    // exactly what a switch's off track and a not-enabled channel chip use, so
+    // an off switch had no visible track on this card and a chip merged into
+    // it: precisely the state the card exists to show. The first version of
+    // this test compared the card against the per-type card only, and both
+    // strings contained the colliding token quite happily.
+    final String cardSurface = bulk.className!
+        .split(' ')
+        .firstWhere((token) => token.startsWith('bg-'));
+
+    final WSwitch offSwitch = tester.widget<WSwitch>(
+      find.byKey(const ValueKey('notifications.bulk.push')),
+    );
+    final WDiv chip = tester
+        .widgetList<WDiv>(
+          find.descendant(
+            of: find.byKey(const ValueKey('notifications.bulk')),
+            matching: find.byType(WDiv),
+          ),
+        )
+        .firstWhere((div) => div.className?.contains('w-10 h-10') ?? false);
+
+    // Whole tokens, not substrings: `bg-surface-container` is a prefix of
+    // `bg-surface-container-high`, so a `contains` check answers true for two
+    // tokens that are different colours.
+    bool drawsWith(String? className, String token) =>
+        (className ?? '').split(RegExp(r'\s+')).contains(token);
+
+    expect(drawsWith(offSwitch.className, cardSurface), isFalse);
+    expect(drawsWith(chip.className, cardSurface), isFalse);
 
     // And a second signal that costs no vertical space, because the heading row
     // already reserves this height for its two lines of text.
@@ -225,11 +334,14 @@ void main() {
 
   /// The bulk switch reads the cells it would write, not the cells that exist.
   ///
-  /// `incident_opened.mail` is locked and on; `incident_resolved.mail` is
-  /// unlocked and on. Counting the locked one would make the control claim mail
-  /// is fully on, and the tap that follows would then try to turn it off and
-  /// change exactly one type, leaving a switch that says off over a channel that
-  /// is still delivering.
+  /// `incident_opened.mail` is locked and OFF; `incident_resolved.mail` is
+  /// unlocked and on. The two disagree on purpose, because that is the only
+  /// shape under which the assertion can fail: with both on, `any` and `every`
+  /// answer the same whether or not the locked cell is counted, and an
+  /// implementation that counts it passes.
+  ///
+  /// Push is off on both types, so the push switch reads off under `any` too,
+  /// which is what pins the reading rather than the mail row alone.
   testWidgets('the bulk switch ignores the cells it cannot write', (
     tester,
   ) async {
@@ -282,7 +394,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('Push is not set up yet'), findsOneWidget);
+    // Two: the bulk push row carries the same heads-up as the per-type one,
+    // because the warning is about the app's push integration and not about
+    // any one notification type.
+    expect(find.text('Push is not set up yet'), findsNWidgets(2));
   });
 
   testWidgets('toggling a channel writes the preference back', (tester) async {
@@ -441,7 +556,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('Push is not set up yet'), findsOneWidget);
+    // Two rows carry the hint now, the bulk one and the per-type one, and both
+    // have to survive the width.
+    expect(find.text('Push is not set up yet'), findsNWidgets(2));
     expect(
       tester.takeException(),
       isNull,

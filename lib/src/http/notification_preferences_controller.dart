@@ -360,6 +360,32 @@ class NotificationPreferencesController extends MagicController
   /// Every item in a batch carries the same target value and every one of them
   /// disagreed with it before the write (that is the filter that built the
   /// list), so one value restores them all.
+  ///
+  /// UNCONDITIONALLY, and a round of review talked me out of that and then back
+  /// into it, so the reasoning is here rather than in a commit nobody reads.
+  ///
+  /// The worry was a per-cell write landing beside the batch and being undone by
+  /// its rollback. Skipping a cell in `_saving` to protect it makes things
+  /// strictly worse, because it protects the OPTIMISTIC value rather than the
+  /// accepted one: tap a type's push ON (per-cell PUT in flight, cell reads
+  /// true), tap the bulk row, which `any` now reads as on, so the batch writes
+  /// false; the batch fails, the skip leaves the cell at false, and the per-cell
+  /// PUT then succeeds. The cell renders off over a channel the server delivers
+  /// on. Restoring `previous` there is what gets it right.
+  ///
+  /// And the order the worry was built on cannot happen. It needs the operator
+  /// to tap a matrix switch to the value the batch is already writing, but the
+  /// batch's own optimistic write has already moved that switch, so the only tap
+  /// available on it is the opposite one, which `previous` restores correctly.
+  ///
+  /// One order does still land wrong, and it is accepted rather than covered:
+  /// when BOTH writes fail, the two rollbacks race. Tap bulk-push-off (batch in
+  /// flight, cell optimistically false), tap that cell on (its own snapshot is
+  /// therefore false), then let both PUTs 500. The batch revert writes true and
+  /// the per-cell revert writes false after it, so the switch reads off while
+  /// the server still holds on. The `_saving` skip reached the same final value
+  /// by a different route, so this is not something the narrowing would have
+  /// fixed; the operator's next read corrects it.
   void _revertChannelAcrossTypes(
     List<Map<String, dynamic>> items,
     String channel,

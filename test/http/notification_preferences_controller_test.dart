@@ -349,6 +349,63 @@ void main() {
       expect(_enabledOn(controller, 'incident_opened', 'push'), isFalse);
     });
 
+    /// A failed batch restores every cell it wrote, including one a per-cell
+    /// write is holding.
+    ///
+    /// Skipping a cell in `_saving` reads like protecting it and does the
+    /// opposite: it protects the batch's OPTIMISTIC value rather than the one
+    /// the server accepted. The order below is the reachable one. `mail` is on,
+    /// a per-cell write turns `push` on and stays in flight, the bulk row (which
+    /// `any` reads as on) is tapped off, and the batch fails. `push` has to come
+    /// back on, because the per-cell PUT is about to succeed and the server will
+    /// hold it on.
+    test('a failed batch restores a cell a per-cell write is holding',
+        () async {
+      controller.matrixNotifier.value = <String, dynamic>{
+        'monitor_down': <String, dynamic>{
+          'label': 'Monitor Down',
+          'channels': <String, dynamic>{
+            'push': <String, dynamic>{'enabled': false, 'locked': false},
+          },
+        },
+      };
+
+      final _GatedPreferencesDriver network = _GatedPreferencesDriver();
+      Magic.app.setInstance('network', network);
+      controller.onInit();
+
+      // The per-cell write, left in the air.
+      final Future<void> cell = controller.updateTypePreference(
+        'monitor_down',
+        'push',
+        true,
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(_enabled(controller, 'push'), isTrue);
+
+      // The bulk tap, which fails.
+      final Future<void> batch = controller.updateChannelAcrossTypes(
+        'push',
+        false,
+      );
+      await Future<void>.delayed(Duration.zero);
+      // Index 1: the batch. Index 0 is the per-cell write, which has to stay in
+      // the air, because a cell whose write already landed is not the case this
+      // test is about.
+      network.answerPut(statusCode: 500, index: 1);
+      await batch;
+
+      // Restored, not left at the batch's optimistic `false`: the per-cell PUT
+      // below succeeds and the server ends up holding `true`.
+      expect(_enabled(controller, 'push'), isTrue);
+
+      network.answerPut(statusCode: 200);
+      await cell;
+
+      expect(_enabled(controller, 'push'), isTrue);
+    });
+
     test('it leaves a locked cell alone', () async {
       controller.matrixNotifier.value = _bulkMatrix();
 
@@ -465,9 +522,19 @@ class _GatedPreferencesDriver extends FakeNetworkDriver {
   ///
   /// [pushProvisioned] rides in the `meta` block the real endpoint returns, so
   /// a test can drive the one publish the write path makes into a notifier.
-  void answerPut({int statusCode = 200, bool? pushProvisioned}) {
-    expect(_puts, isNotEmpty, reason: 'No write was waiting for an answer.');
-    _puts.removeAt(0).complete(
+  /// [index] picks WHICH queued write to answer, oldest first.
+  ///
+  /// Default 0, the only order most cases need. A test holding a per-cell write
+  /// open while a batch goes out and fails has to answer the second one first,
+  /// and answering the first instead would resolve the wrong request and leave
+  /// the scenario untested.
+  void answerPut({int statusCode = 200, bool? pushProvisioned, int index = 0}) {
+    expect(
+      _puts.length,
+      greaterThan(index),
+      reason: 'No write was waiting at index $index.',
+    );
+    _puts.removeAt(index).complete(
           MagicResponse(
             data: <String, dynamic>{
               if (pushProvisioned != null)
