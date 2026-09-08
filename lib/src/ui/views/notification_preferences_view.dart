@@ -53,6 +53,10 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
     NotificationPreferencesController, NotificationPreferencesView> {
   static const _iconLocked = Icons.lock_outline;
   static const _iconBack = Icons.chevron_left;
+
+  /// The bulk card's heading glyph: sliders, for "this row sets several at
+  /// once", rather than a bell, which every row below it already is.
+  static const _iconBulk = Icons.tune_outlined;
   static const _channelIcons = <String, IconData>{
     'mail': Icons.mail_outline,
     'database': Icons.inbox_outlined,
@@ -171,6 +175,7 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
       listenable: Listenable.merge([
         controller.matrixNotifier,
         controller.pushProvisionedNotifier,
+        controller.bulkSavingNotifier,
       ]),
       builder: (context, _) {
         final Map<String, dynamic> matrix = controller.matrixNotifier.value;
@@ -200,6 +205,7 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
         return WDiv(
           className: 'flex flex-col gap-6',
           children: [
+            _buildBulkCard(matrix),
             for (var i = 0; i < types.length; i++)
               _buildNotificationType(
                 types[i],
@@ -219,12 +225,178 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
       'w-full bg-surface-container border border-color-border '
       'rounded-2xl overflow-hidden flex flex-col';
 
+  /// The bulk card's shell: [_cardClassName] one surface step up.
+  ///
+  /// `surface-container-high` is the token the theme already reserves for a
+  /// panel nested inside another, which is what this is against the matrix it
+  /// summarises. Its rows are deliberately identical to the per-type rows, so
+  /// the surface is the only thing carrying "these are shortcuts".
+  static const String _bulkCardClassName =
+      'w-full bg-surface-container-high border border-color-border '
+      'rounded-2xl overflow-hidden flex flex-col';
+
+  /// The glyph tile in the bulk card's heading.
+  ///
+  /// The per-type cards head with text alone, so a tile here is a second signal
+  /// costing no vertical space: the heading row already reserves this height for
+  /// its two lines of text.
+  static const String _bulkTileClassName =
+      'size-9 shrink-0 flex items-center justify-center rounded-lg '
+      'bg-primary-container';
+
+  /// The card above the matrix: one switch per channel, applying to every type.
+  ///
+  /// The matrix is the precise control and this is the fast one. A team that
+  /// silences push on a phone it cannot hear does not want to walk eight
+  /// notification types to do it, and eight taps is eight chances to leave one
+  /// on.
+  Widget _buildBulkCard(Map<String, dynamic> matrix) {
+    // The channels that have at least one cell this card could WRITE, not every
+    // channel the matrix mentions. A matrix whose only channel is locked
+    // everywhere would otherwise render a heading and a subtitle over an empty
+    // body, and `isLast` computed over the pre-collapse list would leave a
+    // hairline along the card's clipped bottom edge.
+    final List<String> channels = _channelsAcrossTypes(matrix)
+        .where((channel) => _writableStates(matrix, channel).isNotEmpty)
+        .toList();
+
+    if (channels.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return WDiv(
+      // Keyed, and the per-type card below is too: both render the same row
+      // shell with the same channel labels, so without a handle neither a test
+      // nor an E2E driver can say which card it is looking at.
+      key: const ValueKey('notifications.bulk'),
+      // Its own surface, one step up from the per-type cards below, and a solid
+      // border where they carry the hairline. The rows inside are identical to
+      // theirs by design (same control, same touch target, same semantics), so
+      // the card is the only thing that can say "this one is a shortcut and the
+      // real settings are underneath". Rendered in the same tokens as those
+      // cards, it read as the first of them.
+      className: _bulkCardClassName,
+      children: [
+        WDiv(
+          className: 'px-6 pt-6 pb-3 flex flex-row items-start gap-3',
+          children: [
+            WDiv(
+              className: _bulkTileClassName,
+              child: WIcon(_iconBulk, className: 'text-[18px] text-primary'),
+            ),
+            WDiv(
+              className: 'min-w-0 flex-1 flex flex-col gap-1',
+              children: [
+                WText(
+                  trans('notifications.bulk_title'),
+                  className: 'text-lg font-semibold text-fg',
+                ),
+                WText(
+                  trans('notifications.bulk_description'),
+                  className: 'text-sm text-fg-muted',
+                ),
+              ],
+            ),
+          ],
+        ),
+        WDiv(
+          className: 'flex flex-col',
+          children: [
+            for (var i = 0; i < channels.length; i++)
+              _buildBulkToggle(
+                matrix,
+                channels[i],
+                isLast: i == channels.length - 1,
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// Every channel any type in [matrix] offers, in the order they first appear.
+  ///
+  /// Insertion order rather than sorted: the backend publishes its channels in
+  /// the order it means them to read, and the per-type cards below already
+  /// render them that way. Sorting here would put the bulk card in a different
+  /// order from the cards it summarises.
+  List<String> _channelsAcrossTypes(Map<String, dynamic> matrix) {
+    final channels = <String>{};
+
+    for (final Object? typeData in matrix.values) {
+      if (typeData is! Map) continue;
+
+      final Object? channelsData = typeData['channels'];
+      if (channelsData is! Map) continue;
+
+      channels.addAll(channelsData.keys.map((key) => key.toString()));
+    }
+
+    return channels.toList();
+  }
+
+  /// One bulk row: [channel]'s state across every type, and the switch that
+  /// writes it to all of them.
+  Widget _buildBulkToggle(
+    Map<String, dynamic> matrix,
+    String channel, {
+    required bool isLast,
+  }) {
+    // The state of the cells this row would WRITE, not of every cell that
+    // exists: counting a locked cell would let the switch claim a channel is
+    // fully on while the tap that follows can only reach part of it. The caller
+    // has already dropped a channel with no writable cell at all.
+    final bool isEnabled = _writableStates(
+      matrix,
+      channel,
+    ).every((enabled) => enabled);
+
+    // Disabled while its own batch is out. One tap writes several cells, so a
+    // second tap mid-flight would send a second batch over the same cells and
+    // the two would settle in an order neither of them chose.
+    final bool isSaving = controller.bulkSavingNotifier.value.contains(channel);
+
+    return _buildToggleRow(
+      key: ValueKey('notifications.bulk.$channel'),
+      channel: channel,
+      isEnabled: isEnabled,
+      isLocked: false,
+      isBusy: isSaving,
+      showPushHint: false,
+      isLast: isLast,
+      onChanged: (newValue) {
+        controller.updateChannelAcrossTypes(channel, newValue);
+      },
+    );
+  }
+
+  /// The `enabled` flag of every UNLOCKED cell [channel] has across [matrix].
+  List<bool> _writableStates(Map<String, dynamic> matrix, String channel) {
+    final states = <bool>[];
+
+    for (final Object? typeData in matrix.values) {
+      if (typeData is! Map) continue;
+
+      final Object? channelsData = typeData['channels'];
+      if (channelsData is! Map) continue;
+
+      final Object? channelData = channelsData[channel];
+      if (channelData is! Map) continue;
+      if (channelData['locked'] == true) continue;
+
+      states.add(channelData['enabled'] as bool? ?? false);
+    }
+
+    return states;
+  }
+
   Widget _buildNotificationType(String typeKey, Map<String, dynamic> typeData) {
     final title = typeData['label']?.toString() ?? typeKey;
     final channels = typeData['channels'] as Map<String, dynamic>? ?? {};
     final channelKeys = channels.keys.toList();
 
     return WDiv(
+      key: ValueKey('notifications.type.$typeKey'),
       className: _cardClassName,
       children: [
         WDiv(
@@ -287,8 +459,6 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
   }) {
     final bool isEnabled = channelData['enabled'] as bool? ?? false;
     final bool isLocked = channelData['locked'] as bool? ?? false;
-    final icon = _channelIcon(channel);
-    final Set<String> chipStates = {if (isEnabled && !isLocked) 'enabled'};
     // The push channel toggle cannot deliver until the app provisions its push
     // integration; surface a subtle heads-up beneath its label when it has not.
     // The backend-reported flag drives it, unless the host forced a value.
@@ -296,6 +466,39 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
         widget.pushProvisioned ?? controller.pushProvisionedNotifier.value;
     final bool showPushHint =
         channel.toLowerCase() == 'push' && !pushProvisioned;
+
+    return _buildToggleRow(
+      channel: channel,
+      isEnabled: isEnabled,
+      isLocked: isLocked,
+      showPushHint: showPushHint,
+      isLast: isLast,
+      onChanged: (newValue) {
+        controller.updateTypePreference(type, channel, newValue);
+      },
+    );
+  }
+
+  /// The row both the matrix and the bulk card render: a chip, a label, an
+  /// optional hint, and the switch that writes it.
+  ///
+  /// Shared rather than copied, because the two callers differ only in what the
+  /// switch DOES: one writes a cell, the other writes a column. The chip
+  /// states, the semantics exclusion, the shrink behaviour and the separator
+  /// are the same problem in both, and a copy would drift the moment one of
+  /// them is fixed.
+  Widget _buildToggleRow({
+    required String channel,
+    required bool isEnabled,
+    required bool isLocked,
+    required bool showPushHint,
+    required bool isLast,
+    required ValueChanged<bool> onChanged,
+    bool isBusy = false,
+    Key? key,
+  }) {
+    final icon = _channelIcon(channel);
+    final Set<String> chipStates = {if (isEnabled && !isLocked) 'enabled'};
 
     return WDiv(
       className: isLast ? _lastRowClassName : _rowClassName,
@@ -346,8 +549,13 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
           ],
         ),
         WSwitch(
+          key: key,
           value: isEnabled,
-          disabled: isLocked,
+          // `isLocked` is the backend refusing the cell and draws a padlock;
+          // `isBusy` is this row's own write being out and draws nothing. Both
+          // stop a tap, and conflating them put a padlock on a row that was
+          // merely saving.
+          disabled: isLocked || isBusy,
           // Label the toggle with its visible channel name: the channel text is
           // a sibling WText, so without this the switch had no accessible name
           // (a screen reader announced a bare "switch") and no stable handle
@@ -358,9 +566,7 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
               'bg-surface-container-high checked:bg-primary '
               'disabled:opacity-50',
           thumbClassName: 'w-5 h-5 rounded-full bg-surface shadow',
-          onChanged: (newValue) {
-            controller.updateTypePreference(type, channel, newValue);
-          },
+          onChanged: onChanged,
         ),
       ],
     );

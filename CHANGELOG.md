@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+- **A bulk row per channel on the preferences screen.** `NotificationPreferencesView` now renders a card above the matrix with one switch per channel, applying to every notification type at once. A team silencing push on a phone it cannot hear no longer walks eight types to do it, and eight taps is eight chances to leave one on. Backed by `NotificationPreferencesController.updateChannelAcrossTypes(channel, isEnabled)`, which skips two kinds of cell: a LOCKED one, because the endpoint validates the batch as one unit and a locked item spends the whole request on a 422; and one that already holds the target value, because sending it says what the server already holds. The switch reads the state of the cells it would WRITE, not of every cell that exists, so a locked-and-on cell cannot make it claim a channel is fully on.
+
+  **This needs the batch request shape**, `PUT /notification-preferences` with `{preferences: [{type, channel, is_enabled}, ...]}`. One request rather than one per type is what makes the control trustworthy: a loop has N ways to half-succeed, and a half-succeeded bulk renders IDENTICALLY to a complete one, so the switch reads "off" while the one type that failed keeps delivering. `magic-starter-laravel` has accepted both shapes since 0.0.7; a hand-rolled endpoint that takes only the single shape answers 422 and the control is dead. A second tap on the same channel while its batch is out is dropped and the row's switch is disabled meanwhile, so two passes cannot interleave over the same cells.
+
+  **Adopters have to add two translation keys**, or the raw key renders: `notifications.bulk_title` and `notifications.bulk_description`. This package ships no catalogue of its own; the host supplies every `notifications.*` sentence, and this is new copy on a screen an adopter has already translated.
+
+- **A key on each preferences card.** `notifications.bulk` and `notifications.type.<typeKey>`, so a test or an E2E driver can say which card it is looking at. Both cards render the same row shell with the same channel labels, and before this an unscoped lookup found two of everything. Each bulk switch also carries `notifications.bulk.<channel>`.
+
+### Fixed
+- **The bell's "mark all as read" no longer wraps to a second line.** The header laid a title and an action on one row with neither able to yield, so a language that spends more words on the action pushed the title off its baseline: Turkish rendered "Tümünü okundu olarak işaretle" over two lines inside the 320-wide panel. The action is now a `flex-1 min-w-0` box carrying `truncate`, which is the pair that makes an ellipsis mean anything, with `text-right` doing the alignment `justify-between` used to. Measured before and after: 119 logical pixels of text (seven lines) against a one-line 17.
+
+  Two shapes were tried and are recorded so they are not tried again. A `flex-1 min-w-0` wrapper around the action reads fine at normal text size and is WORSE than nothing at an accessibility scale: a grow claim strips the `Flexible` off the TITLE too (`wind/lib/src/widgets/w_div.dart:705-708`), so the title stops shrinking and the row overflows horizontally instead, measured at 353 pixels. And an inner `justify-end` row around the action leaves it asking for its intrinsic width, because `WAnchor` takes no className and cannot carry a flex claim; that one overflowed by 648.
+
 ## [0.2.0] - 2026-09-03
 
 ### Breaking Changes

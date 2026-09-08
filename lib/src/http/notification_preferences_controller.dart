@@ -35,6 +35,14 @@ class NotificationPreferencesController extends MagicController
   /// a false "not configured" claim.
   final pushProvisionedNotifier = ValueNotifier<bool>(true);
 
+  /// The channels with a bulk write in flight.
+  ///
+  /// A notifier rather than a plain set because the screen disables that row's
+  /// switch while its batch is out. One batch touches several cells, so a second
+  /// tap landing mid-flight would send a second batch over the same cells and
+  /// the two would settle in an order neither of them chose.
+  final bulkSavingNotifier = ValueNotifier<Set<String>>(<String>{});
+
   bool _isFetching = false;
 
   /// Drops the previous person's preference matrix when the session ends.
@@ -67,6 +75,7 @@ class NotificationPreferencesController extends MagicController
     _isFetching = false;
     matrixNotifier.value = <String, dynamic>{};
     pushProvisionedNotifier.value = true;
+    bulkSavingNotifier.value = <String>{};
 
     // `setEmpty`, not `setSuccess(false)`: see the same line in
     // `NotificationsListController._clearSession`.
@@ -244,6 +253,154 @@ class NotificationPreferencesController extends MagicController
     }
   }
 
+  /// Set [channel] to [isEnabled] on every notification type that offers it.
+  ///
+  /// The screen's bulk control: an operator silencing push, or turning mail
+  /// back on, without walking every type in the matrix. Two cells are skipped
+  /// rather than written:
+  ///
+  ///  - A LOCKED cell, which the backend refuses to change (a security mail, an
+  ///    account alert). The endpoint validates the batch as one unit, so one
+  ///    locked item spends the whole request on a 422.
+  ///  - A cell that already holds [isEnabled], because sending it says what the
+  ///    server already holds.
+  ///
+  /// ONE request, not one per type, and that is the difference between a control
+  /// that can be trusted and one that cannot. A loop of N writes has N ways to
+  /// half-succeed, and a half-succeeded bulk renders IDENTICALLY to a complete
+  /// one: turning push off across five types with the third write failing leaves
+  /// four cells off and one on, `every` still answers false, and the switch says
+  /// off while that one type keeps paging. `magic-starter-laravel` has accepted
+  /// `{preferences: [...]}` since 0.0.7 and upserts the batch, so a failure is
+  /// all-or-nothing and the rollback is one publish.
+  ///
+  /// A second call for the same channel while one is in flight is dropped rather
+  /// than queued, and the row's switch is disabled meanwhile through
+  /// [bulkSavingNotifier]: two interleaved passes over the same cells otherwise
+  /// leave the switch in one state and the channel in another.
+  Future<void> updateChannelAcrossTypes(String channel, bool isEnabled) async {
+    if (bulkSavingNotifier.value.contains(channel)) return;
+
+    final Map<String, dynamic> before = matrixNotifier.value;
+    final List<Map<String, dynamic>> items = <Map<String, dynamic>>[];
+
+    for (final String type in before.keys) {
+      if (_channelLocked(before, type, channel)) continue;
+
+      final bool? current = _channelEnabled(before, type, channel);
+      if (current == null || current == isEnabled) continue;
+
+      items.add(<String, dynamic>{
+        'type': type,
+        'channel': channel,
+        'is_enabled': isEnabled,
+      });
+    }
+
+    if (items.isEmpty) return;
+
+    final int session = _session;
+    bulkSavingNotifier.value = <String>{...bulkSavingNotifier.value, channel};
+
+    try {
+      // 1. Apply every cell optimistically, in one publish.
+      Map<String, dynamic> next = before;
+      for (final Map<String, dynamic> item in items) {
+        next = _withChannelEnabled(
+          next,
+          item['type'] as String,
+          channel,
+          isEnabled,
+        );
+      }
+      matrixNotifier.value = next;
+
+      // 2. Send the batch.
+      final response = await Http.put(
+        '/notification-preferences',
+        data: <String, dynamic>{'preferences': items},
+      );
+
+      // 3. Drop the answer when the session ended under it.
+      if (session != _session) return;
+
+      // 4. Revert every cell this call touched, and ONLY those: a neighbouring
+      //    channel may have been written beside this one, and restoring the
+      //    whole `before` snapshot would erase a write the backend accepted.
+      if (!response.successful) {
+        _revertChannelAcrossTypes(items, channel, !isEnabled);
+        NotificationLog.error(
+          '[NotificationPreferencesController.updateChannelAcrossTypes] '
+          'PUT failed: ${response.statusCode}',
+        );
+
+        return;
+      }
+
+      _publishPushProvisioned(response);
+    } catch (e, stackTrace) {
+      NotificationLog.error(
+        '[NotificationPreferencesController.updateChannelAcrossTypes] '
+        '$e\n$stackTrace',
+      );
+
+      if (session != _session) return;
+
+      _revertChannelAcrossTypes(items, channel, !isEnabled);
+    } finally {
+      if (session == _session) {
+        bulkSavingNotifier.value = <String>{...bulkSavingNotifier.value}
+          ..remove(channel);
+      }
+    }
+  }
+
+  /// Put [previous] back on every cell [items] names.
+  ///
+  /// Every item in a batch carries the same target value and every one of them
+  /// disagreed with it before the write (that is the filter that built the
+  /// list), so one value restores them all.
+  void _revertChannelAcrossTypes(
+    List<Map<String, dynamic>> items,
+    String channel,
+    bool previous,
+  ) {
+    Map<String, dynamic> reverted = matrixNotifier.value;
+
+    for (final Map<String, dynamic> item in items) {
+      reverted = _withChannelEnabled(
+        reverted,
+        item['type'] as String,
+        channel,
+        previous,
+      );
+    }
+
+    matrixNotifier.value = reverted;
+  }
+
+  /// Whether [type]'s [channel] is one the backend refuses to change.
+  ///
+  /// A cell the matrix does not describe answers `true`, because "there is
+  /// nothing here to write" and "this may not be written" lead to the same
+  /// decision at the one call site.
+  bool _channelLocked(
+    Map<String, dynamic> matrix,
+    String type,
+    String channel,
+  ) {
+    final Object? typeData = matrix[type];
+    if (typeData is! Map) return true;
+
+    final Object? channelsData = typeData['channels'];
+    if (channelsData is! Map) return true;
+
+    final Object? channelData = channelsData[channel];
+    if (channelData is! Map) return true;
+
+    return channelData['locked'] == true;
+  }
+
   /// The `enabled` flag [type]'s [channel] currently carries, or `null` when
   /// the matrix does not describe that cell.
   bool? _channelEnabled(
@@ -320,6 +477,7 @@ class NotificationPreferencesController extends MagicController
     _sessionCleared.cancel();
     matrixNotifier.dispose();
     pushProvisionedNotifier.dispose();
+    bulkSavingNotifier.dispose();
     super.dispose();
   }
 }

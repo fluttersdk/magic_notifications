@@ -316,6 +316,102 @@ void main() {
       },
     );
   });
+
+  group('NotificationPreferencesController — one channel, every type', () {
+    test('it writes each unlocked type that disagrees with the target',
+        () async {
+      controller.matrixNotifier.value = _bulkMatrix();
+
+      final List<Map<String, dynamic>> sent = <Map<String, dynamic>>[];
+      Http.fake((request) {
+        sent.add(request.data as Map<String, dynamic>);
+
+        return MagicResponse(
+          data: <String, dynamic>{'data': <String, dynamic>{}},
+          statusCode: 200,
+        );
+      });
+
+      await controller.updateChannelAcrossTypes('push', false);
+
+      // ONE request, and `incident_opened.push` is not in it: it is already off,
+      // and an item that says what the server already holds is a cell the batch
+      // can fail on for nothing.
+      expect(sent, hasLength(1));
+      expect(sent.single['preferences'], <Map<String, dynamic>>[
+        <String, dynamic>{
+          'type': 'monitor_down',
+          'channel': 'push',
+          'is_enabled': false,
+        },
+      ]);
+      expect(_enabledOn(controller, 'monitor_down', 'push'), isFalse);
+      expect(_enabledOn(controller, 'incident_opened', 'push'), isFalse);
+    });
+
+    test('it leaves a locked cell alone', () async {
+      controller.matrixNotifier.value = _bulkMatrix();
+
+      final List<Map<String, dynamic>> sent = <Map<String, dynamic>>[];
+      Http.fake((request) {
+        sent.add(request.data as Map<String, dynamic>);
+
+        return MagicResponse(
+          data: <String, dynamic>{'data': <String, dynamic>{}},
+          statusCode: 200,
+        );
+      });
+
+      await controller.updateChannelAcrossTypes('mail', false);
+
+      // A locked cell is one the backend refuses to change (a security mail, an
+      // account alert). The endpoint validates the batch as one unit, so one
+      // locked item spends the whole request on a 422 and rolls every other
+      // cell back with it.
+      expect(sent, hasLength(1));
+      expect(sent.single['preferences'], <Map<String, dynamic>>[
+        <String, dynamic>{
+          'type': 'monitor_down',
+          'channel': 'mail',
+          'is_enabled': false,
+        },
+      ]);
+      expect(_enabledOn(controller, 'incident_opened', 'mail'), isTrue);
+    });
+  });
+}
+
+/// Two types, so a bulk write has more than one cell to reach, and one locked
+/// cell that has to survive it.
+Map<String, dynamic> _bulkMatrix() => <String, dynamic>{
+      'monitor_down': <String, dynamic>{
+        'label': 'Monitor Down',
+        'channels': <String, dynamic>{
+          'mail': <String, dynamic>{'enabled': true, 'locked': false},
+          'push': <String, dynamic>{'enabled': true, 'locked': false},
+        },
+      },
+      'incident_opened': <String, dynamic>{
+        'label': 'Incident Opened',
+        'channels': <String, dynamic>{
+          'mail': <String, dynamic>{'enabled': true, 'locked': true},
+          'push': <String, dynamic>{'enabled': false, 'locked': false},
+        },
+      },
+    };
+
+/// The `enabled` flag [type]'s [channel] currently carries.
+Object? _enabledOn(
+  NotificationPreferencesController controller,
+  String type,
+  String channel,
+) {
+  final Map<dynamic, dynamic> typeData =
+      controller.matrixNotifier.value[type] as Map<dynamic, dynamic>;
+  final Map<dynamic, dynamic> channels =
+      typeData['channels'] as Map<dynamic, dynamic>;
+
+  return (channels[channel] as Map<dynamic, dynamic>)['enabled'];
 }
 
 /// A network driver whose reads and writes hang until the test answers them.

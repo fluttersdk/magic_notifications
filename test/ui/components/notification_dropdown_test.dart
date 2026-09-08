@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magic/magic.dart';
 import 'package:magic_notifications/src/models/database_notification.dart';
@@ -20,20 +21,24 @@ class _MapTranslationLoader implements TranslationLoader {
   Future<Map<String, dynamic>> load(Locale locale) async => sentences;
 }
 
+/// The sentences every test in this file lays out with.
+///
+/// Hoisted out of `setUpAll` so a test that needs a different wording can
+/// spread it, swap one key, and put this map back in its own tear-down.
+const Map<String, dynamic> _sentences = <String, dynamic>{
+  'notifications.title': 'Notifications',
+  'notifications.mark_all_read': 'Mark all as read',
+  'notifications.empty': 'Nothing here yet',
+  'notifications.load_failed': 'Could not load notifications',
+  'notifications.badge_overflow': '9+',
+  'notifications.view_all': 'View all',
+};
+
 void main() {
   setUpAll(() async {
     await initMagicForTests();
 
-    Translator.instance.setLoader(
-      const _MapTranslationLoader(<String, dynamic>{
-        'notifications.title': 'Notifications',
-        'notifications.mark_all_read': 'Mark all as read',
-        'notifications.empty': 'Nothing here yet',
-        'notifications.load_failed': 'Could not load notifications',
-        'notifications.badge_overflow': '9+',
-        'notifications.view_all': 'View all',
-      }),
-    );
+    Translator.instance.setLoader(const _MapTranslationLoader(_sentences));
 
     await Translator.instance.load(const Locale('en'));
   });
@@ -307,6 +312,137 @@ void main() {
     // unreachable by rendering and only the string can carry the assertion.
     expect(row.className, contains('unread:bg-primary/5'));
     expect(row.className, contains('dark:unread:bg-primary/10'));
+  });
+
+  /// The header holds a title and an action on one row, and the action's label
+  /// is a sentence in some languages: Turkish spent 29 characters on "Tümünü
+  /// okundu olarak işaretle" and wrapped it to two lines inside a 320-wide
+  /// panel, which pushed the title off its own baseline. Shortening the Turkish
+  /// string fixes Turkish; this keeps the layout honest in whatever language
+  /// comes next.
+  testWidgets('the mark-all-as-read action stays on one line in any language', (
+    tester,
+  ) async {
+    Translator.instance.setLoader(
+      _MapTranslationLoader(<String, dynamic>{
+        ..._sentences,
+        'notifications.mark_all_read':
+            'Bütün bildirimleri okundu olarak işaretle ve listeyi kapat',
+      }),
+    );
+    // A DIFFERENT locale, because `Translator.load` returns early when the
+    // locale it already holds is the one being asked for
+    // (`magic/lib/src/localization/translator.dart:102`): reloading `en` here
+    // left the previous sentences in place and the test laid out the short
+    // English label it was written to avoid.
+    await Translator.instance.load(const Locale('tr'));
+    addTearDown(() async {
+      Translator.instance.setLoader(const _MapTranslationLoader(_sentences));
+      await Translator.instance.load(const Locale('en'));
+    });
+
+    await tester.pumpWidget(
+      wrap(
+        NotificationDropdown(
+          notificationStream: streamController.stream,
+          onMarkAllAsRead: () async {},
+        ),
+      ),
+    );
+
+    streamController.add([makeNotification()]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.byIcon(Icons.notifications_outlined));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    const String label =
+        'Bütün bildirimleri okundu olarak işaretle ve listeyi kapat';
+
+    // The rendered HEIGHT against an unwrapped one, not a caught exception: a
+    // label too wide for its row wraps, and wrapping throws nothing.
+    // `takeException()` was the first assertion here and it passed on the broken
+    // layout, which is the failure mode this test exists to catch. At infinite
+    // width the paragraph cannot wrap, so its intrinsic height IS one line.
+    final RenderParagraph paragraph = tester.renderObject<RenderParagraph>(
+      find.text(label),
+    );
+    expect(
+      paragraph.size.height,
+      lessThanOrEqualTo(paragraph.getMaxIntrinsicHeight(double.infinity)),
+    );
+
+    final WText action = tester.widget<WText>(
+      find.byWidgetPredicate(
+        (widget) => widget is WText && widget.data == label,
+      ),
+    );
+
+    // `truncate` is `maxLines: 1` plus an ellipsis, and it only bites inside a
+    // bounded box. Wind gives it one here without a wrapper: with no child
+    // claiming a grow share the row wraps each child in `Flexible`.
+    expect(action.className, contains('truncate'));
+  });
+
+  /// The header holds at an accessibility text scale, which is where the shape
+  /// that "fixed" this first goes wrong.
+  ///
+  /// A `flex-1 min-w-0` wrapper around the action reads fine at scale 1.0 and is
+  /// worse than nothing at 3.0: a grow claim strips the `Flexible` off the TITLE
+  /// too (`wind/lib/src/widgets/w_div.dart:705-708`), so the title stops
+  /// shrinking and the row overflows instead.
+  testWidgets('the header holds at an accessibility text scale', (
+    tester,
+  ) async {
+    Translator.instance.setLoader(
+      _MapTranslationLoader(<String, dynamic>{
+        ..._sentences,
+        'notifications.mark_all_read':
+            'Bütün bildirimleri okundu olarak işaretle ve listeyi kapat',
+      }),
+    );
+    await Translator.instance.load(const Locale('tr'));
+    addTearDown(() async {
+      Translator.instance.setLoader(const _MapTranslationLoader(_sentences));
+      await Translator.instance.load(const Locale('en'));
+    });
+
+    await tester.pumpWidget(
+      wrap(
+        NotificationDropdown(
+          notificationStream: streamController.stream,
+          onMarkAllAsRead: () async {},
+        ),
+        textScaler: const TextScaler.linear(3.0),
+      ),
+    );
+
+    streamController.add([makeNotification()]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.byIcon(Icons.notifications_outlined));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // The panel overflows VERTICALLY at this scale whatever the header does:
+    // its height is fixed and 3x text does not fit. That is a real limitation
+    // and a different one, so it is consumed deliberately rather than left to
+    // fail this test. Asserting on the direction keeps the consumption honest:
+    // a HORIZONTAL overflow, which is the failure this test exists for, says
+    // "right" and goes red here.
+    final Object? overflow = tester.takeException();
+    expect(overflow?.toString() ?? '', contains('bottom'));
+
+    // The title's width against the row's own: 320 (`w-80`) minus 32 (`px-4`).
+    // An unshrinkable title measures past it and takes the row with it.
+    final RenderParagraph title = tester.renderObject<RenderParagraph>(
+      find.text('Notifications'),
+    );
+
+    expect(title.size.width, lessThanOrEqualTo(288.0));
   });
 
   testWidgets('the mark-all-as-read hover stays on the adopter brand', (

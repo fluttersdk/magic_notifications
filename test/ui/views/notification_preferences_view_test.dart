@@ -101,10 +101,12 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('Email'), findsOneWidget);
-    expect(find.text('In-App'), findsOneWidget);
-    expect(find.text('Push'), findsOneWidget);
-    expect(find.text('SMS'), findsOneWidget);
+    // Two of each: the bulk card above the matrix carries a row per channel
+    // and labels them the same way, which is the point of it.
+    expect(find.text('Email'), findsNWidgets(2));
+    expect(find.text('In-App'), findsNWidgets(2));
+    expect(find.text('Push'), findsNWidgets(2));
+    expect(find.text('SMS'), findsNWidgets(2));
 
     // The fallback's own output, which is what the defect looked like.
     expect(
@@ -143,6 +145,8 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('Carrier pigeon'), findsOneWidget);
+    // Once in the bulk card, once in the type card: an adopter's own channel
+    // reaches the bulk control on the same terms as a built-in one.
+    expect(find.text('Carrier pigeon'), findsNWidgets(2));
   });
 }
