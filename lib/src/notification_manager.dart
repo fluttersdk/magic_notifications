@@ -154,8 +154,17 @@ class NotificationManager {
   /// Push events that passed the subject guard, republished for the app.
   final StreamController<PushNotificationEvent> _pushReceivedController =
       StreamController<PushNotificationEvent>.broadcast();
-  final StreamController<PushNotificationEvent> _pushClickedController =
-      StreamController<PushNotificationEvent>.broadcast();
+  late final StreamController<PushNotificationEvent> _pushClickedController =
+      StreamController<PushNotificationEvent>.broadcast(
+    // The drain hangs off the controller's own subscribe callback rather
+    // than off a flag the getter sets, because reading a stream and
+    // listening to it are different moments and only the second one can
+    // receive anything. `onListen` fires on every 0 -> 1 transition, and
+    // the microtask defers so a subscriber that finishes wiring itself in
+    // the same turn is ready when the replay lands, which is the same
+    // reason `onesignal_flutter` defers its own drain.
+    onListen: () => scheduleMicrotask(_drainPendingClicks),
+  );
 
   /// Clicks republished before anything subscribed to [onPushClicked].
   ///
@@ -173,14 +182,24 @@ class NotificationManager {
   ///
   /// Buffered rather than fixed by documenting an order, because an ordering
   /// requirement that only bites on a cold start is one nobody can be expected
-  /// to hold. The shape mirrors `onesignal_flutter`'s own: filled only until
-  /// the first-ever listener, drained once, never refilled. Refilling after a
-  /// listener has existed would re-navigate an app that a late subscriber
-  /// joined, which is a worse failure than the one this closes.
+  /// to hold. Filled whenever the controller has no subscriber and drained
+  /// from its `onListen`, so a click is delivered exactly once to whoever is
+  /// actually there rather than added to an empty set and discarded.
+  ///
+  /// The condition is `hasListener` and not a "somebody has read the getter"
+  /// flag, which is what this first shipped as and what a review caught. Those
+  /// are different moments, and only the second can receive anything: a
+  /// consumer that captures the stream, awaits its router, and subscribes
+  /// after would have flipped the flag, had the replay drained into nobody,
+  /// and lost the launch tap in the exact way this exists to prevent. The flag
+  /// also could not survive [forgetDrivers], which reset it while a
+  /// boot-time subscription stayed alive, so every tap after a sign-out was
+  /// buffered and never drained.
+  ///
+  /// The window therefore reopens on any later gap between subscribers rather
+  /// than closing for the life of the process, which is the honest shape: a
+  /// tap that arrives while nothing is listening is a tap nobody received.
   final List<PushNotificationEvent> _pendingClicks = <PushNotificationEvent>[];
-
-  /// Whether [onPushClicked] has ever been listened to.
-  bool _pushClickedHeard = false;
 
   /// Drivers as they are attached, for a host that has to act on one it did not
   /// have at the moment it needed it. See [onPushDriverAttached].
@@ -360,7 +379,6 @@ class NotificationManager {
     // A click buffered for a listener that never came would otherwise replay
     // into whoever subscribes next, which in a test binary is the next test.
     _pendingClicks.clear();
-    _pushClickedHeard = false;
     _dropInFlightReads();
   }
 
@@ -794,30 +812,31 @@ class NotificationManager {
   /// The first listener also receives whatever was tapped before it arrived.
   /// See [_pendingClicks] for why that window exists and why it is closed here
   /// rather than by asking consumers to order their providers.
-  Stream<PushNotificationEvent> get onPushClicked {
-    if (!_pushClickedHeard) {
-      _pushClickedHeard = true;
+  Stream<PushNotificationEvent> get onPushClicked =>
+      _pushClickedController.stream;
 
-      if (_pendingClicks.isNotEmpty) {
-        // Deferred so a caller that subscribes and then finishes wiring itself
-        // in the same turn is ready when the replay lands, which is the same
-        // reason `onesignal_flutter` defers its own drain.
-        scheduleMicrotask(_drainPendingClicks);
-      }
-    }
-
-    return _pushClickedController.stream;
-  }
-
-  /// Replays [_pendingClicks] onto the stream, once.
+  /// Replays [_pendingClicks] to the subscriber that just arrived.
+  ///
+  /// Refuses to drain into an empty broadcast controller, which is what makes
+  /// this safe to schedule from `onListen`: a subscriber that cancels inside
+  /// the same turn it subscribed leaves the buffer intact for the next one
+  /// rather than having it added to nobody and dropped.
   void _drainPendingClicks() {
+    if (_pushClickedController.isClosed) return;
+    if (!_pushClickedController.hasListener) return;
+
     final List<PushNotificationEvent> pending =
         List<PushNotificationEvent>.of(_pendingClicks);
     _pendingClicks.clear();
 
-    if (_pushClickedController.isClosed) return;
-
     for (final PushNotificationEvent event in pending) {
+      // Re-judged rather than replayed blind. A tap buffered while the device
+      // was subscribed as one person, replayed after `want()` moved it to
+      // another, would otherwise hand the deep-link bridge the previous
+      // identity's payload, which is the exact thing the receive-side guard
+      // exists to stop. `forgetDrivers` clears the buffer; `want` does not.
+      if (!_addressedToIntent(event.data)) continue;
+
       _pushClickedController.add(event);
     }
   }
@@ -1084,9 +1103,11 @@ class NotificationManager {
 
     if (_pushClickedController.isClosed) return;
 
-    // Nobody has asked for this stream yet, so adding it here would drop it.
-    // See [_pendingClicks]: this is the cold-start window.
-    if (!_pushClickedHeard) {
+    // Nobody is subscribed, so adding it here would drop it: a broadcast
+    // controller discards what it publishes to an empty listener set. See
+    // [_pendingClicks]; this is the cold-start window, and it reopens on any
+    // later gap between subscribers rather than closing for the process.
+    if (!_pushClickedController.hasListener) {
       // Bounded, because a build that never listens must not grow a list for
       // the life of the process. The oldest goes; the launch tap is the one
       // worth keeping and it is the first in.

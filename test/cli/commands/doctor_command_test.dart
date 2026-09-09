@@ -52,6 +52,9 @@ void _writeIosProject(
   bool codeSignEntitlements = false,
   String? infoPlistOverride,
   bool serviceExtension = false,
+  // An app extension that is NOT a notification service: a widget. Its whole
+  // purpose here is to occupy the `.appex` the doctor used to read as an NSE.
+  bool otherExtension = false,
   bool appGroup = false,
 }) {
   Directory('${tempDir.path}/ios/Runner').createSync(recursive: true);
@@ -104,14 +107,56 @@ $groups</dict>
   final entitlementsSetting = codeSignEntitlements
       ? '                CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;\n'
       : '';
-  // The doctor looks for a `.appex` product, which is how an extension target
-  // appears in a real pbxproj whatever it is named.
-  final extensionProduct = serviceExtension
-      ? '        3A1B2C3D /* OneSignalNotificationServiceExtension.appex */ = '
+  // A `.appex` product is how ANY extension target appears in a real pbxproj,
+  // whatever it is named, so the pbxproj alone cannot say which kind it is.
+  // `otherExtension` writes exactly that and no more: a widget, which is the
+  // case that used to read as an NSE.
+  final extensionProduct = serviceExtension || otherExtension
+      ? '        3A1B2C3D /* ${serviceExtension ? 'OneSignalNotificationServiceExtension' : 'WidgetExtension'}.appex */ = '
           '{isa = PBXFileReference; explicitFileType = '
           '"wrapper.app-extension"; path = '
-          'OneSignalNotificationServiceExtension.appex; };\n'
+          '${serviceExtension ? 'OneSignalNotificationServiceExtension' : 'WidgetExtension'}.appex; };\n'
       : '';
+
+  // What identifies the kind: the extension POINT, which lives in the target's
+  // own Info.plist rather than in the pbxproj.
+  if (serviceExtension) {
+    Directory('${tempDir.path}/ios/OneSignalNotificationServiceExtension')
+        .createSync(recursive: true);
+    File('${tempDir.path}/ios/OneSignalNotificationServiceExtension/Info.plist')
+        .writeAsStringSync('''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.usernotifications.service</string>
+	</dict>
+</dict>
+</plist>
+''');
+  }
+
+  if (otherExtension) {
+    Directory('${tempDir.path}/ios/WidgetExtension').createSync(
+      recursive: true,
+    );
+    File('${tempDir.path}/ios/WidgetExtension/Info.plist').writeAsStringSync('''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.widgetkit-extension</string>
+	</dict>
+</dict>
+</plist>
+''');
+  }
   File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
       .writeAsStringSync('''
 // !\$*UTF8*\$!
@@ -741,6 +786,25 @@ Map<String, dynamic> get notificationConfig => {
         command
             .iosExtensionWarnings()
             .any((w) => w.contains('Notification Service Extension')),
+        isTrue,
+      );
+    });
+
+    test(
+        'still warns when the only app extension is not a notification '
+        'service', () {
+      _writeValidConfig(tempDir);
+      _writeIosProject(tempDir, entitlement: true, otherExtension: true);
+
+      // A widget, a share sheet and a keyboard all ship a `.appex`, so a
+      // substring search for that suffix reported the NSE present on a project
+      // that had none and then only nagged about App Groups. A false green on
+      // the one check whose justification is that its subject looks exactly
+      // like the product working.
+      expect(
+        command
+            .iosExtensionWarnings()
+            .any((w) => w.contains('No Notification Service Extension')),
         isTrue,
       );
     });

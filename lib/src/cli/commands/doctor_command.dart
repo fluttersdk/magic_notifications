@@ -1,3 +1,8 @@
+// Directly, because FileHelper reads a path it is given and this command has to
+// WALK one: an NSE's extension point lives in whichever Info.plist its target
+// owns, and the target can be named anything.
+import 'dart:io';
+
 // cli.dart re-exports fluttersdk_artisan/artisan.dart (hiding only the builtin
 // DoctorCommand that collides with this class), so a direct artisan.dart import
 // is redundant here.
@@ -361,7 +366,7 @@ class DoctorCommand extends ArtisanCommand {
     // Nothing to say about iOS on a project that does not ship it.
     if (!FileHelper.directoryExists('$projectRoot/ios')) return warnings;
 
-    if (!_fileDeclares(_pbxprojPath, '.appex')) {
+    if (!_hasNotificationServiceExtension()) {
       warnings.add(
         'No Notification Service Extension target found in '
         'ios/Runner.xcodeproj/project.pbxproj. Push still arrives; confirmed '
@@ -508,6 +513,43 @@ class DoctorCommand extends ArtisanCommand {
   /// Path to the Xcode project file that has to name that entitlements file.
   String get _pbxprojPath =>
       '$projectRoot/ios/Runner.xcodeproj/project.pbxproj';
+
+  /// Whether the project ships a Notification Service Extension target.
+  ///
+  /// Two conditions, and the second is what makes this worth more than a
+  /// substring search. `.appex` in the pbxproj says only that SOME app
+  /// extension exists: a widget, a share sheet and a keyboard all end in that
+  /// suffix, so a project carrying one of those and no NSE read as configured
+  /// and got nothing but the App Group nag. That is a false green on the one
+  /// check whose whole justification is that a missing NSE looks exactly like
+  /// the product working.
+  ///
+  /// The extension POINT is what identifies it, and it lives in the target's
+  /// own `Info.plist` rather than in the pbxproj, so the plists under `ios/`
+  /// are what gets searched. Runner's own is skipped: an app is not its own
+  /// notification service, and a project that names the string in a comment
+  /// there should not pass.
+  bool _hasNotificationServiceExtension() {
+    if (!_fileDeclares(_pbxprojPath, '.appex')) return false;
+
+    final Directory ios = Directory('$projectRoot/ios');
+    if (!ios.existsSync()) return false;
+
+    return ios
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((File file) => file.path.endsWith('Info.plist'))
+        .where((File file) => !file.path.contains('/Runner/'))
+        .any(
+          (File file) => _withoutComments(
+            file.readAsStringSync(),
+          ).contains(_notificationServiceExtensionPoint),
+        );
+  }
+
+  /// Apple's identifier for the extension point an NSE registers against.
+  static const String _notificationServiceExtensionPoint =
+      'com.apple.usernotifications.service';
 
   /// Whether [path] exists and mentions [marker] outside of a comment.
   bool _fileDeclares(String path, String marker) {

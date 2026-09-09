@@ -49,7 +49,10 @@ void main() {
     }
 
     final String version = _shippedVersion();
-    final String firstLine = reference.readAsLinesSync().first;
+    // `.first` on an empty file throws `Bad state: No element`, which replaces
+    // the reason below with a StateError naming nothing useful. An empty
+    // reference is a stamp mismatch like any other.
+    final String firstLine = reference.readAsLinesSync().firstOrNull ?? '';
 
     expect(
       firstLine,
