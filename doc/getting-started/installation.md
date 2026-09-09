@@ -201,11 +201,40 @@ What is still manual, because it needs an Apple/OneSignal account rather than
 a project-file edit:
 
 1. Run `cd ios && pod install --repo-update && cd ..`
-2. Create an APNs key in [Apple Developer Portal](https://developer.apple.com/account/resources/authkeys/list) (.p8 file + Key ID + Team ID)
-3. Upload the .p8 key to OneSignal Dashboard → Settings → Platforms → Apple iOS (APNs)
+2. Create an APNs key in [Apple Developer Portal](https://developer.apple.com/account/resources/authkeys/list) (.p8 file + Key ID + Team ID). One key covers Sandbox and Production, it is team-wide, and it downloads exactly once.
+3. Upload the .p8 key to OneSignal Dashboard → Settings → Platforms → Apple iOS (APNs), with the Key ID, your Team ID and your bundle identifier.
+
+#### The Notification Service Extension, and why nothing here can create it
+
+Push works without the next two steps, which is the reason to read them: a
+build with no extension delivers notifications normally and quietly reports no
+confirmed deliveries, no rich media and no badge counts. The absence looks like
+the product working. `notifications:doctor` warns when either half is missing.
+
+Neither can be automated from a pub package, because both add or change an
+Xcode target:
+
+4. **App Group.** In Xcode, add the App Groups capability to the **Runner**
+   target with a container named `group.<your.bundle.id>.onesignal`.
+5. **Notification Service Extension.** File → New → Target →
+   Notification Service Extension, named `OneSignalNotificationServiceExtension`,
+   then add the **same** App Group to that new target and follow OneSignal's
+   current [Flutter SDK setup](https://documentation.onesignal.com/docs/flutter-sdk-setup)
+   for the extension's source and its deployment target.
+
+The two halves fail independently. An extension with no shared App Group gives
+rich media and still no confirmed delivery, because the container is how the
+extension hands what it saw back to the app.
 
 > [!NOTE]
 > Push notifications do not work on iOS Simulator. A physical device is required for testing.
+
+> [!WARNING]
+> Test the cold-start path with a **profile or release** build. iOS refuses to
+> launch a debug Flutter build outside the Flutter tooling, and OneSignal
+> documents that on iOS in Debug a force-closed app opened from a notification
+> does not register the click listener at all. A cold tap that appears to do
+> nothing in Debug is usually this, not your wiring.
 
 ### Android
 

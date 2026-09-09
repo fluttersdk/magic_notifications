@@ -32,6 +32,10 @@ class DoctorCommand extends ArtisanCommand {
   /// Build setting through which Xcode learns the entitlements file exists.
   static const String _entitlementsSetting = 'CODE_SIGN_ENTITLEMENTS';
 
+  /// The entitlement that shares a container between the app and its
+  /// Notification Service Extension. See [iosExtensionWarnings].
+  static const String _appGroupsKey = 'com.apple.security.application-groups';
+
   /// The env file a project keeps its per-deployment values in.
   ///
   /// The doctor runs from a shell that is not the app's runtime, so it can
@@ -97,8 +101,16 @@ class DoctorCommand extends ArtisanCommand {
     // normal state, and a doctor that fails on it stops being read. What it
     // must not do is claim everything passed.
     if (missing.isEmpty) {
+      // The two kinds of warning mean opposite things about whether push
+      // works at all, and saying "cannot send yet" over a missing Xcode
+      // extension would send an adopter hunting a provisioning problem that
+      // is not there.
       ctx.output.warning(
-        'Nothing failed, but push cannot send yet: see the warnings above.',
+        configWarnings().isEmpty
+            ? 'Nothing failed. Push sends, but some of it is not wired: see '
+                'the warnings above.'
+            : 'Nothing failed, but push cannot send yet: see the warnings '
+                'above.',
       );
       ctx.output.writeln('');
       return 0;
@@ -284,7 +296,18 @@ class DoctorCommand extends ArtisanCommand {
   /// warning must never do is print as a tick, which is how an env-resolved App
   /// ID with a blank `.env` entry once certified a build that could not send a
   /// single push.
-  List<String> getWarnings() {
+  List<String> getWarnings() => <String>[
+        ...configWarnings(),
+        ...iosExtensionWarnings(),
+      ];
+
+  /// Warnings about the CONFIG specifically, which is the only kind the
+  /// report's "Config Validation" section may print.
+  ///
+  /// Split from [getWarnings] when the iOS extension checks landed: rendering
+  /// every warning under that heading filed an Xcode target's absence as a
+  /// config finding, and printed it twice.
+  List<String> configWarnings() {
     final warnings = <String>[];
 
     if (!checkConfigExists()) {
@@ -310,6 +333,54 @@ class DoctorCommand extends ArtisanCommand {
               'is no $envFileName at the project root to confirm it is '
               'provisioned',
     );
+
+    return warnings;
+  }
+
+  /// What OneSignal's iOS setup asks for that no Dart package can install.
+  ///
+  /// Push works without either of these, which is exactly why they need
+  /// saying: a build with no Notification Service Extension delivers
+  /// notifications normally and quietly reports no confirmed deliveries, no
+  /// rich media and no badge counts, so the absence looks like the product
+  /// working rather than an install left half done.
+  ///
+  /// The two halves fail independently and are checked separately. An
+  /// extension with no shared App Group gives rich media and still no
+  /// confirmed delivery, because the container is how the extension hands what
+  /// it saw back to the app.
+  ///
+  /// Warnings rather than failures: an app that never wants rich notifications
+  /// is a legitimate build, and a doctor that fails one stops being read.
+  /// Neither can be automated from here, since a pub package cannot add an
+  /// Xcode target; `doc/getting-started/installation.md` carries the manual
+  /// steps.
+  List<String> iosExtensionWarnings() {
+    final warnings = <String>[];
+
+    // Nothing to say about iOS on a project that does not ship it.
+    if (!FileHelper.directoryExists('$projectRoot/ios')) return warnings;
+
+    if (!_fileDeclares(_pbxprojPath, '.appex')) {
+      warnings.add(
+        'No Notification Service Extension target found in '
+        'ios/Runner.xcodeproj/project.pbxproj. Push still arrives; confirmed '
+        'delivery, rich media and badge counts do not. See '
+        'doc/getting-started/installation.md for the Xcode steps.',
+      );
+
+      // The group check below would only repeat the same finding.
+      return warnings;
+    }
+
+    if (!_fileDeclares(_entitlementsPath, _appGroupsKey)) {
+      warnings.add(
+        'A Notification Service Extension exists but $_appGroupsKey is missing '
+        'from ios/Runner/Runner.entitlements. Without the shared App Group the '
+        'extension cannot report back, so confirmed delivery and badge counts '
+        'stay unavailable even though rich media works.',
+      );
+    }
 
     return warnings;
   }
@@ -569,15 +640,15 @@ class DoctorCommand extends ArtisanCommand {
       }
 
       final configIssues = validateConfig();
-      final configWarnings = getWarnings();
+      final warningsAboutConfig = configWarnings();
 
-      if (configIssues.isEmpty && configWarnings.isEmpty) {
+      if (configIssues.isEmpty && warningsAboutConfig.isEmpty) {
         buffer.writeln('  ✓ All config checks passed');
       } else {
         for (final issue in configIssues) {
           buffer.writeln('  ✗ $issue');
         }
-        for (final warning in configWarnings) {
+        for (final warning in warningsAboutConfig) {
           buffer.writeln('  ⚠ $warning');
         }
       }

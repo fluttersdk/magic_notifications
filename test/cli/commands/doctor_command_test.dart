@@ -51,6 +51,8 @@ void _writeIosProject(
   bool entitlement = false,
   bool codeSignEntitlements = false,
   String? infoPlistOverride,
+  bool serviceExtension = false,
+  bool appGroup = false,
 }) {
   Directory('${tempDir.path}/ios/Runner').createSync(recursive: true);
   Directory('${tempDir.path}/ios/Runner.xcodeproj').createSync(recursive: true);
@@ -79,6 +81,14 @@ $modes</dict>
   );
 
   if (entitlement) {
+    final groups = appGroup
+        ? '''
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.example.app.onesignal</string>
+	</array>
+'''
+        : '';
     File('${tempDir.path}/ios/Runner/Runner.entitlements').writeAsStringSync('''
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -86,7 +96,7 @@ $modes</dict>
 <dict>
 	<key>aps-environment</key>
 	<string>development</string>
-</dict>
+$groups</dict>
 </plist>
 ''');
   }
@@ -94,12 +104,20 @@ $modes</dict>
   final entitlementsSetting = codeSignEntitlements
       ? '                CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;\n'
       : '';
+  // The doctor looks for a `.appex` product, which is how an extension target
+  // appears in a real pbxproj whatever it is named.
+  final extensionProduct = serviceExtension
+      ? '        3A1B2C3D /* OneSignalNotificationServiceExtension.appex */ = '
+          '{isa = PBXFileReference; explicitFileType = '
+          '"wrapper.app-extension"; path = '
+          'OneSignalNotificationServiceExtension.appex; };\n'
+      : '';
   File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
       .writeAsStringSync('''
 // !\$*UTF8*\$!
 {
     objects = {
-        97C147061CF9000F007C117D /* Debug */ = {
+$extensionProduct        97C147061CF9000F007C117D /* Debug */ = {
             isa = XCBuildConfiguration;
             buildSettings = {
 $entitlementsSetting                PRODUCT_BUNDLE_IDENTIFIER = com.example.app;
@@ -711,6 +729,64 @@ Map<String, dynamic> get notificationConfig => {
   // ---------------------------------------------------------------------------
   // iOS platform setup
   // ---------------------------------------------------------------------------
+
+  group('the iOS pieces no pub package can install', () {
+    // Push works without either of these, so their absence looks like the
+    // product working. That is the whole reason the doctor says anything.
+    test('warns when no Notification Service Extension target exists', () {
+      _writeValidConfig(tempDir);
+      _writeIosProject(tempDir, entitlement: true);
+
+      expect(
+        command
+            .iosExtensionWarnings()
+            .any((w) => w.contains('Notification Service Extension')),
+        isTrue,
+      );
+    });
+
+    test('warns when the extension exists without a shared App Group', () {
+      _writeValidConfig(tempDir);
+      _writeIosProject(tempDir, entitlement: true, serviceExtension: true);
+
+      final warnings = command.iosExtensionWarnings();
+
+      // The halves fail independently: rich media works, confirmed delivery
+      // and badges do not, because the container is the way back.
+      expect(warnings.any((w) => w.contains('App Group')), isTrue);
+      expect(
+          warnings.any((w) => w.contains('No Notification Service')), isFalse);
+    });
+
+    test('says nothing when both halves are present', () {
+      _writeValidConfig(tempDir);
+      _writeIosProject(
+        tempDir,
+        entitlement: true,
+        serviceExtension: true,
+        appGroup: true,
+      );
+
+      expect(command.iosExtensionWarnings(), isEmpty);
+    });
+
+    test('says nothing about iOS on a project that ships no ios/ directory',
+        () {
+      _writeValidConfig(tempDir);
+
+      expect(command.iosExtensionWarnings(), isEmpty);
+    });
+
+    test('an extension warning does not print as a config finding', () {
+      _writeValidConfig(tempDir);
+      _writeIosProject(tempDir, entitlement: true);
+
+      // Filing an Xcode target's absence under "Config Validation" sent an
+      // adopter to the wrong file, and printed the same line twice.
+      expect(command.configWarnings(), isEmpty);
+      expect(command.getWarnings(), isNotEmpty);
+    });
+  });
 
   group('iOS setup', () {
     /// The `[ios]` prefixed entries of the doctor's missing-requirement list.
