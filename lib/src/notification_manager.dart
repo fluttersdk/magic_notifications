@@ -157,6 +157,31 @@ class NotificationManager {
   final StreamController<PushNotificationEvent> _pushClickedController =
       StreamController<PushNotificationEvent>.broadcast();
 
+  /// Clicks republished before anything subscribed to [onPushClicked].
+  ///
+  /// A broadcast stream drops what it publishes to nobody, and on a COLD start
+  /// there is a window where nobody is there yet. The tap that launched the app
+  /// is buffered by `onesignal_flutter` and drained in a microtask scheduled
+  /// from `addClickListener`, which this manager calls inside
+  /// `driver.initialize()`, which its own service provider awaits in `boot()`.
+  /// A consumer whose provider list puts notifications BEFORE the package that
+  /// bridges clicks into deep links therefore publishes the launch tap into an
+  /// empty stream: no exception, no log, and the app finishes booting onto its
+  /// own initial route. `fluttersdk_artisan`'s installer appends each provider
+  /// to the END of the list, so which order a consumer ends up with is decided
+  /// by the order the two packages happened to be installed in.
+  ///
+  /// Buffered rather than fixed by documenting an order, because an ordering
+  /// requirement that only bites on a cold start is one nobody can be expected
+  /// to hold. The shape mirrors `onesignal_flutter`'s own: filled only until
+  /// the first-ever listener, drained once, never refilled. Refilling after a
+  /// listener has existed would re-navigate an app that a late subscriber
+  /// joined, which is a worse failure than the one this closes.
+  final List<PushNotificationEvent> _pendingClicks = <PushNotificationEvent>[];
+
+  /// Whether [onPushClicked] has ever been listened to.
+  bool _pushClickedHeard = false;
+
   /// Drivers as they are attached, for a host that has to act on one it did not
   /// have at the moment it needed it. See [onPushDriverAttached].
   final StreamController<PushDriver> _pushDriverAttachedController =
@@ -332,6 +357,10 @@ class NotificationManager {
     _reconciledIntent = null;
     _reconcileInFlight = null;
     _autoRequestRaised = false;
+    // A click buffered for a listener that never came would otherwise replay
+    // into whoever subscribes next, which in a test binary is the next test.
+    _pendingClicks.clear();
+    _pushClickedHeard = false;
     _dropInFlightReads();
   }
 
@@ -761,8 +790,37 @@ class NotificationManager {
 
   /// Push notifications the user tapped that are addressed to the person this
   /// device is currently subscribed as.
-  Stream<PushNotificationEvent> get onPushClicked =>
-      _pushClickedController.stream;
+  ///
+  /// The first listener also receives whatever was tapped before it arrived.
+  /// See [_pendingClicks] for why that window exists and why it is closed here
+  /// rather than by asking consumers to order their providers.
+  Stream<PushNotificationEvent> get onPushClicked {
+    if (!_pushClickedHeard) {
+      _pushClickedHeard = true;
+
+      if (_pendingClicks.isNotEmpty) {
+        // Deferred so a caller that subscribes and then finishes wiring itself
+        // in the same turn is ready when the replay lands, which is the same
+        // reason `onesignal_flutter` defers its own drain.
+        scheduleMicrotask(_drainPendingClicks);
+      }
+    }
+
+    return _pushClickedController.stream;
+  }
+
+  /// Replays [_pendingClicks] onto the stream, once.
+  void _drainPendingClicks() {
+    final List<PushNotificationEvent> pending =
+        List<PushNotificationEvent>.of(_pendingClicks);
+    _pendingClicks.clear();
+
+    if (_pushClickedController.isClosed) return;
+
+    for (final PushNotificationEvent event in pending) {
+      _pushClickedController.add(event);
+    }
+  }
 
   /// Announces every push driver this manager attaches, as it attaches it.
   ///
@@ -1024,10 +1082,28 @@ class NotificationManager {
   void _onPushClicked(PushNotificationEvent event) {
     if (!_addressedToIntent(event.data)) return;
 
-    if (!_pushClickedController.isClosed) {
-      _pushClickedController.add(event);
+    if (_pushClickedController.isClosed) return;
+
+    // Nobody has asked for this stream yet, so adding it here would drop it.
+    // See [_pendingClicks]: this is the cold-start window.
+    if (!_pushClickedHeard) {
+      // Bounded, because a build that never listens must not grow a list for
+      // the life of the process. The oldest goes; the launch tap is the one
+      // worth keeping and it is the first in.
+      if (_pendingClicks.length >= _maxPendingClicks) {
+        _pendingClicks.removeAt(0);
+      }
+
+      _pendingClicks.add(event);
+
+      return;
     }
+
+    _pushClickedController.add(event);
   }
+
+  /// Upper bound on [_pendingClicks].
+  static const int _maxPendingClicks = 20;
 
   /// Whether a payload is addressed to the person this device is subscribed as.
   ///
