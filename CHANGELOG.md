@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 2026-09-09
 
 ### Fixed
 - **A push tapped while the app is CLOSED no longer depends on provider order.** `onPushClicked` is a broadcast stream, and a broadcast stream drops what it publishes to nobody. On a cold start there is a window where nobody is there yet: `onesignal_flutter` buffers the tap that launched the app and drains it in a microtask scheduled from `addClickListener`, which this manager calls inside `driver.initialize()`, which `NotificationServiceProvider.boot()` awaits. A consumer whose provider list puts notifications BEFORE `magic_deeplink` therefore published the launch tap into an empty stream, and the app finished booting onto its own initial route with no exception and no log. Which order a consumer ends up with is decided by the order the two packages happened to be installed in, because artisan's installer appends each provider to the END of the list, so this was a coin flip rather than a misconfiguration. The manager now holds clicks until the first listener and replays them once: filled only until the first-ever listener, drained once, never refilled, and bounded at 20 so a build that never listens does not grow a list for the life of the process. A second listener arriving later is NOT handed the same tap again, because re-navigating an app somebody has since moved through is a worse failure than the one this closes. `forgetDrivers` clears the buffer, so a click held in one test cannot replay into the next. Measured on a physical iPhone against a real server-sent notification.
