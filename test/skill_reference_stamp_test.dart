@@ -54,8 +54,7 @@ void main() {
     expect(
       firstLine,
       contains('magic_notifications v$version'),
-      reason:
-          'the reference an agent reads is stamped for a different version '
+      reason: 'the reference an agent reads is stamped for a different version '
           'than this package ships, which is how it came to document a '
           'contract that no longer compiles. Update $_referencePath against '
           'the current source, then move its stamp to v$version.',
