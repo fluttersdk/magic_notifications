@@ -1,6 +1,7 @@
 // Directly, because FileHelper reads a path it is given and this command has to
 // WALK one: an NSE's extension point lives in whichever Info.plist its target
 // owns, and the target can be named anything.
+import 'dart:convert';
 import 'dart:io';
 
 // cli.dart re-exports fluttersdk_artisan/artisan.dart (hiding only the builtin
@@ -526,26 +527,78 @@ class DoctorCommand extends ArtisanCommand {
   ///
   /// The extension POINT is what identifies it, and it lives in the target's
   /// own `Info.plist` rather than in the pbxproj, so the plists under `ios/`
-  /// are what gets searched. Runner's own is skipped: an app is not its own
-  /// notification service, and a project that names the string in a comment
-  /// there should not pass.
+  /// are what gets searched.
+  ///
+  /// Only the app's OWN target directories, which a review had to correct
+  /// twice over. The first version walked all of `ios/` recursively and read
+  /// each plist as UTF-8, and both halves of that were wrong on a real
+  /// project:
+  ///
+  ///   - `ios/Pods` is full of vendored frameworks whose `Info.plist` is a
+  ///     BINARY plist. `readAsStringSync` throws on one, nothing here caught
+  ///     it, and `getWarnings()` is called unguarded from `handle()`, so the
+  ///     command and the MCP tool crashed instead of reporting. It only bit a
+  ///     project whose pbxproj already names a `.appex`, which is exactly this
+  ///     check's audience, and OneSignal's own iOS SDK arrives as an
+  ///     XCFramework through CocoaPods.
+  ///   - `listSync(recursive: true)` follows links, so it descended
+  ///     `ios/.symlinks/plugins/*` into the pub cache. A dependency shipping an
+  ///     NSE template plist then read as THIS app's extension, which is the
+  ///     false green the whole check exists to remove.
+  ///
+  /// So the walk starts at the immediate children of `ios/`, skips the
+  /// directories that are never an app target, and never follows a link. That
+  /// also retires a `'/Runner/'` substring test that did nothing on Windows,
+  /// where the separator is a backslash: Runner is excluded by NAME now, which
+  /// has no separator in it.
   bool _hasNotificationServiceExtension() {
     if (!_fileDeclares(_pbxprojPath, '.appex')) return false;
 
     final Directory ios = Directory('$projectRoot/ios');
     if (!ios.existsSync()) return false;
 
-    return ios
-        .listSync(recursive: true)
-        .whereType<File>()
-        .where((File file) => file.path.endsWith('Info.plist'))
-        .where((File file) => !file.path.contains('/Runner/'))
-        .any(
-          (File file) => _withoutComments(
-            file.readAsStringSync(),
-          ).contains(_notificationServiceExtensionPoint),
-        );
+    for (final FileSystemEntity entity in ios.listSync(followLinks: false)) {
+      if (entity is! Directory) continue;
+      if (_notAnAppTarget.contains(_basename(entity.path))) continue;
+
+      final bool declares = entity
+          .listSync(recursive: true, followLinks: false)
+          .whereType<File>()
+          .where((File file) => _basename(file.path) == 'Info.plist')
+          .any(_declaresExtensionPoint);
+
+      if (declares) return true;
+    }
+
+    return false;
   }
+
+  /// Whether [plist] registers against the notification-service extension
+  /// point.
+  ///
+  /// Bytes and a tolerant decode rather than `readAsStringSync`, because a
+  /// vendored framework's plist is binary and the strict decoder throws on it.
+  /// A binary plist that happens to contain the identifier still matches, since
+  /// the bytes of an ASCII string survive `allowMalformed`.
+  bool _declaresExtensionPoint(File plist) => _withoutComments(
+        utf8.decode(plist.readAsBytesSync(), allowMalformed: true),
+      ).contains(_notificationServiceExtensionPoint);
+
+  /// The last path segment, separator-agnostic.
+  String _basename(String path) => path.split(RegExp(r'[/\\]')).last;
+
+  /// Directories under `ios/` that are never one of the app's own targets.
+  ///
+  /// `Runner` is the app, and an app is not its own notification service.
+  /// The rest are tooling: CocoaPods' vendored sources, Flutter's symlinks into
+  /// the pub cache, the build output, and the engine's own directory.
+  static const Set<String> _notAnAppTarget = <String>{
+    'Runner',
+    'Pods',
+    '.symlinks',
+    'build',
+    'Flutter',
+  };
 
   /// Apple's identifier for the extension point an NSE registers against.
   static const String _notificationServiceExtensionPoint =

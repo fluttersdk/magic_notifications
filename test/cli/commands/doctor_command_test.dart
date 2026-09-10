@@ -55,6 +55,13 @@ void _writeIosProject(
   // An app extension that is NOT a notification service: a widget. Its whole
   // purpose here is to occupy the `.appex` the doctor used to read as an NSE.
   bool otherExtension = false,
+  // A vendored CocoaPods framework carrying a BINARY Info.plist, which is what
+  // a real project's ios/Pods is full of and what the first version of the NSE
+  // walk threw on.
+  bool podsWithBinaryPlist = false,
+  // A dependency under ios/Pods shipping an NSE template plist. It is not this
+  // app's extension, however much a recursive walk makes it look like one.
+  bool podsWithServiceExtensionTemplate = false,
   bool appGroup = false,
 }) {
   Directory('${tempDir.path}/ios/Runner').createSync(recursive: true);
@@ -127,6 +134,36 @@ $groups</dict>
         .writeAsStringSync('''
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.usernotifications.service</string>
+	</dict>
+</dict>
+</plist>
+''');
+  }
+
+  if (podsWithBinaryPlist) {
+    Directory('${tempDir.path}/ios/Pods/OneSignalXCFramework.framework')
+        .createSync(recursive: true);
+    // A real binary plist header (bplist00) followed by bytes that are not
+    // valid UTF-8, which is what makes `readAsStringSync` throw.
+    File('${tempDir.path}/ios/Pods/OneSignalXCFramework.framework/Info.plist')
+        .writeAsBytesSync(<int>[
+      0x62, 0x70, 0x6C, 0x69, 0x73, 0x74, 0x30, 0x30, // bplist00
+      0xD1, 0x01, 0x02, 0x5F, 0x10, 0x0B, 0xFF, 0xFE, 0x80, 0x81,
+    ]);
+  }
+
+  if (podsWithServiceExtensionTemplate) {
+    Directory('${tempDir.path}/ios/Pods/SomeDependency/templates')
+        .createSync(recursive: true);
+    File('${tempDir.path}/ios/Pods/SomeDependency/templates/Info.plist')
+        .writeAsStringSync('''
+<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
 	<key>NSExtension</key>
@@ -801,6 +838,51 @@ Map<String, dynamic> get notificationConfig => {
       // that had none and then only nagged about App Groups. A false green on
       // the one check whose justification is that its subject looks exactly
       // like the product working.
+      expect(
+        command
+            .iosExtensionWarnings()
+            .any((w) => w.contains('No Notification Service Extension')),
+        isTrue,
+      );
+    });
+
+    test('survives a binary Info.plist in ios/Pods', () {
+      _writeValidConfig(tempDir);
+      _writeIosProject(
+        tempDir,
+        entitlement: true,
+        otherExtension: true,
+        podsWithBinaryPlist: true,
+      );
+
+      // A vendored framework's plist is a BINARY plist, and reading it as
+      // UTF-8 throws. Nothing caught that, and `getWarnings()` is called
+      // unguarded from `handle()`, so the command and the MCP tool crashed
+      // instead of reporting. It only bit a project whose pbxproj already
+      // names a `.appex`, which is this check's whole audience, and
+      // OneSignal's own iOS SDK arrives as an XCFramework through CocoaPods.
+      expect(command.iosExtensionWarnings, returnsNormally);
+      expect(
+        command
+            .iosExtensionWarnings()
+            .any((w) => w.contains('No Notification Service Extension')),
+        isTrue,
+      );
+    });
+
+    test("does not count a dependency's NSE template as this app's extension",
+        () {
+      _writeValidConfig(tempDir);
+      _writeIosProject(
+        tempDir,
+        entitlement: true,
+        otherExtension: true,
+        podsWithServiceExtensionTemplate: true,
+      );
+
+      // Walking all of ios/ recursively reached into Pods and the pub-cache
+      // symlinks, so somebody else's template read as this app's target: the
+      // exact false green the extension-point check was added to remove.
       expect(
         command
             .iosExtensionWarnings()
