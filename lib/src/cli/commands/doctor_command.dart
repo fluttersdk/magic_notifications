@@ -501,11 +501,145 @@ class DoctorCommand extends ArtisanCommand {
       );
     }
 
+    issues.addAll(_apsEnvironmentIssues());
+
     return {
       'configured': issues.isEmpty,
       'exists': true,
       'issues': issues,
     };
+  }
+
+  /// What each build configuration's entitlements file has to declare.
+  ///
+  /// Apple decides this, not us: a development provisioning profile carries
+  /// `aps-environment: development` and a distribution one carries
+  /// `production`, and signing against the other value is refused. So the value
+  /// is a property of the CONFIGURATION rather than of the project, and the
+  /// installer's single `development` file is correct for two of the three and
+  /// wrong for the one that ships.
+  static const Map<String, String> _apsEnvironmentByConfiguration = {
+    'Debug': 'development',
+    'Profile': 'development',
+    'Release': 'production',
+  };
+
+  /// Whether each configuration signs against an APNs environment it can use.
+  ///
+  /// This is the check that would have caught a real defect and did not exist:
+  /// the existing test above asks only whether `aps-environment` is PRESENT in
+  /// `Runner.entitlements`, so a project whose Release build declares
+  /// `development` prints a clean bill of health and then either fails at
+  /// export or ships an app registering a sandbox token the production app can
+  /// never deliver to. Neither symptom appears until TestFlight.
+  ///
+  /// Read per configuration rather than per file, because the fix is a split:
+  /// Release points at its own entitlements twin while Debug and Profile keep
+  /// the development one. A project that has not split yet is the ordinary
+  /// case here, and it fails on Release with the value it actually carries,
+  /// which is the message that tells somebody what to do.
+  ///
+  /// Silent when the pbxproj cannot be walked. A doctor that guesses at a
+  /// project shape it does not recognise reports a fault that is not there,
+  /// and the two checks above already cover the file being absent entirely.
+  List<String> _apsEnvironmentIssues() {
+    final Map<String, String> entitlements = _entitlementsByConfiguration();
+    if (entitlements.isEmpty) return const [];
+
+    final issues = <String>[];
+
+    for (final MapEntry<String, String> entry in entitlements.entries) {
+      final String? expected = _apsEnvironmentByConfiguration[entry.key];
+      if (expected == null) continue;
+
+      final String path = '$projectRoot/ios/${entry.value}';
+      if (!FileHelper.fileExists(path)) {
+        issues.add(
+          'the ${entry.key} configuration signs against ios/${entry.value}, '
+          'which does not exist',
+        );
+        continue;
+      }
+
+      final String? actual = _declaredApsEnvironment(path);
+      if (actual == null || actual == expected) continue;
+
+      issues.add(
+        'the ${entry.key} configuration signs against ios/${entry.value}, '
+        'which declares $_apsEnvironmentKey $actual where a '
+        '${entry.key == 'Release' ? 'distribution' : 'development'} '
+        'provisioning profile carries $expected',
+      );
+    }
+
+    return issues;
+  }
+
+  /// The `aps-environment` string in an entitlements plist, or null.
+  ///
+  /// Matched on the key/value pair rather than on the value alone: an
+  /// entitlements file holds other strings, and `development` is a word that
+  /// appears in more than one of them.
+  String? _declaredApsEnvironment(String path) {
+    final RegExpMatch? match = RegExp(
+      '<key>$_apsEnvironmentKey</key>\\s*<string>([^<]*)</string>',
+    ).firstMatch(FileHelper.readFile(path));
+
+    return match?.group(1);
+  }
+
+  /// Maps each Runner build configuration to the entitlements path it signs
+  /// against, as the pbxproj spells it (relative to `ios/`).
+  ///
+  /// Walked structurally, target to configuration list to configuration,
+  /// rather than searched: the project holds a second target (`RunnerTests`)
+  /// whose configurations are also called Debug and Release and which signs
+  /// nothing, so a global match reads the wrong ones. Returns empty rather
+  /// than throwing when the shape is not the one this walk knows.
+  Map<String, String> _entitlementsByConfiguration() {
+    if (!FileHelper.fileExists(_pbxprojPath)) return const {};
+
+    final String source = FileHelper.readFile(_pbxprojPath);
+
+    // One top-level object: a 24-hex id, an optional /* comment */, then a
+    // brace-delimited body at two tabs of indent. Xcode writes this format.
+    final Map<String, String> objects = {
+      for (final RegExpMatch match in RegExp(
+        r'^\t\t([0-9A-F]{24})(?: /\* .*? \*/)? = \{(.*?)^\t\t\};$',
+        dotAll: true,
+        multiLine: true,
+      ).allMatches(source))
+        match.group(1)!: match.group(2)!,
+    };
+
+    String? setting(String body, String key) =>
+        RegExp('^\\s*${RegExp.escape(key)} = (.+?);\$', multiLine: true)
+            .firstMatch(body)
+            ?.group(1)
+            ?.trim()
+            .replaceAll('"', '');
+
+    final Iterable<String> targets = objects.values.where(
+      (String body) =>
+          setting(body, 'isa') == 'PBXNativeTarget' &&
+          setting(body, 'name') == 'Runner',
+    );
+    if (targets.length != 1) return const {};
+
+    // `buildConfigurationList = <id> /* Build configuration list for ... */;`
+    final String? reference = setting(targets.first, 'buildConfigurationList');
+    final String? listId = reference?.split(' ').first;
+    if (listId == null || !objects.containsKey(listId)) return const {};
+
+    final Map<String, String> byConfiguration = {};
+    for (final RegExpMatch match in RegExp(r'([0-9A-F]{24}) /\* (\w+) \*/,')
+        .allMatches(objects[listId]!)) {
+      final String? path =
+          setting(objects[match.group(1)!] ?? '', _entitlementsSetting);
+      if (path != null) byConfiguration[match.group(2)!] = path;
+    }
+
+    return byConfiguration;
   }
 
   /// Path to the iOS entitlements file the installer writes.
