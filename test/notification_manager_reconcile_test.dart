@@ -709,6 +709,185 @@ void main() {
       await loading;
     });
 
+    test('the first listener receives a click published before it arrived',
+        () async {
+      final _RecordingPushDriver driver = use(_RecordingPushDriver());
+
+      // The manager listens to a driver when it RESOLVES one, so the click
+      // below has somewhere to arrive from.
+      await manager.want('user_A');
+      await manager.reconcilePushIdentity();
+
+      // The cold-start window: `onesignal_flutter` drains the tap that
+      // launched the app in a microtask scheduled from `addClickListener`,
+      // which this manager calls inside `driver.initialize()`, which its own
+      // provider awaits in `boot()`. A consumer whose provider list puts
+      // notifications BEFORE the package that bridges clicks into deep links
+      // subscribes only afterwards, and a broadcast stream drops what it
+      // published to nobody. Which order a consumer ends up with is decided by
+      // the order the two packages happened to be installed in, so the manager
+      // holds the click rather than the consumer holding an ordering.
+      driver.clicked.add(
+        const PushNotificationEvent(<String, dynamic>{
+          'deep_link': '/incidents/1',
+        }),
+      );
+      await pumpEventQueue();
+
+      final List<Map<String, dynamic>> opened = <Map<String, dynamic>>[];
+      final StreamSubscription<PushNotificationEvent> subscription =
+          manager.onPushClicked.listen(
+        (PushNotificationEvent event) => opened.add(event.data),
+      );
+      addTearDown(subscription.cancel);
+      await pumpEventQueue();
+
+      expect(
+        opened.map((Map<String, dynamic> d) => d['deep_link']),
+        <String>['/incidents/1'],
+      );
+    });
+
+    test('a click is replayed once, not to every later listener', () async {
+      final _RecordingPushDriver driver = use(_RecordingPushDriver());
+
+      await manager.want('user_A');
+      await manager.reconcilePushIdentity();
+
+      driver.clicked.add(
+        const PushNotificationEvent(<String, dynamic>{
+          'deep_link': '/incidents/1',
+        }),
+      );
+      await pumpEventQueue();
+
+      final StreamSubscription<PushNotificationEvent> first =
+          manager.onPushClicked.listen((_) {});
+      addTearDown(first.cancel);
+      await pumpEventQueue();
+
+      // A second subscriber arriving later must not be handed the same tap
+      // again: re-navigating an app somebody has since moved through is a
+      // worse failure than the one the buffer closes.
+      final List<Map<String, dynamic>> late = <Map<String, dynamic>>[];
+      final StreamSubscription<PushNotificationEvent> second =
+          manager.onPushClicked.listen(
+        (PushNotificationEvent event) => late.add(event.data),
+      );
+      addTearDown(second.cancel);
+      await pumpEventQueue();
+
+      expect(late, isEmpty);
+    });
+
+    test(
+        'holds a click for a consumer that READS the stream and subscribes '
+        'later', () async {
+      final _RecordingPushDriver driver = use(_RecordingPushDriver());
+
+      await manager.want('user_A');
+      await manager.reconcilePushIdentity();
+
+      // Reading the getter is not subscribing, and this is the shape that made
+      // the first version of the buffer useless: a consumer that captures the
+      // stream, awaits its router, and listens afterwards. Against a flag set
+      // by the getter, the replay drained into a broadcast controller with no
+      // subscriber and the launch tap was gone, which is the exact failure the
+      // buffer exists to close.
+      final Stream<PushNotificationEvent> stream = manager.onPushClicked;
+      await pumpEventQueue();
+
+      driver.clicked.add(
+        const PushNotificationEvent(<String, dynamic>{
+          'deep_link': '/incidents/1',
+        }),
+      );
+      await pumpEventQueue();
+
+      final List<Map<String, dynamic>> opened = <Map<String, dynamic>>[];
+      final StreamSubscription<PushNotificationEvent> subscription =
+          stream.listen((PushNotificationEvent e) => opened.add(e.data));
+      addTearDown(subscription.cancel);
+      await pumpEventQueue();
+
+      expect(
+        opened.map((Map<String, dynamic> d) => d['deep_link']),
+        <String>['/incidents/1'],
+      );
+    });
+
+    test('keeps delivering to a live subscriber after forgetDrivers', () async {
+      _RecordingPushDriver driver = use(_RecordingPushDriver());
+
+      await manager.want('user_A');
+      await manager.reconcilePushIdentity();
+
+      final List<Map<String, dynamic>> opened = <Map<String, dynamic>>[];
+      final StreamSubscription<PushNotificationEvent> subscription =
+          manager.onPushClicked.listen(
+        (PushNotificationEvent e) => opened.add(e.data),
+      );
+      addTearDown(subscription.cancel);
+      await pumpEventQueue();
+
+      // `forgetDrivers` is public through `Notify.forgetDrivers()` and an app
+      // calls it on sign-out. It cannot cancel a subscription somebody else
+      // holds, so a "has anybody heard this" flag that it reset left the
+      // manager buffering for a listener that was already there and never
+      // draining, because nothing reads the getter twice. Every tap after a
+      // sign-out was swallowed in silence.
+      manager.forgetDrivers();
+      driver = use(_RecordingPushDriver());
+      await manager.want('user_A');
+      await manager.reconcilePushIdentity();
+
+      driver.clicked.add(
+        const PushNotificationEvent(<String, dynamic>{
+          'deep_link': '/incidents/2',
+        }),
+      );
+      await pumpEventQueue();
+
+      expect(
+        opened.map((Map<String, dynamic> d) => d['deep_link']),
+        <String>['/incidents/2'],
+      );
+    });
+
+    test('does not replay a buffered click to a DIFFERENT identity', () async {
+      final _RecordingPushDriver driver = use(_RecordingPushDriver());
+
+      await manager.want('user_A');
+      await manager.reconcilePushIdentity();
+
+      driver.clicked.add(
+        const PushNotificationEvent(<String, dynamic>{
+          'subject': 'user_A',
+          'deep_link': '/incidents/1',
+        }),
+      );
+      await pumpEventQueue();
+
+      // The device moved to somebody else before anything subscribed.
+      // `forgetDrivers` clears the buffer; `want` does not, so the replay has
+      // to be judged again rather than trusted. Handing the deep-link bridge
+      // the previous identity's payload is precisely what the receive-side
+      // guard exists to stop.
+      use(_RecordingPushDriver(subscribedAs: 'user_B'));
+      await manager.want('user_B');
+      await manager.reconcilePushIdentity();
+
+      final List<Map<String, dynamic>> opened = <Map<String, dynamic>>[];
+      final StreamSubscription<PushNotificationEvent> subscription =
+          manager.onPushClicked.listen(
+        (PushNotificationEvent e) => opened.add(e.data),
+      );
+      addTearDown(subscription.cancel);
+      await pumpEventQueue();
+
+      expect(opened, isEmpty);
+    });
+
     test('drops a CLICK addressed to somebody else', () async {
       final _RecordingPushDriver driver = use(
         _RecordingPushDriver(subscribedAs: 'user_B'),

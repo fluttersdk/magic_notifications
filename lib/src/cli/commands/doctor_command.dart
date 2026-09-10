@@ -1,3 +1,9 @@
+// Directly, because FileHelper reads a path it is given and this command has to
+// WALK one: an NSE's extension point lives in whichever Info.plist its target
+// owns, and the target can be named anything.
+import 'dart:convert';
+import 'dart:io';
+
 // cli.dart re-exports fluttersdk_artisan/artisan.dart (hiding only the builtin
 // DoctorCommand that collides with this class), so a direct artisan.dart import
 // is redundant here.
@@ -31,6 +37,10 @@ class DoctorCommand extends ArtisanCommand {
 
   /// Build setting through which Xcode learns the entitlements file exists.
   static const String _entitlementsSetting = 'CODE_SIGN_ENTITLEMENTS';
+
+  /// The entitlement that shares a container between the app and its
+  /// Notification Service Extension. See [iosExtensionWarnings].
+  static const String _appGroupsKey = 'com.apple.security.application-groups';
 
   /// The env file a project keeps its per-deployment values in.
   ///
@@ -97,8 +107,16 @@ class DoctorCommand extends ArtisanCommand {
     // normal state, and a doctor that fails on it stops being read. What it
     // must not do is claim everything passed.
     if (missing.isEmpty) {
+      // The two kinds of warning mean opposite things about whether push
+      // works at all, and saying "cannot send yet" over a missing Xcode
+      // extension would send an adopter hunting a provisioning problem that
+      // is not there.
       ctx.output.warning(
-        'Nothing failed, but push cannot send yet: see the warnings above.',
+        configWarnings().isEmpty
+            ? 'Nothing failed. Push sends, but some of it is not wired: see '
+                'the warnings above.'
+            : 'Nothing failed, but push cannot send yet: see the warnings '
+                'above.',
       );
       ctx.output.writeln('');
       return 0;
@@ -284,7 +302,18 @@ class DoctorCommand extends ArtisanCommand {
   /// warning must never do is print as a tick, which is how an env-resolved App
   /// ID with a blank `.env` entry once certified a build that could not send a
   /// single push.
-  List<String> getWarnings() {
+  List<String> getWarnings() => <String>[
+        ...configWarnings(),
+        ...iosExtensionWarnings(),
+      ];
+
+  /// Warnings about the CONFIG specifically, which is the only kind the
+  /// report's "Config Validation" section may print.
+  ///
+  /// Split from [getWarnings] when the iOS extension checks landed: rendering
+  /// every warning under that heading filed an Xcode target's absence as a
+  /// config finding, and printed it twice.
+  List<String> configWarnings() {
     final warnings = <String>[];
 
     if (!checkConfigExists()) {
@@ -310,6 +339,54 @@ class DoctorCommand extends ArtisanCommand {
               'is no $envFileName at the project root to confirm it is '
               'provisioned',
     );
+
+    return warnings;
+  }
+
+  /// What OneSignal's iOS setup asks for that no Dart package can install.
+  ///
+  /// Push works without either of these, which is exactly why they need
+  /// saying: a build with no Notification Service Extension delivers
+  /// notifications normally and quietly reports no confirmed deliveries, no
+  /// rich media and no badge counts, so the absence looks like the product
+  /// working rather than an install left half done.
+  ///
+  /// The two halves fail independently and are checked separately. An
+  /// extension with no shared App Group gives rich media and still no
+  /// confirmed delivery, because the container is how the extension hands what
+  /// it saw back to the app.
+  ///
+  /// Warnings rather than failures: an app that never wants rich notifications
+  /// is a legitimate build, and a doctor that fails one stops being read.
+  /// Neither can be automated from here, since a pub package cannot add an
+  /// Xcode target; `doc/getting-started/installation.md` carries the manual
+  /// steps.
+  List<String> iosExtensionWarnings() {
+    final warnings = <String>[];
+
+    // Nothing to say about iOS on a project that does not ship it.
+    if (!FileHelper.directoryExists('$projectRoot/ios')) return warnings;
+
+    if (!_hasNotificationServiceExtension()) {
+      warnings.add(
+        'No Notification Service Extension target found in '
+        'ios/Runner.xcodeproj/project.pbxproj. Push still arrives; confirmed '
+        'delivery, rich media and badge counts do not. See '
+        'doc/getting-started/installation.md for the Xcode steps.',
+      );
+
+      // The group check below would only repeat the same finding.
+      return warnings;
+    }
+
+    if (!_fileDeclares(_entitlementsPath, _appGroupsKey)) {
+      warnings.add(
+        'A Notification Service Extension exists but $_appGroupsKey is missing '
+        'from ios/Runner/Runner.entitlements. Without the shared App Group the '
+        'extension cannot report back, so confirmed delivery and badge counts '
+        'stay unavailable even though rich media works.',
+      );
+    }
 
     return warnings;
   }
@@ -437,6 +514,95 @@ class DoctorCommand extends ArtisanCommand {
   /// Path to the Xcode project file that has to name that entitlements file.
   String get _pbxprojPath =>
       '$projectRoot/ios/Runner.xcodeproj/project.pbxproj';
+
+  /// Whether the project ships a Notification Service Extension target.
+  ///
+  /// Two conditions, and the second is what makes this worth more than a
+  /// substring search. `.appex` in the pbxproj says only that SOME app
+  /// extension exists: a widget, a share sheet and a keyboard all end in that
+  /// suffix, so a project carrying one of those and no NSE read as configured
+  /// and got nothing but the App Group nag. That is a false green on the one
+  /// check whose whole justification is that a missing NSE looks exactly like
+  /// the product working.
+  ///
+  /// The extension POINT is what identifies it, and it lives in the target's
+  /// own `Info.plist` rather than in the pbxproj, so the plists under `ios/`
+  /// are what gets searched.
+  ///
+  /// Only the app's OWN target directories, which a review had to correct
+  /// twice over. The first version walked all of `ios/` recursively and read
+  /// each plist as UTF-8, and both halves of that were wrong on a real
+  /// project:
+  ///
+  ///   - `ios/Pods` is full of vendored frameworks whose `Info.plist` is a
+  ///     BINARY plist. `readAsStringSync` throws on one, nothing here caught
+  ///     it, and `getWarnings()` is called unguarded from `handle()`, so the
+  ///     command and the MCP tool crashed instead of reporting. It only bit a
+  ///     project whose pbxproj already names a `.appex`, which is exactly this
+  ///     check's audience, and OneSignal's own iOS SDK arrives as an
+  ///     XCFramework through CocoaPods.
+  ///   - `listSync(recursive: true)` follows links, so it descended
+  ///     `ios/.symlinks/plugins/*` into the pub cache. A dependency shipping an
+  ///     NSE template plist then read as THIS app's extension, which is the
+  ///     false green the whole check exists to remove.
+  ///
+  /// So the walk starts at the immediate children of `ios/`, skips the
+  /// directories that are never an app target, and never follows a link. That
+  /// also retires a `'/Runner/'` substring test that did nothing on Windows,
+  /// where the separator is a backslash: Runner is excluded by NAME now, which
+  /// has no separator in it.
+  bool _hasNotificationServiceExtension() {
+    if (!_fileDeclares(_pbxprojPath, '.appex')) return false;
+
+    final Directory ios = Directory('$projectRoot/ios');
+    if (!ios.existsSync()) return false;
+
+    for (final FileSystemEntity entity in ios.listSync(followLinks: false)) {
+      if (entity is! Directory) continue;
+      if (_notAnAppTarget.contains(_basename(entity.path))) continue;
+
+      final bool declares = entity
+          .listSync(recursive: true, followLinks: false)
+          .whereType<File>()
+          .where((File file) => _basename(file.path) == 'Info.plist')
+          .any(_declaresExtensionPoint);
+
+      if (declares) return true;
+    }
+
+    return false;
+  }
+
+  /// Whether [plist] registers against the notification-service extension
+  /// point.
+  ///
+  /// Bytes and a tolerant decode rather than `readAsStringSync`, because a
+  /// vendored framework's plist is binary and the strict decoder throws on it.
+  /// A binary plist that happens to contain the identifier still matches, since
+  /// the bytes of an ASCII string survive `allowMalformed`.
+  bool _declaresExtensionPoint(File plist) => _withoutComments(
+        utf8.decode(plist.readAsBytesSync(), allowMalformed: true),
+      ).contains(_notificationServiceExtensionPoint);
+
+  /// The last path segment, separator-agnostic.
+  String _basename(String path) => path.split(RegExp(r'[/\\]')).last;
+
+  /// Directories under `ios/` that are never one of the app's own targets.
+  ///
+  /// `Runner` is the app, and an app is not its own notification service.
+  /// The rest are tooling: CocoaPods' vendored sources, Flutter's symlinks into
+  /// the pub cache, the build output, and the engine's own directory.
+  static const Set<String> _notAnAppTarget = <String>{
+    'Runner',
+    'Pods',
+    '.symlinks',
+    'build',
+    'Flutter',
+  };
+
+  /// Apple's identifier for the extension point an NSE registers against.
+  static const String _notificationServiceExtensionPoint =
+      'com.apple.usernotifications.service';
 
   /// Whether [path] exists and mentions [marker] outside of a comment.
   bool _fileDeclares(String path, String marker) {
@@ -569,15 +735,15 @@ class DoctorCommand extends ArtisanCommand {
       }
 
       final configIssues = validateConfig();
-      final configWarnings = getWarnings();
+      final warningsAboutConfig = configWarnings();
 
-      if (configIssues.isEmpty && configWarnings.isEmpty) {
+      if (configIssues.isEmpty && warningsAboutConfig.isEmpty) {
         buffer.writeln('  ✓ All config checks passed');
       } else {
         for (final issue in configIssues) {
           buffer.writeln('  ✗ $issue');
         }
-        for (final warning in configWarnings) {
+        for (final warning in warningsAboutConfig) {
           buffer.writeln('  ⚠ $warning');
         }
       }

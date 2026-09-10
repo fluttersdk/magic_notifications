@@ -51,6 +51,18 @@ void _writeIosProject(
   bool entitlement = false,
   bool codeSignEntitlements = false,
   String? infoPlistOverride,
+  bool serviceExtension = false,
+  // An app extension that is NOT a notification service: a widget. Its whole
+  // purpose here is to occupy the `.appex` the doctor used to read as an NSE.
+  bool otherExtension = false,
+  // A vendored CocoaPods framework carrying a BINARY Info.plist, which is what
+  // a real project's ios/Pods is full of and what the first version of the NSE
+  // walk threw on.
+  bool podsWithBinaryPlist = false,
+  // A dependency under ios/Pods shipping an NSE template plist. It is not this
+  // app's extension, however much a recursive walk makes it look like one.
+  bool podsWithServiceExtensionTemplate = false,
+  bool appGroup = false,
 }) {
   Directory('${tempDir.path}/ios/Runner').createSync(recursive: true);
   Directory('${tempDir.path}/ios/Runner.xcodeproj').createSync(recursive: true);
@@ -79,6 +91,14 @@ $modes</dict>
   );
 
   if (entitlement) {
+    final groups = appGroup
+        ? '''
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.example.app.onesignal</string>
+	</array>
+'''
+        : '';
     File('${tempDir.path}/ios/Runner/Runner.entitlements').writeAsStringSync('''
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -86,7 +106,7 @@ $modes</dict>
 <dict>
 	<key>aps-environment</key>
 	<string>development</string>
-</dict>
+$groups</dict>
 </plist>
 ''');
   }
@@ -94,12 +114,92 @@ $modes</dict>
   final entitlementsSetting = codeSignEntitlements
       ? '                CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;\n'
       : '';
+  // A `.appex` product is how ANY extension target appears in a real pbxproj,
+  // whatever it is named, so the pbxproj alone cannot say which kind it is.
+  // `otherExtension` writes exactly that and no more: a widget, which is the
+  // case that used to read as an NSE.
+  final extensionProduct = serviceExtension || otherExtension
+      ? '        3A1B2C3D /* ${serviceExtension ? 'OneSignalNotificationServiceExtension' : 'WidgetExtension'}.appex */ = '
+          '{isa = PBXFileReference; explicitFileType = '
+          '"wrapper.app-extension"; path = '
+          '${serviceExtension ? 'OneSignalNotificationServiceExtension' : 'WidgetExtension'}.appex; };\n'
+      : '';
+
+  // What identifies the kind: the extension POINT, which lives in the target's
+  // own Info.plist rather than in the pbxproj.
+  if (serviceExtension) {
+    Directory('${tempDir.path}/ios/OneSignalNotificationServiceExtension')
+        .createSync(recursive: true);
+    File('${tempDir.path}/ios/OneSignalNotificationServiceExtension/Info.plist')
+        .writeAsStringSync('''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.usernotifications.service</string>
+	</dict>
+</dict>
+</plist>
+''');
+  }
+
+  if (podsWithBinaryPlist) {
+    Directory('${tempDir.path}/ios/Pods/OneSignalXCFramework.framework')
+        .createSync(recursive: true);
+    // A real binary plist header (bplist00) followed by bytes that are not
+    // valid UTF-8, which is what makes `readAsStringSync` throw.
+    File('${tempDir.path}/ios/Pods/OneSignalXCFramework.framework/Info.plist')
+        .writeAsBytesSync(<int>[
+      0x62, 0x70, 0x6C, 0x69, 0x73, 0x74, 0x30, 0x30, // bplist00
+      0xD1, 0x01, 0x02, 0x5F, 0x10, 0x0B, 0xFF, 0xFE, 0x80, 0x81,
+    ]);
+  }
+
+  if (podsWithServiceExtensionTemplate) {
+    Directory('${tempDir.path}/ios/Pods/SomeDependency/templates')
+        .createSync(recursive: true);
+    File('${tempDir.path}/ios/Pods/SomeDependency/templates/Info.plist')
+        .writeAsStringSync('''
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.usernotifications.service</string>
+	</dict>
+</dict>
+</plist>
+''');
+  }
+
+  if (otherExtension) {
+    Directory('${tempDir.path}/ios/WidgetExtension').createSync(
+      recursive: true,
+    );
+    File('${tempDir.path}/ios/WidgetExtension/Info.plist').writeAsStringSync('''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.widgetkit-extension</string>
+	</dict>
+</dict>
+</plist>
+''');
+  }
   File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
       .writeAsStringSync('''
 // !\$*UTF8*\$!
 {
     objects = {
-        97C147061CF9000F007C117D /* Debug */ = {
+$extensionProduct        97C147061CF9000F007C117D /* Debug */ = {
             isa = XCBuildConfiguration;
             buildSettings = {
 $entitlementsSetting                PRODUCT_BUNDLE_IDENTIFIER = com.example.app;
@@ -711,6 +811,128 @@ Map<String, dynamic> get notificationConfig => {
   // ---------------------------------------------------------------------------
   // iOS platform setup
   // ---------------------------------------------------------------------------
+
+  group('the iOS pieces no pub package can install', () {
+    // Push works without either of these, so their absence looks like the
+    // product working. That is the whole reason the doctor says anything.
+    test('warns when no Notification Service Extension target exists', () {
+      _writeValidConfig(tempDir);
+      _writeIosProject(tempDir, entitlement: true);
+
+      expect(
+        command
+            .iosExtensionWarnings()
+            .any((w) => w.contains('Notification Service Extension')),
+        isTrue,
+      );
+    });
+
+    test(
+        'still warns when the only app extension is not a notification '
+        'service', () {
+      _writeValidConfig(tempDir);
+      _writeIosProject(tempDir, entitlement: true, otherExtension: true);
+
+      // A widget, a share sheet and a keyboard all ship a `.appex`, so a
+      // substring search for that suffix reported the NSE present on a project
+      // that had none and then only nagged about App Groups. A false green on
+      // the one check whose justification is that its subject looks exactly
+      // like the product working.
+      expect(
+        command
+            .iosExtensionWarnings()
+            .any((w) => w.contains('No Notification Service Extension')),
+        isTrue,
+      );
+    });
+
+    test('survives a binary Info.plist in ios/Pods', () {
+      _writeValidConfig(tempDir);
+      _writeIosProject(
+        tempDir,
+        entitlement: true,
+        otherExtension: true,
+        podsWithBinaryPlist: true,
+      );
+
+      // A vendored framework's plist is a BINARY plist, and reading it as
+      // UTF-8 throws. Nothing caught that, and `getWarnings()` is called
+      // unguarded from `handle()`, so the command and the MCP tool crashed
+      // instead of reporting. It only bit a project whose pbxproj already
+      // names a `.appex`, which is this check's whole audience, and
+      // OneSignal's own iOS SDK arrives as an XCFramework through CocoaPods.
+      expect(command.iosExtensionWarnings, returnsNormally);
+      expect(
+        command
+            .iosExtensionWarnings()
+            .any((w) => w.contains('No Notification Service Extension')),
+        isTrue,
+      );
+    });
+
+    test("does not count a dependency's NSE template as this app's extension",
+        () {
+      _writeValidConfig(tempDir);
+      _writeIosProject(
+        tempDir,
+        entitlement: true,
+        otherExtension: true,
+        podsWithServiceExtensionTemplate: true,
+      );
+
+      // Walking all of ios/ recursively reached into Pods and the pub-cache
+      // symlinks, so somebody else's template read as this app's target: the
+      // exact false green the extension-point check was added to remove.
+      expect(
+        command
+            .iosExtensionWarnings()
+            .any((w) => w.contains('No Notification Service Extension')),
+        isTrue,
+      );
+    });
+
+    test('warns when the extension exists without a shared App Group', () {
+      _writeValidConfig(tempDir);
+      _writeIosProject(tempDir, entitlement: true, serviceExtension: true);
+
+      final warnings = command.iosExtensionWarnings();
+
+      // The halves fail independently: rich media works, confirmed delivery
+      // and badges do not, because the container is the way back.
+      expect(warnings.any((w) => w.contains('App Group')), isTrue);
+      expect(
+          warnings.any((w) => w.contains('No Notification Service')), isFalse);
+    });
+
+    test('says nothing when both halves are present', () {
+      _writeValidConfig(tempDir);
+      _writeIosProject(
+        tempDir,
+        entitlement: true,
+        serviceExtension: true,
+        appGroup: true,
+      );
+
+      expect(command.iosExtensionWarnings(), isEmpty);
+    });
+
+    test('says nothing about iOS on a project that ships no ios/ directory',
+        () {
+      _writeValidConfig(tempDir);
+
+      expect(command.iosExtensionWarnings(), isEmpty);
+    });
+
+    test('an extension warning does not print as a config finding', () {
+      _writeValidConfig(tempDir);
+      _writeIosProject(tempDir, entitlement: true);
+
+      // Filing an Xcode target's absence under "Config Validation" sent an
+      // adopter to the wrong file, and printed the same line twice.
+      expect(command.configWarnings(), isEmpty);
+      expect(command.getWarnings(), isNotEmpty);
+    });
+  });
 
   group('iOS setup', () {
     /// The `[ios]` prefixed entries of the doctor's missing-requirement list.
