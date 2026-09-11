@@ -204,6 +204,14 @@ a project-file edit:
 2. Create an APNs key in [Apple Developer Portal](https://developer.apple.com/account/resources/authkeys/list) (.p8 file + Key ID + Team ID). One key covers Sandbox and Production, it is team-wide, and it downloads exactly once.
 3. Upload the .p8 key to OneSignal Dashboard → Settings → Platforms → Apple iOS (APNs), with the Key ID, your Team ID and your bundle identifier.
 
+> [!IMPORTANT]
+> The entitlement this installer writes says `development`, which is what a
+> development provisioning profile carries and what a distribution one
+> refuses. Before you archive anything, read
+> [Shipping push in a release build](../basics/shipping-push.md): that and
+> three other differences are silent, and the first evidence of each is a
+> notification nobody receives.
+
 #### The Notification Service Extension, and why nothing here can create it
 
 Push works without the next two steps, which is the reason to read them: a

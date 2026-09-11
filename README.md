@@ -351,6 +351,7 @@ App launch → NotificationServiceProvider.boot()
 |----------|-------------|
 | [Installation](https://magic.fluttersdk.com/packages/notifications/getting-started/installation) | Adding the package and running the installer |
 | [Configuration](https://magic.fluttersdk.com/packages/notifications/getting-started/configuration) | Config file reference and options |
+| [Shipping push in a release build](https://magic.fluttersdk.com/packages/notifications/basics/shipping-push) | The four things that differ from a development build, all of them silent |
 | [Channels](https://magic.fluttersdk.com/packages/notifications/basics/channels) | Database, Push, and Mail channel details |
 | [Drivers](https://magic.fluttersdk.com/packages/notifications/basics/drivers) | Push driver contract and OneSignal implementation |
 | [Preferences](https://magic.fluttersdk.com/packages/notifications/basics/preferences) | User notification preference management |
