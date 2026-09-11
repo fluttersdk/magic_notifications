@@ -309,6 +309,12 @@ class DoctorCommand extends ArtisanCommand {
   /// `development` is not "some of it is not wired": production push is
   /// precisely what will not send, and the app is not unprovisioned either.
   ///
+  /// Each sentence claims only what its branch established, which is a rule
+  /// this method has already broken twice in one review round: first by
+  /// keying the APNs case on any warning from that check, then by asserting
+  /// the development build was fine when only the release half had been
+  /// tested.
+  ///
   /// The APNs sentence is keyed on a RELEASE-named warning rather than on any
   /// warning from that check, and the distinction is not pedantic: the same
   /// list carries "signs against ios/X, which does not exist" and "declares no
@@ -330,8 +336,13 @@ class DoctorCommand extends ArtisanCommand {
         .any((warning) => warning.startsWith('the Release configuration'));
 
     if (releaseIsWrong) {
-      return 'Nothing failed, and push sends from a development build. A '
-          'release build will not: see the warnings above.';
+      // Only the half the branch verified. The first version also asserted
+      // that push sends from a development build, which nothing here checks:
+      // a project whose Release twin is wrong AND whose Debug twin was never
+      // created produces two warnings, and that sentence would have told the
+      // reader the development build is fine while it is not.
+      return 'Nothing failed, but a release build will not send: see the '
+          'warnings above.';
     }
 
     return 'Nothing failed. Push sends, but some of it is not wired: see the '

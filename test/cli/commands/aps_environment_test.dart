@@ -361,7 +361,7 @@ void main() {
 
       expect(
         _TestDoctorCommand(tempDir.path).warningSummary(),
-        contains('A release build will not'),
+        contains('a release build will not send'),
       );
     });
 
@@ -391,7 +391,35 @@ void main() {
         command.warningSummary(),
         allOf(
           contains('some of it is not wired'),
-          isNot(contains('A release build will not')),
+          isNot(contains('a release build will not send')),
+        ),
+      );
+    });
+
+    test('claims nothing about the development build when it is wrong too', () {
+      // Two warnings at once: the Release twin declares the wrong value AND
+      // the Debug twin was never created. The sentence used to assert that
+      // push sends from a development build, which is the half its branch
+      // never checked and which is false here.
+      File('${tempDir.path}/ios/Runner/Runner.entitlements')
+          .writeAsStringSync(_entitlements('development'));
+      File('${tempDir.path}/ios/Runner/RunnerRelease.entitlements')
+          .writeAsStringSync(_entitlements('development'));
+      File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+          .writeAsStringSync(_pbxproj(
+        debugEntitlements: 'Runner/RunnerDebug.entitlements',
+        releaseEntitlements: 'Runner/RunnerRelease.entitlements',
+        profileEntitlements: 'Runner/Runner.entitlements',
+      ));
+
+      final command = _TestDoctorCommand(tempDir.path);
+
+      expect(iosIssues(), hasLength(2));
+      expect(
+        command.warningSummary(),
+        allOf(
+          contains('a release build will not send'),
+          isNot(contains('sends from a development build')),
         ),
       );
     });
