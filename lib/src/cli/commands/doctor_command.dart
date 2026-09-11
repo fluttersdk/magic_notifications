@@ -111,24 +111,7 @@ class DoctorCommand extends ArtisanCommand {
       // works at all, and saying "cannot send yet" over a missing Xcode
       // extension would send an adopter hunting a provisioning problem that
       // is not there.
-      // Three answers, because the two that existed both said something
-      // untrue about this one. A Release configuration signing against
-      // `development` is not "some of it is not wired": production push is
-      // precisely what will not send, and the app is not unprovisioned
-      // either, so neither of the older sentences fits.
-      final String summary;
-      if (configWarnings().isNotEmpty) {
-        summary = 'Nothing failed, but push cannot send yet: see the warnings '
-            'above.';
-      } else if (apsEnvironmentWarnings().isNotEmpty) {
-        summary = 'Nothing failed, and push sends from a development build. A '
-            'release build will not: see the warnings above.';
-      } else {
-        summary = 'Nothing failed. Push sends, but some of it is not wired: '
-            'see the warnings above.';
-      }
-
-      ctx.output.warning(summary);
+      ctx.output.warning(warningSummary());
       ctx.output.writeln('');
       return 0;
     } else {
@@ -318,6 +301,42 @@ class DoctorCommand extends ArtisanCommand {
         ...iosExtensionWarnings(),
         ...apsEnvironmentWarnings(),
       ];
+
+  /// The one line that follows a run whose warnings did not fail it.
+  ///
+  /// Three answers, because the two that existed both said something untrue
+  /// about the APNs case. A Release configuration signing against
+  /// `development` is not "some of it is not wired": production push is
+  /// precisely what will not send, and the app is not unprovisioned either.
+  ///
+  /// The APNs sentence is keyed on a RELEASE-named warning rather than on any
+  /// warning from that check, and the distinction is not pedantic: the same
+  /// list carries "signs against ios/X, which does not exist" and "declares no
+  /// aps-environment at all", and either can name Debug or Profile. A split
+  /// project whose Debug twin was never created satisfies both of the older
+  /// iOS checks, so nothing fails, and this sentence would then assert that a
+  /// release build is the broken one when the development build is. Anything
+  /// this cannot name honestly gets the generic line.
+  ///
+  /// Public so it can be tested without an [ArtisanContext]; [handle] is the
+  /// only caller.
+  String warningSummary() {
+    if (configWarnings().isNotEmpty) {
+      return 'Nothing failed, but push cannot send yet: see the warnings '
+          'above.';
+    }
+
+    final bool releaseIsWrong = apsEnvironmentWarnings()
+        .any((warning) => warning.startsWith('the Release configuration'));
+
+    if (releaseIsWrong) {
+      return 'Nothing failed, and push sends from a development build. A '
+          'release build will not: see the warnings above.';
+    }
+
+    return 'Nothing failed. Push sends, but some of it is not wired: see the '
+        'warnings above.';
+  }
 
   /// Warnings about the APNs environment each build configuration signs
   /// against. See [_apsEnvironmentIssues] for what is measured.

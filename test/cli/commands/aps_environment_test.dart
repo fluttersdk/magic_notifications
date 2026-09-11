@@ -349,6 +349,53 @@ void main() {
       expect(report, contains('⚠ the Release configuration signs against'));
     });
 
+    test('says a release build will not send, when Release is the wrong one',
+        () {
+      File('${tempDir.path}/ios/Runner/Runner.entitlements')
+          .writeAsStringSync(_entitlements('development'));
+      File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+          .writeAsStringSync(_pbxproj(
+        debugEntitlements: 'Runner/Runner.entitlements',
+        releaseEntitlements: 'Runner/Runner.entitlements',
+      ));
+
+      expect(
+        _TestDoctorCommand(tempDir.path).warningSummary(),
+        contains('A release build will not'),
+      );
+    });
+
+    test('falls back to the generic line when Release is not the wrong one',
+        () {
+      // The same warning list carries findings that name Debug or Profile, and
+      // for those the release sentence asserts the inverse of what is broken.
+      // A split project whose DEBUG twin was never created satisfies both of
+      // the older iOS checks, so nothing fails and this is the line that has
+      // to stay honest.
+      File('${tempDir.path}/ios/Runner/Runner.entitlements')
+          .writeAsStringSync(_entitlements('development'));
+      File('${tempDir.path}/ios/Runner/RunnerRelease.entitlements')
+          .writeAsStringSync(_entitlements('production'));
+      File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+          .writeAsStringSync(_pbxproj(
+        debugEntitlements: 'Runner/RunnerDebug.entitlements',
+        releaseEntitlements: 'Runner/RunnerRelease.entitlements',
+        profileEntitlements: 'Runner/Runner.entitlements',
+      ));
+
+      final command = _TestDoctorCommand(tempDir.path);
+
+      // The finding exists and names Debug, not Release.
+      expect(iosIssues().single, contains('Debug configuration'));
+      expect(
+        command.warningSummary(),
+        allOf(
+          contains('some of it is not wired'),
+          isNot(contains('A release build will not')),
+        ),
+      );
+    });
+
     test('stays silent on a pbxproj whose shape it does not recognise', () {
       // A doctor that guesses at an unfamiliar project reports a fault that is
       // not there. The two older checks already cover the file being missing.
