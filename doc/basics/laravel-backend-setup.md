@@ -432,10 +432,43 @@ public function toOneSignal(object $notifiable): OneSignalMessage
     return OneSignalMessage::create()
         ->setSubject('Monitor Down')
         ->setBody("Your monitor '{$this->monitor->name}' is not responding.")
-        ->setUrl(url("/monitors/{$this->monitor->id}"))
+        // The destination your app routes from. setData writes
+        // additionalData, which is what arrives as `event.data` on a click,
+        // and `url` is the first key magic_deeplink's handler looks for.
+        // Without this line a tapped push carries no destination at all.
+        ->setData('url', "/monitors/{$this->monitor->id}")
         ->setData('monitor_id', $this->monitor->id);
 }
 ```
+
+> [!IMPORTANT]
+> **`setUrl` is not the mobile answer, and adding it alongside is not free.**
+> It sets OneSignal's Launch URL, which the SDK acts on when the notification
+> is clicked **on every platform**, not only on the web. Android resolves it
+> (a verified App Link opens the app, anything else opens the browser), and on
+> iOS the SDK calls `openURL`, so Safari opens first and bounces back through
+> the Universal Link handshake. Send both without further action and an iOS
+> user gets that browser flash on top of the route your click listener already
+> performed.
+>
+> OneSignal's own guidance is the same: *"For mobile push, prefer Additional
+> Data + a click listener. You get full control over navigation, no browser
+> flash on iOS, and you can pass extra fields (like `order_id`) that aren't
+> part of the URL."*
+> ([Deep linking](https://documentation.onesignal.com/docs/en/deep-linking))
+>
+> So `setData` alone is the shape above. Add `setUrl(...)` when the same
+> notification also serves web push, where the service worker needs a launch
+> url, and then set `OneSignal_suppress_launch_urls` to `YES` in the iOS
+> `Info.plist`: that stops the SDK calling `openURL` and makes your click
+> listener responsible for every deep link, which it already is.
+>
+> `setData` takes a relative path here because it is routed in-app, and either
+> form works: `OneSignalDeeplinkHandler` parses the value with `Uri.tryParse`,
+> which does not require a scheme, and `RouteDeeplinkHandler` matches on
+> `uri.path` alone, so `/monitors/123` and `https://app.example.com/monitors/123`
+> both reach the same route. A Launch URL, if you send one, does have to be
+> absolute.
 
 ### Route User to OneSignal
 
