@@ -46,6 +46,14 @@ IOS: ✗ Needs attention
     provisioning profile carries production
 ```
 
+Flavours are read by base name, so `Release-production` and `Release-staging`
+are both judged as a Release: the suffix carries no weight of its own, because
+`aps-environment` follows the provisioning profile and every flavour of a
+release build signs with a distribution one. A configuration whose name is
+neither a Debug, a Profile nor a Release is named as unchecked rather than
+passed over, since nothing here can tell which environment it needs, and it is
+named even when its siblings were checked.
+
 What it costs to get wrong: the export fails with an opaque signing error, or
 it succeeds and the app registers a sandbox APNs token. OneSignal then marks
 the subscription `notification_types: -30` (an APNs error) and every send to

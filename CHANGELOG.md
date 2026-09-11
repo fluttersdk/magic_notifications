@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **The APNs environment check reads a flavoured project, which it previously passed in silence.** The check maps each build configuration to the environment its provisioning profile can carry, and it took the configuration's name from the `/* Release */` comment beside its id, matched with `\w+`. That pattern cannot match a hyphen, so on a project with flavours, where Flutter's own documentation prescribes `Release-production` and its siblings, every configuration failed to match and dropped out of the map entirely. An empty map is this walk's signal for "pbxproj not recognised", which is answered with silence on purpose, so the check printed a clean bill of health for exactly the shape it exists to catch, and it did so for every flavoured app rather than for an unusual one. The name now comes from the configuration object's own `name = ...;`, which the comment only mirrors and which Xcode is free to omit, and the expected environment is resolved by base name, so `Release-production` is judged as a Release. The hyphen is required for that match, so a configuration called `ReleaseCandidate` is still declined rather than judged against production: the suffix carries no weight of its own, since `aps-environment` follows the provisioning profile and every flavour of a Release build signs with a distribution profile.
+
+  **A configuration the walk found and cannot judge is now named, whether or not its siblings were judged.** That is a different state from a pbxproj this cannot read, and before this it read identically: the skip was silent and the check reported nothing. It fires per configuration rather than only when every one was skipped, because a project with Debug and Release plus a third somebody added by hand passes over exactly the interesting one. The sentence says those configurations "declare an entitlements file" rather than calling them the project's build configurations, since only the ones that set `CODE_SIGN_ENTITLEMENTS` reach this at all and a wider phrasing would claim a wider sweep than was made. The summary line does not then claim the release build is the broken one, because nothing here knows which configuration that is.
+
 ## [0.3.0] - 2026-09-09
 
 ### Added
