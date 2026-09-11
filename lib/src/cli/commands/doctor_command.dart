@@ -305,7 +305,30 @@ class DoctorCommand extends ArtisanCommand {
   List<String> getWarnings() => <String>[
         ...configWarnings(),
         ...iosExtensionWarnings(),
+        ...apsEnvironmentWarnings(),
       ];
+
+  /// Warnings about the APNs environment each build configuration signs
+  /// against. See [_apsEnvironmentIssues] for what is measured.
+  ///
+  /// A warning rather than a failure, and the choice is the class's own rule
+  /// rather than a softening. `notifications:install` writes one entitlements
+  /// file declaring `development` for every configuration, because the
+  /// distribution value is a signing decision it cannot make, so EVERY
+  /// freshly installed project reports this until somebody splits the file by
+  /// hand. A doctor that fails on its own installer's correct output is the
+  /// "always fails" state this class warns about at the top, and the
+  /// remediation footer a failure prints names `notifications:install` and
+  /// `notifications:configure`, neither of which can clear it.
+  ///
+  /// It is still never a tick, and it still stops the summary claiming every
+  /// requirement is met, which is what the warning channel is for. When the
+  /// installer learns to write the split, this becomes a failure honestly.
+  List<String> apsEnvironmentWarnings() {
+    if (!FileHelper.directoryExists('$projectRoot/ios')) return const [];
+
+    return _apsEnvironmentIssues();
+  }
 
   /// Warnings about the CONFIG specifically, which is the only kind the
   /// report's "Config Validation" section may print.
@@ -500,8 +523,6 @@ class DoctorCommand extends ArtisanCommand {
         'entitlements file',
       );
     }
-
-    issues.addAll(_apsEnvironmentIssues());
 
     return {
       'configured': issues.isEmpty,

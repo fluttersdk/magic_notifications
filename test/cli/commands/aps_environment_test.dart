@@ -128,11 +128,16 @@ void main() {
 
   tearDown(() => tempDir.deleteSync(recursive: true));
 
-  /// The `[ios]` prefixed entries of the doctor's missing-requirement list,
-  /// reached the way `doctor_command_test.dart` reaches them.
+  /// The APNs-environment findings, read off the warning channel.
+  ///
+  /// Warnings rather than failures, because `notifications:install` writes one
+  /// development file for every configuration and a doctor that fails on its
+  /// own installer's correct output stops being read. Asserted through the
+  /// public `getWarnings()` rather than the private helper, so a change that
+  /// stops routing them anywhere at all fails these tests.
   List<String> iosIssues() => _TestDoctorCommand(tempDir.path)
-      .getMissingRequirements()
-      .where((issue) => issue.startsWith('[ios]'))
+      .getWarnings()
+      .where((w) => w.contains('configuration signs against'))
       .toList();
 
   group('the APNs environment each configuration signs against', () {
@@ -299,6 +304,31 @@ void main() {
           .writeAsStringSync(pbxproj);
 
       expect(iosIssues().single, contains('Release configuration'));
+    });
+
+    test('warns rather than fails, so a fresh install still exits 0', () {
+      // `notifications:install` writes one development file for every
+      // configuration, so routing this through the failure list would make
+      // the doctor exit 1 on its own installer's correct output, and the
+      // remediation footer a failure prints names install and configure,
+      // neither of which can clear it.
+      File('${tempDir.path}/ios/Runner/Runner.entitlements')
+          .writeAsStringSync(_entitlements('development'));
+      File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+          .writeAsStringSync(_pbxproj(
+        debugEntitlements: 'Runner/Runner.entitlements',
+        releaseEntitlements: 'Runner/Runner.entitlements',
+      ));
+
+      final command = _TestDoctorCommand(tempDir.path);
+
+      expect(iosIssues(), hasLength(1));
+      expect(
+        command
+            .getMissingRequirements()
+            .where((i) => i.contains('configuration signs against')),
+        isEmpty,
+      );
     });
 
     test('stays silent on a pbxproj whose shape it does not recognise', () {
