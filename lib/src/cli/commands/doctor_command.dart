@@ -111,13 +111,7 @@ class DoctorCommand extends ArtisanCommand {
       // works at all, and saying "cannot send yet" over a missing Xcode
       // extension would send an adopter hunting a provisioning problem that
       // is not there.
-      ctx.output.warning(
-        configWarnings().isEmpty
-            ? 'Nothing failed. Push sends, but some of it is not wired: see '
-                'the warnings above.'
-            : 'Nothing failed, but push cannot send yet: see the warnings '
-                'above.',
-      );
+      ctx.output.warning(warningSummary());
       ctx.output.writeln('');
       return 0;
     } else {
@@ -305,7 +299,77 @@ class DoctorCommand extends ArtisanCommand {
   List<String> getWarnings() => <String>[
         ...configWarnings(),
         ...iosExtensionWarnings(),
+        ...apsEnvironmentWarnings(),
       ];
+
+  /// The one line that follows a run whose warnings did not fail it.
+  ///
+  /// Three answers, because the two that existed both said something untrue
+  /// about the APNs case. A Release configuration signing against
+  /// `development` is not "some of it is not wired": production push is
+  /// precisely what will not send, and the app is not unprovisioned either.
+  ///
+  /// Each sentence claims only what its branch established, which is a rule
+  /// this method has already broken twice in one review round: first by
+  /// keying the APNs case on any warning from that check, then by asserting
+  /// the development build was fine when only the release half had been
+  /// tested.
+  ///
+  /// The APNs sentence is keyed on a RELEASE-named warning rather than on any
+  /// warning from that check, and the distinction is not pedantic: the same
+  /// list carries "signs against ios/X, which does not exist" and "declares no
+  /// aps-environment at all", and either can name Debug or Profile. A split
+  /// project whose Debug twin was never created satisfies both of the older
+  /// iOS checks, so nothing fails, and this sentence would then assert that a
+  /// release build is the broken one when the development build is. Anything
+  /// this cannot name honestly gets the generic line.
+  ///
+  /// Public so it can be tested without an [ArtisanContext]; [handle] is the
+  /// only caller.
+  String warningSummary() {
+    if (configWarnings().isNotEmpty) {
+      return 'Nothing failed, but push cannot send yet: see the warnings '
+          'above.';
+    }
+
+    final bool releaseIsWrong = apsEnvironmentWarnings()
+        .any((warning) => warning.startsWith('the Release configuration'));
+
+    if (releaseIsWrong) {
+      // Only the half the branch verified. The first version also asserted
+      // that push sends from a development build, which nothing here checks:
+      // a project whose Release twin is wrong AND whose Debug twin was never
+      // created produces two warnings, and that sentence would have told the
+      // reader the development build is fine while it is not.
+      return 'Nothing failed, but a release build will not send: see the '
+          'warnings above.';
+    }
+
+    return 'Nothing failed. Push sends, but some of it is not wired: see the '
+        'warnings above.';
+  }
+
+  /// Warnings about the APNs environment each build configuration signs
+  /// against. See [_apsEnvironmentIssues] for what is measured.
+  ///
+  /// A warning rather than a failure, and the choice is the class's own rule
+  /// rather than a softening. `notifications:install` writes one entitlements
+  /// file declaring `development` for every configuration, because the
+  /// distribution value is a signing decision it cannot make, so EVERY
+  /// freshly installed project reports this until somebody splits the file by
+  /// hand. A doctor that fails on its own installer's correct output is the
+  /// "always fails" state this class warns about at the top, and the
+  /// remediation footer a failure prints names `notifications:install` and
+  /// `notifications:configure`, neither of which can clear it.
+  ///
+  /// It is still never a tick, and it still stops the summary claiming every
+  /// requirement is met, which is what the warning channel is for. When the
+  /// installer learns to write the split, this becomes a failure honestly.
+  List<String> apsEnvironmentWarnings() {
+    if (!FileHelper.directoryExists('$projectRoot/ios')) return const [];
+
+    return _apsEnvironmentIssues();
+  }
 
   /// Warnings about the CONFIG specifically, which is the only kind the
   /// report's "Config Validation" section may print.
@@ -505,7 +569,195 @@ class DoctorCommand extends ArtisanCommand {
       'configured': issues.isEmpty,
       'exists': true,
       'issues': issues,
+      // Carried on the row as well as in the global Warnings block. Moving
+      // these out of `issues` fixed the exit code and put the dishonest row
+      // back: an unsplit project read `IOS: ✓ Configured`, which is the exact
+      // line this check exists to stop being true.
+      'warnings': _apsEnvironmentIssues(),
     };
+  }
+
+  /// What each build configuration's entitlements file has to declare.
+  ///
+  /// Apple decides this, not us: a development provisioning profile carries
+  /// `aps-environment: development` and a distribution one carries
+  /// `production`, and signing against the other value is refused. So the value
+  /// is a property of the CONFIGURATION rather than of the project, and the
+  /// installer's single `development` file is correct for two of the three and
+  /// wrong for the one that ships.
+  static const Map<String, String> _apsEnvironmentByConfiguration = {
+    'Debug': 'development',
+    'Profile': 'development',
+    'Release': 'production',
+  };
+
+  /// Whether each configuration signs against an APNs environment it can use.
+  ///
+  /// This is the check that would have caught a real defect and did not exist:
+  /// the existing test above asks only whether `aps-environment` is PRESENT in
+  /// `Runner.entitlements`, so a project whose Release build declares
+  /// `development` prints a clean bill of health and then either fails at
+  /// export or ships an app registering a sandbox token the production app can
+  /// never deliver to. Neither symptom appears until TestFlight.
+  ///
+  /// Read per configuration rather than per file, because the fix is a split:
+  /// Release points at its own entitlements twin while Debug and Profile keep
+  /// the development one. A project that has not split yet is the ordinary
+  /// case here, and it fails on Release with the value it actually carries,
+  /// which is the message that tells somebody what to do.
+  ///
+  /// Silent when the pbxproj cannot be walked. A doctor that guesses at a
+  /// project shape it does not recognise reports a fault that is not there,
+  /// and the two checks above already cover the file being absent entirely.
+  List<String> _apsEnvironmentIssues() {
+    final Map<String, String> entitlements = _entitlementsByConfiguration();
+    if (entitlements.isEmpty) return const [];
+
+    final issues = <String>[];
+
+    for (final MapEntry<String, String> entry in entitlements.entries) {
+      final String? expected = _apsEnvironmentByConfiguration[entry.key];
+      if (expected == null) continue;
+
+      final String? relative = _resolveEntitlementsPath(entry.value);
+      if (relative == null) continue;
+
+      final String path = '$projectRoot/ios/$relative';
+      if (!FileHelper.fileExists(path)) {
+        issues.add(
+          'the ${entry.key} configuration signs against ios/$relative, '
+          'which does not exist',
+        );
+        continue;
+      }
+
+      final String? actual = _declaredApsEnvironment(path);
+
+      // A twin with NO `aps-environment` at all used to pass clean, which is
+      // the same silence this check exists to remove: the app registers for no
+      // APNs environment and nothing says so. The presence check above only
+      // ever reads `Runner.entitlements`, so nothing else looks at a twin.
+      // Skipped for that one file precisely because the older check has it,
+      // and two lines about one file is noise rather than rigour.
+      if (actual == null) {
+        if (relative == _defaultEntitlementsRelativePath) continue;
+
+        issues.add(
+          'the ${entry.key} configuration signs against ios/$relative, '
+          'which declares no $_apsEnvironmentKey at all',
+        );
+        continue;
+      }
+
+      if (actual == expected) continue;
+
+      issues.add(
+        'the ${entry.key} configuration signs against ios/$relative, '
+        'which declares $_apsEnvironmentKey $actual where a '
+        '${entry.key == 'Release' ? 'distribution' : 'development'} '
+        'provisioning profile carries $expected',
+      );
+    }
+
+    return issues;
+  }
+
+  /// The entitlements path relative to `ios/`, or null when it cannot be one.
+  ///
+  /// A build setting may carry Xcode's own variables, and the route this
+  /// package's own guide recommends produces one: editing Code Signing
+  /// Entitlements in Xcode's Build Settings can write
+  /// `"$(SRCROOT)/Runner/RunnerRelease.entitlements"`. Joined verbatim that
+  /// names no file, so a correctly split project failed the whole iOS row.
+  ///
+  /// The two variables that resolve to the directory holding the `.xcodeproj`
+  /// are stripped, since that is what the rest of this reads relative to.
+  /// Anything else carrying a `$(` is declined rather than guessed at, which
+  /// is the same posture as an unrecognised pbxproj: a doctor that resolves a
+  /// variable wrongly reports a missing file that is sitting right there.
+  String? _resolveEntitlementsPath(String setting) {
+    String value = setting;
+
+    for (final String variable in const [r'$(SRCROOT)/', r'$(PROJECT_DIR)/']) {
+      if (value.startsWith(variable)) {
+        value = value.substring(variable.length);
+        break;
+      }
+    }
+
+    return value.contains(r'$(') ? null : value;
+  }
+
+  /// The entitlements path the older presence check above reads, as the
+  /// pbxproj spells it.
+  static const String _defaultEntitlementsRelativePath =
+      'Runner/Runner.entitlements';
+
+  /// The `aps-environment` string in an entitlements plist, or null.
+  ///
+  /// Matched on the key/value pair rather than on the value alone: an
+  /// entitlements file holds other strings, and `development` is a word that
+  /// appears in more than one of them.
+  String? _declaredApsEnvironment(String path) {
+    final RegExpMatch? match = RegExp(
+      '<key>$_apsEnvironmentKey</key>\\s*<string>([^<]*)</string>',
+    ).firstMatch(FileHelper.readFile(path));
+
+    return match?.group(1);
+  }
+
+  /// Maps each Runner build configuration to the entitlements path it signs
+  /// against, as the pbxproj spells it (relative to `ios/`).
+  ///
+  /// Walked structurally, target to configuration list to configuration,
+  /// rather than searched: the project holds a second target (`RunnerTests`)
+  /// whose configurations are also called Debug and Release and which signs
+  /// nothing, so a global match reads the wrong ones. Returns empty rather
+  /// than throwing when the shape is not the one this walk knows.
+  Map<String, String> _entitlementsByConfiguration() {
+    if (!FileHelper.fileExists(_pbxprojPath)) return const {};
+
+    final String source = FileHelper.readFile(_pbxprojPath);
+
+    // One top-level object: a 24-hex id, an optional /* comment */, then a
+    // brace-delimited body at two tabs of indent. Xcode writes this format.
+    final Map<String, String> objects = {
+      for (final RegExpMatch match in RegExp(
+        r'^\t\t([0-9A-Fa-f]{24})(?: /\* .*? \*/)? = \{(.*?)^\t\t\};$',
+        dotAll: true,
+        multiLine: true,
+      ).allMatches(source))
+        match.group(1)!: match.group(2)!,
+    };
+
+    String? setting(String body, String key) =>
+        RegExp('^\\s*${RegExp.escape(key)} = (.+?);\$', multiLine: true)
+            .firstMatch(body)
+            ?.group(1)
+            ?.trim()
+            .replaceAll('"', '');
+
+    final Iterable<String> targets = objects.values.where(
+      (String body) =>
+          setting(body, 'isa') == 'PBXNativeTarget' &&
+          setting(body, 'name') == 'Runner',
+    );
+    if (targets.length != 1) return const {};
+
+    // `buildConfigurationList = <id> /* Build configuration list for ... */;`
+    final String? reference = setting(targets.first, 'buildConfigurationList');
+    final String? listId = reference?.split(' ').first;
+    if (listId == null || !objects.containsKey(listId)) return const {};
+
+    final Map<String, String> byConfiguration = {};
+    for (final RegExpMatch match in RegExp(r'([0-9A-Fa-f]{24}) /\* (\w+) \*/,')
+        .allMatches(objects[listId]!)) {
+      final String? path =
+          setting(objects[match.group(1)!] ?? '', _entitlementsSetting);
+      if (path != null) byConfiguration[match.group(2)!] = path;
+    }
+
+    return byConfiguration;
   }
 
   /// Path to the iOS entitlements file the installer writes.
@@ -764,8 +1016,18 @@ class DoctorCommand extends ArtisanCommand {
         final exists = status['exists'] as bool;
         final issues = status['issues'] as List;
 
+        final warnings = (status['warnings'] as List?) ?? const [];
+
         buffer.write('  ${platform.toUpperCase()}: ');
-        if (configured) {
+        if (configured && warnings.isNotEmpty) {
+          buffer.writeln(
+            '✓ Configured, ${warnings.length} warning'
+            '${warnings.length == 1 ? '' : 's'}',
+          );
+          for (final warning in warnings) {
+            buffer.writeln('      ⚠ $warning');
+          }
+        } else if (configured) {
           buffer.writeln('✓ Configured');
         } else if (exists) {
           buffer.writeln('⚠ Needs configuration');
