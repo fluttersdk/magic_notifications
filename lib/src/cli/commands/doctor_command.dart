@@ -111,13 +111,24 @@ class DoctorCommand extends ArtisanCommand {
       // works at all, and saying "cannot send yet" over a missing Xcode
       // extension would send an adopter hunting a provisioning problem that
       // is not there.
-      ctx.output.warning(
-        configWarnings().isEmpty
-            ? 'Nothing failed. Push sends, but some of it is not wired: see '
-                'the warnings above.'
-            : 'Nothing failed, but push cannot send yet: see the warnings '
-                'above.',
-      );
+      // Three answers, because the two that existed both said something
+      // untrue about this one. A Release configuration signing against
+      // `development` is not "some of it is not wired": production push is
+      // precisely what will not send, and the app is not unprovisioned
+      // either, so neither of the older sentences fits.
+      final String summary;
+      if (configWarnings().isNotEmpty) {
+        summary = 'Nothing failed, but push cannot send yet: see the warnings '
+            'above.';
+      } else if (apsEnvironmentWarnings().isNotEmpty) {
+        summary = 'Nothing failed, and push sends from a development build. A '
+            'release build will not: see the warnings above.';
+      } else {
+        summary = 'Nothing failed. Push sends, but some of it is not wired: '
+            'see the warnings above.';
+      }
+
+      ctx.output.warning(summary);
       ctx.output.writeln('');
       return 0;
     } else {
@@ -528,6 +539,11 @@ class DoctorCommand extends ArtisanCommand {
       'configured': issues.isEmpty,
       'exists': true,
       'issues': issues,
+      // Carried on the row as well as in the global Warnings block. Moving
+      // these out of `issues` fixed the exit code and put the dishonest row
+      // back: an unsplit project read `IOS: ✓ Configured`, which is the exact
+      // line this check exists to stop being true.
+      'warnings': _apsEnvironmentIssues(),
     };
   }
 
@@ -970,8 +986,18 @@ class DoctorCommand extends ArtisanCommand {
         final exists = status['exists'] as bool;
         final issues = status['issues'] as List;
 
+        final warnings = (status['warnings'] as List?) ?? const [];
+
         buffer.write('  ${platform.toUpperCase()}: ');
-        if (configured) {
+        if (configured && warnings.isNotEmpty) {
+          buffer.writeln(
+            '✓ Configured, ${warnings.length} warning'
+            '${warnings.length == 1 ? '' : 's'}',
+          );
+          for (final warning in warnings) {
+            buffer.writeln('      ⚠ $warning');
+          }
+        } else if (configured) {
           buffer.writeln('✓ Configured');
         } else if (exists) {
           buffer.writeln('⚠ Needs configuration');

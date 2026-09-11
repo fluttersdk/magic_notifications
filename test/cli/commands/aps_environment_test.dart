@@ -331,6 +331,24 @@ void main() {
       );
     });
 
+    test('keeps the iOS row honest instead of printing a bare tick', () {
+      // Moving these out of `issues` fixed the exit code and put the
+      // dishonest row back: an unsplit project read `IOS: ✓ Configured`,
+      // which is the exact line the change exists to stop being true.
+      File('${tempDir.path}/ios/Runner/Runner.entitlements')
+          .writeAsStringSync(_entitlements('development'));
+      File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+          .writeAsStringSync(_pbxproj(
+        debugEntitlements: 'Runner/Runner.entitlements',
+        releaseEntitlements: 'Runner/Runner.entitlements',
+      ));
+
+      final report = _TestDoctorCommand(tempDir.path).generateReport();
+
+      expect(report, contains('IOS: ✓ Configured, 1 warning'));
+      expect(report, contains('⚠ the Release configuration signs against'));
+    });
+
     test('stays silent on a pbxproj whose shape it does not recognise', () {
       // A doctor that guesses at an unfamiliar project reports a fault that is
       // not there. The two older checks already cover the file being missing.
