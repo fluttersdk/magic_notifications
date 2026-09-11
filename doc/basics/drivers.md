@@ -237,10 +237,71 @@ driver.onNotificationReceived.listen((event) {
 });
 
 driver.onNotificationClicked.listen((event) {
-  final url = event.data['action_url'];
-  MagicRoute.to(url);
+  // `event.data` is the notification's `additionalData`, so a destination is
+  // only here when the backend put it there. Four keys, first match wins,
+  // because that is what `magic_deeplink`'s own handler looks for and the
+  // backend conventions in this ecosystem are not uniform about which one.
+  final url = event.data['url'] ??
+      event.data['deep_link'] ??
+      event.data['link'] ??
+      event.data['uri'];
+
+  // Guarded, because an absent key is the ordinary case rather than the
+  // exceptional one: a notification with nowhere to go is a valid
+  // notification.
+  if (url is String && url.isNotEmpty) MagicRoute.to(url);
 });
 ```
+
+> [!WARNING]
+> OneSignal's Launch URL and `additionalData` are different fields.
+> `OneSignalMessage::setUrl(...)` sets the first, which the SDK acts on itself
+> on every platform and which never reaches `event.data`. A destination your
+> own code routes from has to go through `setData(...)`, which is also
+> OneSignal's own recommendation for mobile push. See
+> [Laravel backend setup](laravel-backend-setup.md) for the `toOneSignal`
+> shape and for what sending both costs on iOS.
+
+### Opening a screen from a tap
+
+The snippet above is the whole of what this package does about a tap: it hands
+you the payload and stops. **Nothing here routes anywhere**, and a tapped push
+that opens the app on its own initial route rather than on the notification's
+screen is this package working as built.
+
+The ecosystem's answer is `magic_deeplink`, and the wiring between the two is
+already done in both directions:
+
+- `DeeplinkServiceProvider` attaches `OneSignalDeeplinkHandler` to this
+  package's click stream whenever `notifications` is bound, so no consumer
+  code joins them.
+- That handler reads the first of `url`, `deep_link`, `link` or `uri` it finds
+  in the payload, which is the same key list `magic-starter-laravel`'s
+  `OneSignalChannel` writes.
+
+What is NOT done for you is the last link: **an app has to register a handler
+of its own**, because `magic_deeplink` publishes no handler stubs at install
+time. Without one, `DeeplinkManager.handleUri` walks an empty list, returns
+`false`, and nothing is logged. A pipeline that is correct at every step and
+does nothing at the end looks exactly like a notification that was never
+tapped.
+
+```dart
+// In your AppServiceProvider.boot().
+app.make<DeeplinkManager>('deeplinks').registerHandler(
+  RouteDeeplinkHandler(paths: const ['/notifications', '/orders/:id']),
+);
+```
+
+`RouteDeeplinkHandler` navigates to the path the link names via
+`MagicRoute.to`, so the paths you list are your own in-app routes. Handlers
+form a first-match chain in registration order; write your own
+`DeeplinkHandler` when a tap has to do something other than navigate, which is
+also the one that gets to read `DeeplinkSource` and the payload.
+
+See `magic_deeplink`'s own documentation for the platform association files
+(`apple-app-site-association`, `assetlinks.json`) a Universal or App Link needs
+before any of this is reached.
 
 ---
 

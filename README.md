@@ -55,6 +55,12 @@ Managing notifications in Flutter means juggling multiple channels — database 
 | :mag: | **Reachability Read** | Four-state answer (`unavailable`/`blocked`/`off`/`on`) so the app can decide what to show *before* asking the OS |
 | :globe_with_meridians: | **Web Support** | Full web push via conditional JS interop, subject to iOS Safari's Home Screen requirement (see below) |
 
+> [!NOTE]
+> A tapped push does not open a screen on its own. This package publishes the
+> click; routing from it is `magic_deeplink`'s job, and the last step there is
+> a handler your app registers. See
+> [Opening a screen from a tap](doc/basics/drivers.md#opening-a-screen-from-a-tap).
+
 ---
 
 ## Quick Start
