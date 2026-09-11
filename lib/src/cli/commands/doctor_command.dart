@@ -552,20 +552,40 @@ class DoctorCommand extends ArtisanCommand {
       final String? expected = _apsEnvironmentByConfiguration[entry.key];
       if (expected == null) continue;
 
-      final String path = '$projectRoot/ios/${entry.value}';
+      final String? relative = _resolveEntitlementsPath(entry.value);
+      if (relative == null) continue;
+
+      final String path = '$projectRoot/ios/$relative';
       if (!FileHelper.fileExists(path)) {
         issues.add(
-          'the ${entry.key} configuration signs against ios/${entry.value}, '
+          'the ${entry.key} configuration signs against ios/$relative, '
           'which does not exist',
         );
         continue;
       }
 
       final String? actual = _declaredApsEnvironment(path);
-      if (actual == null || actual == expected) continue;
+
+      // A twin with NO `aps-environment` at all used to pass clean, which is
+      // the same silence this check exists to remove: the app registers for no
+      // APNs environment and nothing says so. The presence check above only
+      // ever reads `Runner.entitlements`, so nothing else looks at a twin.
+      // Skipped for that one file precisely because the older check has it,
+      // and two lines about one file is noise rather than rigour.
+      if (actual == null) {
+        if (relative == _defaultEntitlementsRelativePath) continue;
+
+        issues.add(
+          'the ${entry.key} configuration signs against ios/$relative, '
+          'which declares no $_apsEnvironmentKey at all',
+        );
+        continue;
+      }
+
+      if (actual == expected) continue;
 
       issues.add(
-        'the ${entry.key} configuration signs against ios/${entry.value}, '
+        'the ${entry.key} configuration signs against ios/$relative, '
         'which declares $_apsEnvironmentKey $actual where a '
         '${entry.key == 'Release' ? 'distribution' : 'development'} '
         'provisioning profile carries $expected',
@@ -574,6 +594,37 @@ class DoctorCommand extends ArtisanCommand {
 
     return issues;
   }
+
+  /// The entitlements path relative to `ios/`, or null when it cannot be one.
+  ///
+  /// A build setting may carry Xcode's own variables, and the route this
+  /// package's own guide recommends produces one: editing Code Signing
+  /// Entitlements in Xcode's Build Settings can write
+  /// `"$(SRCROOT)/Runner/RunnerRelease.entitlements"`. Joined verbatim that
+  /// names no file, so a correctly split project failed the whole iOS row.
+  ///
+  /// The two variables that resolve to the directory holding the `.xcodeproj`
+  /// are stripped, since that is what the rest of this reads relative to.
+  /// Anything else carrying a `$(` is declined rather than guessed at, which
+  /// is the same posture as an unrecognised pbxproj: a doctor that resolves a
+  /// variable wrongly reports a missing file that is sitting right there.
+  String? _resolveEntitlementsPath(String setting) {
+    String value = setting;
+
+    for (final String variable in const [r'$(SRCROOT)/', r'$(PROJECT_DIR)/']) {
+      if (value.startsWith(variable)) {
+        value = value.substring(variable.length);
+        break;
+      }
+    }
+
+    return value.contains(r'$(') ? null : value;
+  }
+
+  /// The entitlements path the older presence check above reads, as the
+  /// pbxproj spells it.
+  static const String _defaultEntitlementsRelativePath =
+      'Runner/Runner.entitlements';
 
   /// The `aps-environment` string in an entitlements plist, or null.
   ///
@@ -605,7 +656,7 @@ class DoctorCommand extends ArtisanCommand {
     // brace-delimited body at two tabs of indent. Xcode writes this format.
     final Map<String, String> objects = {
       for (final RegExpMatch match in RegExp(
-        r'^\t\t([0-9A-F]{24})(?: /\* .*? \*/)? = \{(.*?)^\t\t\};$',
+        r'^\t\t([0-9A-Fa-f]{24})(?: /\* .*? \*/)? = \{(.*?)^\t\t\};$',
         dotAll: true,
         multiLine: true,
       ).allMatches(source))
@@ -632,7 +683,7 @@ class DoctorCommand extends ArtisanCommand {
     if (listId == null || !objects.containsKey(listId)) return const {};
 
     final Map<String, String> byConfiguration = {};
-    for (final RegExpMatch match in RegExp(r'([0-9A-F]{24}) /\* (\w+) \*/,')
+    for (final RegExpMatch match in RegExp(r'([0-9A-Fa-f]{24}) /\* (\w+) \*/,')
         .allMatches(objects[listId]!)) {
       final String? path =
           setting(objects[match.group(1)!] ?? '', _entitlementsSetting);

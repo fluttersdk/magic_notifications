@@ -1,6 +1,6 @@
 # Shipping push in a release build
 
-Everything in [Installation](installation.md) gets push working on a device you
+Everything in [Installation](../getting-started/installation.md) gets push working on a device you
 build to from your own machine. A release build is a different set of
 conditions, and each of the four below is silent: nothing errors, nothing logs,
 and the first evidence is a notification nobody receives.

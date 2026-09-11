@@ -210,6 +210,97 @@ void main() {
       );
     });
 
+    test('names a twin that declares no aps-environment at all', () {
+      // The gap this check was written to close and did not. The presence
+      // test beside it only ever reads Runner.entitlements, so nothing
+      // inspected the twin: an app registering for no APNs environment
+      // passed clean, which is the same silence as the defect.
+      File('${tempDir.path}/ios/Runner/Runner.entitlements')
+          .writeAsStringSync(_entitlements('development'));
+      File('${tempDir.path}/ios/Runner/RunnerRelease.entitlements')
+          .writeAsStringSync('''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:example.com</string>
+	</array>
+</dict>
+</plist>
+''');
+      File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+          .writeAsStringSync(_pbxproj(
+        debugEntitlements: 'Runner/Runner.entitlements',
+        releaseEntitlements: 'Runner/RunnerRelease.entitlements',
+      ));
+
+      expect(
+        iosIssues().single,
+        allOf(
+          contains('Release configuration'),
+          contains('declares no aps-environment at all'),
+        ),
+      );
+    });
+
+    test('accepts a path written with Xcode build variables', () {
+      // `$(SRCROOT)/...` is what Xcode's Build Settings row writes, which is
+      // the route this package's own guide recommends. Joined verbatim it
+      // named no file and failed the whole iOS row on a correct project.
+      File('${tempDir.path}/ios/Runner/Runner.entitlements')
+          .writeAsStringSync(_entitlements('development'));
+      File('${tempDir.path}/ios/Runner/RunnerRelease.entitlements')
+          .writeAsStringSync(_entitlements('production'));
+      File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+          .writeAsStringSync(_pbxproj(
+        debugEntitlements: r'"$(SRCROOT)/Runner/Runner.entitlements"',
+        releaseEntitlements:
+            r'"$(PROJECT_DIR)/Runner/RunnerRelease.entitlements"',
+      ));
+
+      expect(iosIssues(), isEmpty);
+    });
+
+    test('declines a path carrying a variable it cannot resolve', () {
+      // Silence rather than a guess: resolving a variable wrongly reports a
+      // missing file that is sitting right there.
+      File('${tempDir.path}/ios/Runner/Runner.entitlements')
+          .writeAsStringSync(_entitlements('development'));
+      File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+          .writeAsStringSync(_pbxproj(
+        debugEntitlements: 'Runner/Runner.entitlements',
+        releaseEntitlements:
+            r'"$(CONFIGURATION_BUILD_DIR)/Custom.entitlements"',
+      ));
+
+      expect(
+        iosIssues().where((i) => i.contains('configuration signs against')),
+        isEmpty,
+      );
+    });
+
+    test('walks a pbxproj written with lowercase object ids', () {
+      File('${tempDir.path}/ios/Runner/Runner.entitlements')
+          .writeAsStringSync(_entitlements('development'));
+      // Only the object ids are lowercased, which is the shape under test.
+      // Lowercasing the whole document would change key names too and would
+      // exercise nothing at all.
+      final String pbxproj = _pbxproj(
+        debugEntitlements: 'Runner/Runner.entitlements',
+        releaseEntitlements: 'Runner/Runner.entitlements',
+      ).replaceAllMapped(
+        RegExp(r'\b[0-9A-F]{24}\b'),
+        (Match m) => m.group(0)!.toLowerCase(),
+      );
+
+      File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+          .writeAsStringSync(pbxproj);
+
+      expect(iosIssues().single, contains('Release configuration'));
+    });
+
     test('stays silent on a pbxproj whose shape it does not recognise', () {
       // A doctor that guesses at an unfamiliar project reports a fault that is
       // not there. The two older checks already cover the file being missing.
