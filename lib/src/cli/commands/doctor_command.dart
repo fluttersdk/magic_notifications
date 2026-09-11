@@ -332,8 +332,20 @@ class DoctorCommand extends ArtisanCommand {
           'above.';
     }
 
-    final bool releaseIsWrong = apsEnvironmentWarnings()
-        .any((warning) => warning.startsWith('the Release configuration'));
+    // Matches `the Release configuration` and `the Release-production
+    // configuration` alike, because a flavoured project names it the second
+    // way and the bare-prefix read called every one of those "not the release
+    // build" while listing it as broken directly above. The boundary is what
+    // keeps `ReleaseCandidate` out, and `_expectedApsEnvironment` has already
+    // refused to judge that name anyway.
+    //
+    // Not `contains('Release')`: an app whose Debug twin is missing produces a
+    // warning naming the file it signs against, and `RunnerRelease
+    // .entitlements` is what a split project calls that file.
+    final RegExp releaseWarning = RegExp(r'^the Release[- ]');
+    final bool releaseIsWrong = apsEnvironmentWarnings().any(
+      releaseWarning.hasMatch,
+    );
 
     if (releaseIsWrong) {
       // Only the half the branch verified. The first version also asserted
@@ -609,15 +621,23 @@ class DoctorCommand extends ArtisanCommand {
   /// Silent when the pbxproj cannot be walked. A doctor that guesses at a
   /// project shape it does not recognise reports a fault that is not there,
   /// and the two checks above already cover the file being absent entirely.
+  ///
+  /// Not silent about a configuration the walk FOUND and cannot judge, which
+  /// is a different thing and used to read the same: see the last branch
+  /// below.
   List<String> _apsEnvironmentIssues() {
     final Map<String, String> entitlements = _entitlementsByConfiguration();
     if (entitlements.isEmpty) return const [];
 
     final issues = <String>[];
+    final unrecognised = <String>[];
 
     for (final MapEntry<String, String> entry in entitlements.entries) {
-      final String? expected = _apsEnvironmentByConfiguration[entry.key];
-      if (expected == null) continue;
+      final String? expected = _expectedApsEnvironment(entry.key);
+      if (expected == null) {
+        unrecognised.add(entry.key);
+        continue;
+      }
 
       final String? relative = _resolveEntitlementsPath(entry.value);
       if (relative == null) continue;
@@ -654,12 +674,60 @@ class DoctorCommand extends ArtisanCommand {
       issues.add(
         'the ${entry.key} configuration signs against ios/$relative, '
         'which declares $_apsEnvironmentKey $actual where a '
-        '${entry.key == 'Release' ? 'distribution' : 'development'} '
+        '${expected == 'production' ? 'distribution' : 'development'} '
         'provisioning profile carries $expected',
       );
     }
 
+    // Anything the loop above skipped, named. Before this the skip was silent,
+    // so a project whose configurations do not carry the three base names
+    // printed a clean bill of health for exactly the shape this exists to
+    // catch, and a flavour whose name this cannot parse is how that arises.
+    //
+    // Reported whenever ANY configuration was skipped rather than only when
+    // every one was. A project with Debug, Release and a third called Staging
+    // has two configurations checked and one passed over, and that third one
+    // is the interesting one: it is the one somebody added by hand.
+    //
+    // The sentence says "declare an entitlements file" because that is the
+    // sweep this made. `_entitlementsByConfiguration` only returns
+    // configurations that set `CODE_SIGN_ENTITLEMENTS`, so naming these as
+    // "the build configurations" would claim a wider look than happened on a
+    // target where only some of them set it.
+    if (unrecognised.isNotEmpty) {
+      issues.add(
+        'these build configurations declare an entitlements file and are not '
+        'a Debug, Profile or Release, so which $_apsEnvironmentKey each one '
+        'needs is unknown and none of them was checked: '
+        '${unrecognised.join(', ')}',
+      );
+    }
+
     return issues;
+  }
+
+  /// The APNs environment [configuration] has to carry, or null when its name
+  /// says nothing about which one that is.
+  ///
+  /// Flutter flavours append the flavour to the base name, so a project with
+  /// staging and production builds carries `Release-production`,
+  /// `Debug-staging` and their siblings rather than the three bare names.
+  /// Flutter's own documentation prescribes that shape
+  /// (https://docs.flutter.dev/deployment/flavors-ios), and the `-` is what
+  /// keeps the match tight: a configuration called `ReleaseCandidate` is not a
+  /// Release and is declined rather than judged against production.
+  ///
+  /// The suffix carries no weight of its own. `aps-environment` follows the
+  /// provisioning profile, and every flavour of a Release build signs with a
+  /// distribution profile whatever the flavour is called.
+  String? _expectedApsEnvironment(String configuration) {
+    for (final MapEntry<String, String> known
+        in _apsEnvironmentByConfiguration.entries) {
+      if (configuration == known.key) return known.value;
+      if (configuration.startsWith('${known.key}-')) return known.value;
+    }
+
+    return null;
   }
 
   /// The entitlements path relative to `ios/`, or null when it cannot be one.
@@ -749,12 +817,32 @@ class DoctorCommand extends ArtisanCommand {
     final String? listId = reference?.split(' ').first;
     if (listId == null || !objects.containsKey(listId)) return const {};
 
+    // Only the ids inside `buildConfigurations = ( ... );`, because the list
+    // object also carries `defaultConfigurationName` and its own isa.
+    final String? references = RegExp(
+      r'buildConfigurations = \((.*?)\);',
+      dotAll: true,
+    ).firstMatch(objects[listId]!)?.group(1);
+    if (references == null) return const {};
+
     final Map<String, String> byConfiguration = {};
-    for (final RegExpMatch match in RegExp(r'([0-9A-Fa-f]{24}) /\* (\w+) \*/,')
-        .allMatches(objects[listId]!)) {
-      final String? path =
-          setting(objects[match.group(1)!] ?? '', _entitlementsSetting);
-      if (path != null) byConfiguration[match.group(2)!] = path;
+    for (final RegExpMatch match
+        in RegExp(r'[0-9A-Fa-f]{24}').allMatches(references)) {
+      final String body = objects[match.group(0)!] ?? '';
+
+      // The name comes from the configuration's OWN `name = ...;`, not from
+      // the `/* Release */` comment beside its id in the list above. The
+      // comment version matched `\w+`, which excludes a hyphen, so every
+      // configuration of a flavoured project (`Release-production` and its
+      // siblings, the shape Flutter's own docs prescribe) failed to match at
+      // all and dropped out of this map. An empty map reads as "pbxproj not
+      // recognised" and is answered with silence, so the APNs check printed a
+      // clean bill of health for every flavoured app. The comment is cosmetic
+      // and Xcode is free to omit it; the `name` is the record.
+      final String? name = setting(body, 'name');
+      final String? path = setting(body, _entitlementsSetting);
+
+      if (name != null && path != null) byConfiguration[name] = path;
     }
 
     return byConfiguration;

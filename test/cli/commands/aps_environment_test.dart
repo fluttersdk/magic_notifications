@@ -26,6 +26,9 @@ String _pbxproj({
   required String debugEntitlements,
   required String releaseEntitlements,
   String profileEntitlements = 'Runner/Runner.entitlements',
+  String debugName = 'Debug',
+  String releaseName = 'Release',
+  String profileName = 'Profile',
 }) =>
     '''
 // !\$*UTF8*\$!
@@ -47,9 +50,9 @@ String _pbxproj({
 		97C147051CF9000F007C117D /* Build configuration list for PBXNativeTarget "Runner" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				97C147061CF9000F007C117D /* Debug */,
-				97C147071CF9000F007C117D /* Release */,
-				249021D4217E4FDB00AE95B9 /* Profile */,
+				97C147061CF9000F007C117D /* $debugName */,
+				97C147071CF9000F007C117D /* $releaseName */,
+				249021D4217E4FDB00AE95B9 /* $profileName */,
 			);
 		};
 		331C8087294A63A400263BE5 /* Build configuration list for PBXNativeTarget "RunnerTests" */ = {
@@ -64,7 +67,7 @@ String _pbxproj({
 				CODE_SIGN_ENTITLEMENTS = $debugEntitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.app;
 			};
-			name = Debug;
+			name = $debugName;
 		};
 		97C147071CF9000F007C117D /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -72,7 +75,7 @@ String _pbxproj({
 				CODE_SIGN_ENTITLEMENTS = $releaseEntitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.app;
 			};
-			name = Release;
+			name = $releaseName;
 		};
 		249021D4217E4FDB00AE95B9 /* Profile */ = {
 			isa = XCBuildConfiguration;
@@ -80,7 +83,7 @@ String _pbxproj({
 				CODE_SIGN_ENTITLEMENTS = $profileEntitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.app;
 			};
-			name = Profile;
+			name = $profileName;
 		};
 		331C8088294A63A400263BE5 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -422,6 +425,124 @@ void main() {
           isNot(contains('sends from a development build')),
         ),
       );
+    });
+
+    test('judges a flavoured project by the base name of its configuration',
+        () {
+      // Flutter flavours append the flavour to the base name
+      // (https://docs.flutter.dev/deployment/flavors-ios), so an app with a
+      // staging and a production build carries `Release-production` and its
+      // siblings rather than the three bare names. Keying on the exact name
+      // meant every one of them fell through and the check printed a clean
+      // bill of health for exactly the shape it exists to catch: an instrument
+      // reading zero by not measuring.
+      File('${tempDir.path}/ios/Runner/Runner.entitlements')
+          .writeAsStringSync(_entitlements('development'));
+      File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+          .writeAsStringSync(_pbxproj(
+        debugEntitlements: 'Runner/Runner.entitlements',
+        releaseEntitlements: 'Runner/Runner.entitlements',
+        debugName: 'Debug-production',
+        releaseName: 'Release-production',
+        profileName: 'Profile-production',
+      ));
+
+      expect(
+        iosIssues().single,
+        contains('the Release-production configuration signs against'),
+      );
+    });
+
+    test('says a release build will not send for a flavoured configuration',
+        () {
+      // The summary keys on the message prefix, and the narrower prefix read
+      // `Release-production` as "not the release build" while listing it as
+      // broken directly above.
+      File('${tempDir.path}/ios/Runner/Runner.entitlements')
+          .writeAsStringSync(_entitlements('development'));
+      File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+          .writeAsStringSync(_pbxproj(
+        debugEntitlements: 'Runner/Runner.entitlements',
+        releaseEntitlements: 'Runner/Runner.entitlements',
+        debugName: 'Debug-staging',
+        releaseName: 'Release-staging',
+        profileName: 'Profile-staging',
+      ));
+
+      expect(
+        _TestDoctorCommand(tempDir.path).warningSummary(),
+        contains('a release build will not send'),
+      );
+    });
+
+    test('says so when it recognised no configuration, rather than passing',
+        () {
+      // The walk WORKED and named nothing this knows how to judge, which is a
+      // different thing from a pbxproj it could not read and used to produce
+      // the same silence. `ReleaseCandidate` is also the boundary case for the
+      // flavour match: it is not a Release, so the hyphen has to be required.
+      File('${tempDir.path}/ios/Runner/Runner.entitlements')
+          .writeAsStringSync(_entitlements('development'));
+      File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+          .writeAsStringSync(_pbxproj(
+        debugEntitlements: 'Runner/Runner.entitlements',
+        releaseEntitlements: 'Runner/Runner.entitlements',
+        debugName: 'Dev',
+        releaseName: 'ReleaseCandidate',
+        profileName: 'Perf',
+      ));
+
+      final warnings = _TestDoctorCommand(tempDir.path).getWarnings();
+
+      expect(
+        warnings.singleWhere((w) => w.contains('these build configurations')),
+        allOf(
+          contains('Dev, ReleaseCandidate, Perf'),
+          contains('none of them was checked'),
+          // The sweep this made, not a wider one: only configurations that
+          // set CODE_SIGN_ENTITLEMENTS reach the map at all.
+          contains('declare an entitlements file'),
+        ),
+      );
+
+      // And it does not then claim the release build is the broken one: it
+      // has no idea which configuration is the release build.
+      expect(
+        _TestDoctorCommand(tempDir.path).warningSummary(),
+        isNot(contains('a release build will not send')),
+      );
+    });
+
+    test('names a skipped configuration even when others were checked', () {
+      // The narrower version of the same silence. A project with Debug and
+      // Release plus a third somebody added by hand recognises two, and the
+      // third used to fall through with no mention at all: it is the
+      // interesting one precisely because it is the hand-made one.
+      //
+      // The Release twin here is correct, so the only finding is the skip.
+      File('${tempDir.path}/ios/Runner/Runner.entitlements')
+          .writeAsStringSync(_entitlements('development'));
+      File('${tempDir.path}/ios/Runner/RunnerRelease.entitlements')
+          .writeAsStringSync(_entitlements('production'));
+      File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+          .writeAsStringSync(_pbxproj(
+        debugEntitlements: 'Runner/Runner.entitlements',
+        releaseEntitlements: 'Runner/RunnerRelease.entitlements',
+        profileEntitlements: 'Runner/Runner.entitlements',
+        profileName: 'Staging',
+      ));
+
+      final warnings = _TestDoctorCommand(tempDir.path).getWarnings();
+
+      // Asserted on the NAMED LIST after the colon rather than on the whole
+      // sentence, which says "are not a Debug, Profile or Release" and would
+      // satisfy a `contains('Debug')` whatever the list held.
+      final String named = warnings
+          .singleWhere((w) => w.contains('these build configurations'))
+          .split(': ')
+          .last;
+
+      expect(named, 'Staging');
     });
 
     test('stays silent on a pbxproj whose shape it does not recognise', () {
