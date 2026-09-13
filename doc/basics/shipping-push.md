@@ -13,28 +13,46 @@ development build had been delivering pushes for days.
 ## 1. Release signs against a different APNs environment
 
 A development provisioning profile carries `aps-environment: development`. A
-distribution profile carries `production`. They are not interchangeable, and
-`notifications:install` writes one entitlements file declaring `development`
-for every build configuration, because the distribution value is a signing
-decision the installer cannot make for you.
-
-So the Release configuration has to sign against `production`, and the usual
-way is a second entitlements file:
+distribution profile carries `production`. They are not interchangeable, so one
+entitlements file cannot serve both and the project needs two:
 
 ```
 ios/Runner/Runner.entitlements         aps-environment  development   Debug, Profile
 ios/Runner/RunnerRelease.entitlements  aps-environment  production    Release
 ```
 
-Point the Release configuration at the second one by setting
-`CODE_SIGN_ENTITLEMENTS = Runner/RunnerRelease.entitlements` in its build
-settings (Xcode: select the Runner target, Build Settings, Code Signing
-Entitlements, expand the row, edit the Release line).
+**`notifications:install` writes both and points each configuration at its
+own**, so a project installed with this version or later starts out correct.
+The Release twin is a copy of the development file, because every OTHER key
+has to be identical between them.
 
-Keep every OTHER key identical between the two. The trap is the default
-surface: Xcode's Signing and Capabilities tab writes to whichever
-configuration is selected, and that is Debug, so a capability added the
-obvious way reaches every build except the one that ships.
+Three cases it declines, and prints what to do instead:
+
+- **A project that already names a different entitlements file.** Moving some
+  configurations and not the rest is worse than moving none, so nothing is
+  repointed. That includes every project a previous version of this installer
+  touched: both files are written there, and the Release build setting is
+  yours to point.
+- **A project whose configurations are none of Debug, Profile or Release.**
+  Flavours ARE handled, by base name, so `Release-production` gets the twin.
+  A name outside that shape is left alone, since nothing here can tell which
+  profile it signs with.
+- **A file it cannot read.** An entitlements plist with no root `<dict>` or one
+  that does not parse, and a `project.pbxproj` the editor will not rewrite
+  byte for byte. The install itself still succeeds and exits 0; only the
+  entitlement wiring is left to you.
+
+None of the three ends the install. They print a warning naming what stopped
+them and the manual step that clears it, because by the time this runs the
+rest of the install has already landed.
+
+To do it by hand, set `CODE_SIGN_ENTITLEMENTS = Runner/RunnerRelease.entitlements`
+on the Release configuration (Xcode: select the Runner target, Build Settings,
+Code Signing Entitlements, expand the row, edit the Release line).
+
+The trap that makes this worth a section: Xcode's Signing and Capabilities tab
+writes to whichever configuration is selected, and that is Debug, so a
+capability added the obvious way reaches every build except the one that ships.
 
 `notifications:doctor` reads the value each configuration signs against and
 names the ones a profile cannot use:

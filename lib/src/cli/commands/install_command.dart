@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:fluttersdk_artisan/artisan.dart';
 
+import '../support/xcode_configurations.dart';
 import '../notifications_artisan_provider.dart';
 
 /// Project type detection result for the install banner.
@@ -487,12 +488,9 @@ class InstallCommand extends ArtisanInstallCommand {
           .injectAndroidPermission('android.permission.POST_NOTIFICATIONS');
     }
 
-    // 5. iOS push setup, gated on platform selection. The dispatcher skips
-    //    both ops silently when ios/ is absent, and PlistWriter creates the
-    //    entitlements file when the project has never had one (which is every
-    //    Flutter project until somebody opens Xcode). The entitlement op also
-    //    points CODE_SIGN_ENTITLEMENTS at that file, without which Xcode never
-    //    reads it.
+    // 5. iOS background mode, gated on platform selection. The dispatcher
+    //    skips it silently when ios/ is absent. The APNs entitlements are NOT
+    //    here: see the note below and step 9.
     if (plan.hasIos) {
       final modes = _declaredBackgroundModes(
         PlatformHelper.infoPlistPath(projectRoot),
@@ -503,13 +501,14 @@ class InstallCommand extends ArtisanInstallCommand {
           value: <String>[...modes, _remoteNotificationMode],
         );
       }
-      installer.injectEntitlement(
-        platform: 'ios',
-        key: 'aps-environment',
-        // Development is the install-time default. The distribution value is a
-        // signing concern, decided when the build is archived, not here.
-        value: 'development',
-      );
+      // The APNs entitlement is NOT staged here, and the reason is measured
+      // rather than stylistic. `injectEntitlement` points every configuration
+      // at one file, and `setEntitlementsPaths` refuses to move a
+      // configuration that already names a different file, all-or-nothing
+      // across the configurations it is asked about. Staging the op would
+      // therefore have this command block its own split one step later. Both
+      // files and both paths are written together after the commit instead.
+      // Cost of that choice: a `--dry-run` does not list the entitlement work.
     }
 
     // 6. main.dart configFactory inject. The import is RELATIVE
@@ -587,7 +586,202 @@ class InstallCommand extends ArtisanInstallCommand {
       );
     }
 
+    // 9. The APNs entitlements, both files and both build settings. Guarded on
+    //    Success, so a `--dry-run` (which reports DryRun) and a rolled-back
+    //    transaction each leave the project untouched.
+    if (result is Success &&
+        plan.hasIos &&
+        PlatformHelper.hasPlatform(projectRoot, 'ios')) {
+      _writeApsEntitlements(ctx);
+    }
+
     return result;
+  }
+
+  /// Project-relative path of the entitlements every configuration signs
+  /// against before this command splits them.
+  static const String _developmentEntitlements = 'Runner/Runner.entitlements';
+
+  /// Project-relative path of the twin the Release configuration signs
+  /// against afterwards.
+  static const String _releaseEntitlements =
+      'Runner/RunnerRelease.entitlements';
+
+  /// Writes both APNs entitlements files and points each build configuration
+  /// at the one its provisioning profile can use.
+  ///
+  /// Apple makes `aps-environment` a property of the BUILD CONFIGURATION: a
+  /// development provisioning profile carries only `development` and a
+  /// distribution one only `production`, so one file cannot serve both. The
+  /// single file this command used to leave behind was therefore wrong for the
+  /// build that ships. It failed at export, or it exported and registered a
+  /// sandbox APNs token the production app can never deliver to, and neither
+  /// symptom appears before TestFlight. `notifications:doctor` has reported it
+  /// since 0.3.0; this is the half that fixes it.
+  ///
+  /// The Release twin is a COPY of the development file rather than a fresh
+  /// minimal plist, because every other entitlement has to be identical
+  /// between them: a project already carrying associated domains would
+  /// otherwise lose them on the build that ships, which is the same class of
+  /// silent failure one notch over. An existing twin is never overwritten, and
+  /// only the one key is ensured, because an adopter who already split the
+  /// file by hand is the person this is trying to help.
+  void _writeApsEntitlements(ArtisanContext ctx) {
+    final String iosRoot = '$projectRoot/ios';
+    final String pbxproj = '$iosRoot/Runner.xcodeproj/project.pbxproj';
+
+    final List<XcodeConfiguration> configurations =
+        XcodeConfigurations.read(pbxproj);
+    if (configurations.isEmpty) {
+      ctx.output.warning(
+        'ios/Runner.xcodeproj/project.pbxproj could not be read, so no APNs '
+        'entitlement was written. Set aps-environment by hand: development '
+        'for Debug and Profile, production for Release.',
+      );
+      return;
+    }
+
+    // Addressed by BASE name, so a flavoured project is covered rather than
+    // declined: its configurations are `Release-production` and siblings, and
+    // every one of them signs with a distribution profile whatever the flavour
+    // is called. The suffix carries no weight of its own here. A name that is
+    // none of the three is left out of the map entirely, which
+    // `setEntitlementsPaths` documents as leaving that configuration alone.
+    final Map<String, String> byConfiguration = {
+      for (final XcodeConfiguration configuration in configurations)
+        if (XcodeConfigurations.baseNameOf(configuration.name)
+            case final String base)
+          configuration.name: base == 'Release'
+              ? _releaseEntitlements
+              : _developmentEntitlements,
+    };
+
+    if (byConfiguration.isEmpty) {
+      ctx.output.warning(
+        'None of this project\'s build configurations '
+        '(${configurations.map((c) => c.name).join(', ')}) is a Debug, '
+        'Profile or Release, so which aps-environment each one needs is '
+        'unknown and none was written. Set it by hand.',
+      );
+      return;
+    }
+
+    // Every refusal these three steps can raise is caught together, and none
+    // may end the install: the transaction has already committed by this
+    // point, so an exception escaping would turn a project that installed
+    // correctly into a stack trace and a non-zero exit, with the post-install
+    // steps never printed. That is the guarantee the staged
+    // `injectEntitlement` used to provide for free, because the transaction
+    // dispatcher turns any throw into a clean Error result, and moving this
+    // work out of the transaction is what put it back on this method.
+    //
+    // Both readers throw the same two classes and both are reached here.
+    // `PlistWriter` raises `StateError` on a plist with no root `<dict>` and
+    // an `XmlParserException` (a `FormatException`) on one that does not
+    // parse, which a hand-edited entitlements file can be. The Xcode editor
+    // raises `StateError` for its byte-for-byte round-trip guard, which one
+    // `\U00e7` escape in a product name is enough to trip, and
+    // `FormatException` for the parse itself. Each message says what is wrong,
+    // so it is passed through rather than paraphrased.
+    final Set<String> blocked;
+    try {
+      _ensureApsEnvironment(
+        '$iosRoot/$_developmentEntitlements',
+        'development',
+      );
+
+      if (byConfiguration.values.contains(_releaseEntitlements)) {
+        final String releasePath = '$iosRoot/$_releaseEntitlements';
+        if (!FileHelper.fileExists(releasePath)) {
+          FileHelper.writeFile(
+            releasePath,
+            FileHelper.readFile('$iosRoot/$_developmentEntitlements'),
+          );
+        }
+        _ensureApsEnvironment(releasePath, 'production');
+      }
+
+      blocked =
+          XcodeProjectEditor.setEntitlementsPaths(pbxproj, byConfiguration);
+    } on StateError catch (error) {
+      _reportEntitlementsNotPointed(ctx, error.message);
+      return;
+    } on FormatException catch (error) {
+      _reportEntitlementsNotPointed(ctx, error.toString());
+      return;
+    }
+
+    if (blocked.isNotEmpty) {
+      // Named without blame: on a project a previous version of this installer
+      // touched, the file it "already signs against" is the one this command
+      // wrote. What is wrong is not that the file exists, it is that Release
+      // is pointed at it.
+      // Scoped to what the editor actually reported. It collects conflicts
+      // only among the configurations it was ASKED about, and skips any that
+      // already name the wanted path, so on the ordinary upgrade only Release
+      // is in this set. Saying "every build configuration" sent an adopter
+      // looking at configurations that are already right.
+      _reportEntitlementsNotPointed(
+        ctx,
+        'a configuration this would have moved already signs against '
+        '${blocked.join(', ')}, and moving some of them and not the rest is '
+        'worse than moving none',
+      );
+      return;
+    }
+
+    final List<String> release = byConfiguration.entries
+        .where((MapEntry<String, String> e) => e.value == _releaseEntitlements)
+        .map((MapEntry<String, String> e) => e.key)
+        .toList();
+
+    if (release.isEmpty) {
+      // Debug and Profile were pointed and there is no Release configuration
+      // to point. Said plainly rather than claiming a split: the earlier
+      // version of this line named an empty subject and read as though the
+      // release build had been handled.
+      ctx.output.info(
+        'iOS: ${byConfiguration.keys.join(', ')} sign against '
+        'ios/$_developmentEntitlements. This project declares no Release '
+        'configuration, so nothing was pointed at '
+        'ios/$_releaseEntitlements.',
+      );
+      return;
+    }
+
+    ctx.output.info(
+      'iOS: ${release.join(', ')} sign against ios/$_releaseEntitlements '
+      '(aps-environment production); the rest keep '
+      'ios/$_developmentEntitlements.',
+    );
+  }
+
+  /// Reports that both entitlements files were written but no build setting
+  /// was changed, and says what to do by hand.
+  ///
+  /// One message for every reason, because the remedy is the same whichever
+  /// one fired and an adopter needs the instruction more than the taxonomy.
+  void _reportEntitlementsNotPointed(ArtisanContext ctx, String reason) {
+    // Says what to DO rather than what was written, because one of the
+    // reasons that reach here is a throw from the file writes themselves, so
+    // claiming both files exist would be wrong on exactly the path where an
+    // adopter most needs the message to be accurate.
+    ctx.output.warning(
+      'The Release APNs entitlement was not wired: $reason. Do it by hand: '
+      'ios/$_developmentEntitlements declares aps-environment development, '
+      'ios/$_releaseEntitlements declares production with every other key '
+      'identical, and each configuration signing with a distribution profile '
+      'sets CODE_SIGN_ENTITLEMENTS to $_releaseEntitlements (Xcode: Runner '
+      'target, Build Settings, Code Signing Entitlements). Run '
+      'notifications:doctor afterwards to check it.',
+    );
+  }
+
+  /// Ensures the plist at [path] declares `aps-environment: [value]`, creating
+  /// the file when it does not exist yet, which is every Flutter project until
+  /// somebody opens Xcode.
+  void _ensureApsEnvironment(String path, String value) {
+    PlistWriter.setStringKey(path, 'aps-environment', value);
   }
 
   /// Whether the project's `main.dart` at [mainPath] already imports the

@@ -55,58 +55,64 @@ class _TestDoctorCommand extends doctor.DoctorCommand {
 /// scoping are covered against a real Flutter project in
 /// `fluttersdk_artisan`'s own suite. The RunnerTests configuration is here so
 /// the integration still shows an entitlement never landing on the test bundle.
-const String _pbxproj = r'''// !$*UTF8*$!
+
+/// A configuration name as the pbxproj spells it: Xcode quotes anything a
+/// bare OpenStep word cannot hold, which a flavour's hyphen is.
+String _name(String base, String suffix) =>
+    suffix.isEmpty ? base : '"$base$suffix"';
+
+String _pbxproj(String suffix) => '''// !\$*UTF8*\$!
 {
-    archiveVersion = 1;
-    objectVersion = 54;
-    objects = {
-        97C146ED1CF9000F007C117D /* Runner */ = {
-            isa = PBXNativeTarget;
-            buildConfigurationList = 97C147051CF9000F007C117D /* Build configuration list for PBXNativeTarget "Runner" */;
-            name = Runner;
-            productType = "com.apple.product-type.application";
-        };
-        331C8080294A63A400263BE5 /* RunnerTests */ = {
-            isa = PBXNativeTarget;
-            buildConfigurationList = 331C8087294A63A400263BE5 /* Build configuration list for PBXNativeTarget "RunnerTests" */;
-            name = RunnerTests;
-            productType = "com.apple.product-type.bundle.unit-test";
-        };
-        97C147061CF9000F007C117D /* Debug */ = {
-            isa = XCBuildConfiguration;
-            buildSettings = {
-                PRODUCT_BUNDLE_IDENTIFIER = com.example.app;
-            };
-            name = Debug;
-        };
-        97C147071CF9000F007C117D /* Release */ = {
-            isa = XCBuildConfiguration;
-            buildSettings = {
-                PRODUCT_BUNDLE_IDENTIFIER = com.example.app;
-            };
-            name = Release;
-        };
-        331C8088294A63A400263BE5 /* Debug */ = {
-            isa = XCBuildConfiguration;
-            buildSettings = {
-                PRODUCT_BUNDLE_IDENTIFIER = com.example.app.RunnerTests;
-            };
-            name = Debug;
-        };
-        97C147051CF9000F007C117D /* Build configuration list for PBXNativeTarget "Runner" */ = {
-            isa = XCConfigurationList;
-            buildConfigurations = (
-                97C147061CF9000F007C117D /* Debug */,
-                97C147071CF9000F007C117D /* Release */,
-            );
-        };
-        331C8087294A63A400263BE5 /* Build configuration list for PBXNativeTarget "RunnerTests" */ = {
-            isa = XCConfigurationList;
-            buildConfigurations = (
-                331C8088294A63A400263BE5 /* Debug */,
-            );
-        };
-    };
+	archiveVersion = 1;
+	objectVersion = 54;
+	objects = {
+		97C146ED1CF9000F007C117D /* Runner */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 97C147051CF9000F007C117D /* Build configuration list for PBXNativeTarget "Runner" */;
+			name = Runner;
+			productType = "com.apple.product-type.application";
+		};
+		331C8080294A63A400263BE5 /* RunnerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 331C8087294A63A400263BE5 /* Build configuration list for PBXNativeTarget "RunnerTests" */;
+			name = RunnerTests;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		97C147061CF9000F007C117D /* Debug$suffix */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.app;
+			};
+			name = ${_name('Debug', suffix)};
+		};
+		97C147071CF9000F007C117D /* Release$suffix */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.app;
+			};
+			name = ${_name('Release', suffix)};
+		};
+		331C8088294A63A400263BE5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.app.RunnerTests;
+			};
+			name = Debug;
+		};
+		97C147051CF9000F007C117D /* Build configuration list for PBXNativeTarget "Runner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				97C147061CF9000F007C117D /* Debug$suffix */,
+				97C147071CF9000F007C117D /* Release$suffix */,
+			);
+		};
+		331C8087294A63A400263BE5 /* Build configuration list for PBXNativeTarget "RunnerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				331C8088294A63A400263BE5 /* Debug */,
+			);
+		};
+	};
 }
 ''';
 
@@ -114,7 +120,8 @@ const String _pbxproj = r'''// !$*UTF8*$!
 /// under [tempDir], with no entitlements file: the state every Flutter project
 /// is in until somebody opens Xcode.
 void _writeIosProject(Directory tempDir,
-    {List<String> backgroundModes = const []}) {
+    {List<String> backgroundModes = const [],
+    String configurationSuffix = ''}) {
   Directory('${tempDir.path}/ios/Runner').createSync(recursive: true);
   Directory('${tempDir.path}/ios/Runner.xcodeproj').createSync(recursive: true);
 
@@ -139,7 +146,7 @@ $modes</dict>
 ''');
 
   File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
-      .writeAsStringSync(_pbxproj);
+      .writeAsStringSync(_pbxproj(configurationSuffix));
 }
 
 /// Writes a HAND-WRITTEN `lib/config/notifications.dart` declaring [getter].
@@ -754,6 +761,14 @@ void main() async {
       expect(entitlements.readAsStringSync(),
           contains('<string>development</string>'));
 
+      final release =
+          File('${tempDir.path}/ios/Runner/RunnerRelease.entitlements');
+      expect(release.existsSync(), isTrue,
+          reason: 'the Release twin is created alongside the development one');
+      expect(
+          release.readAsStringSync(), contains('<string>production</string>'),
+          reason: 'a distribution profile carries only production');
+
       final pbxproj =
           File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
               .readAsStringSync();
@@ -761,13 +776,21 @@ void main() async {
         'CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;'
             .allMatches(pbxproj)
             .length,
-        2,
-        reason: 'both Runner configurations, and neither RunnerTests one',
+        1,
+        reason: 'Debug only: Release moved to the twin, and RunnerTests signs '
+            'nothing',
+      );
+      expect(
+        'CODE_SIGN_ENTITLEMENTS = Runner/RunnerRelease.entitlements;'
+            .allMatches(pbxproj)
+            .length,
+        1,
+        reason: 'the one configuration that ships',
       );
       expect(
         pbxproj,
         contains('PRODUCT_BUNDLE_IDENTIFIER = com.example.app.RunnerTests;\n'
-            '            };'),
+            '\t\t\t};'),
         reason: 'the test bundle keeps its single build setting',
       );
     });
@@ -814,6 +837,190 @@ void main() async {
       final after = health.checkPlatformSetup()['ios'] as Map<String, dynamic>;
       expect(after['issues'], isEmpty);
       expect(after['configured'], isTrue);
+    });
+
+    test('leaves the doctor with nothing to say about the APNs environment',
+        () async {
+      // The acceptance criterion for the split, and the one the red-to-green
+      // test above cannot carry: the APNs check reports through the WARNING
+      // channel by design, so a project with the wrong Release entitlement has
+      // no ISSUES and reads as configured. Before this command wrote the
+      // split, this was the state every install left behind, and the doctor
+      // has named it on every project since 0.3.0.
+      _writeIosProject(tempDir);
+      final health = _TestDoctorCommand(tempDir.path);
+
+      expect(await installIos(), 0);
+
+      expect(health.apsEnvironmentWarnings(), isEmpty);
+
+      // And the instrument is reading THIS project rather than answering
+      // empty because it understood nothing: an unreadable pbxproj returns
+      // the same empty list, so silence alone proves nothing. Breaking the
+      // value the install just wrote has to bring the warning back.
+      final twin =
+          File('${tempDir.path}/ios/Runner/RunnerRelease.entitlements');
+      twin.writeAsStringSync(
+        twin.readAsStringSync().replaceFirst('production', 'development'),
+      );
+
+      expect(
+        health.apsEnvironmentWarnings(),
+        contains(contains('Release')),
+        reason: 'the check can see this project, so the silence above counts',
+      );
+    });
+
+    test('writes the split for a flavoured project', () async {
+      // Flutter flavours append the flavour to the base name, so the
+      // configurations are `Release-production` and siblings and a map keyed
+      // on a bare `Release` matches nothing. `setEntitlementsPaths` THROWS on
+      // that rather than reporting success, so addressing them by base name is
+      // what keeps the command from declining the project outright.
+      _writeIosProject(tempDir, configurationSuffix: '-production');
+
+      expect(await installIos(), 0);
+
+      final pbxproj =
+          File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj')
+              .readAsStringSync();
+      expect(
+        'CODE_SIGN_ENTITLEMENTS = Runner/RunnerRelease.entitlements;'
+            .allMatches(pbxproj)
+            .length,
+        1,
+        reason: 'Release-production signs with a distribution profile too',
+      );
+      expect(
+        File('${tempDir.path}/ios/Runner/RunnerRelease.entitlements')
+            .readAsStringSync(),
+        contains('<string>production</string>'),
+      );
+    });
+
+    test('carries every other entitlement into the Release twin', () async {
+      // The twin is a copy rather than a fresh minimal plist. A project that
+      // already carries associated domains would otherwise lose them on the
+      // one build that ships, which is the same silent class of failure the
+      // aps-environment split exists to close.
+      _writeIosProject(tempDir);
+      File('${tempDir.path}/ios/Runner/Runner.entitlements').writeAsStringSync(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0">\n'
+        '<dict>\n'
+        '\t<key>com.apple.developer.associated-domains</key>\n'
+        '\t<array>\n'
+        '\t\t<string>applinks:example.com</string>\n'
+        '\t</array>\n'
+        '</dict>\n'
+        '</plist>\n',
+      );
+
+      expect(await installIos(), 0);
+
+      final twin = File('${tempDir.path}/ios/Runner/RunnerRelease.entitlements')
+          .readAsStringSync();
+      expect(twin, contains('applinks:example.com'),
+          reason: 'every other key is identical between the two');
+      expect(twin, contains('<string>production</string>'));
+    });
+
+    test('never overwrites a Release twin somebody already wrote', () async {
+      // An adopter who split the file by hand is the person this is helping,
+      // and their file may carry more than this command knows about.
+      _writeIosProject(tempDir);
+      final twin =
+          File('${tempDir.path}/ios/Runner/RunnerRelease.entitlements');
+      twin.writeAsStringSync(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0">\n'
+        '<dict>\n'
+        '\t<key>keychain-access-groups</key>\n'
+        '\t<array>\n'
+        '\t\t<string>\$(AppIdentifierPrefix)com.example.app</string>\n'
+        '\t</array>\n'
+        '</dict>\n'
+        '</plist>\n',
+      );
+
+      expect(await installIos(), 0);
+
+      final after = twin.readAsStringSync();
+      expect(after, contains('keychain-access-groups'),
+          reason: 'the file is kept, not replaced');
+      expect(after, contains('<string>production</string>'),
+          reason: 'and only the one key is ensured');
+    });
+
+    test('reports rather than dies on a pbxproj the parser refuses', () async {
+      // The transaction has already committed by the time the entitlements
+      // are pointed, so an exception escaping here turns a project that
+      // installed correctly into a stack trace and a non-zero exit, with the
+      // post-install steps never printed. The editor's round-trip guard is
+      // one `\U00e7` escape away on any project with a non-ASCII product
+      // name, which is not an exotic shape in this codebase's own language.
+      _writeIosProject(tempDir);
+      final pbxproj =
+          File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj');
+      pbxproj.writeAsStringSync(pbxproj.readAsStringSync().replaceFirst(
+          'productType = "com.apple.product-type.application";',
+          'productName = "\\U00e7ekirdek";\n\t\t\tproductType = "com.apple.product-type.application";'));
+
+      expect(await installIos(), 0, reason: 'the install itself succeeded');
+
+      expect(
+        File('${tempDir.path}/ios/Runner/RunnerRelease.entitlements')
+            .existsSync(),
+        isTrue,
+        reason: 'both files are still written, so the remedy is one setting',
+      );
+    });
+
+    test('reports rather than dies on an entitlements file it cannot read',
+        () async {
+      // The same post-commit hazard as the pbxproj one, a step earlier and
+      // missed by two reviews before this. `PlistWriter` throws `StateError`
+      // on a plist with no root <dict> and an XmlParserException (a
+      // FormatException) on one that does not parse, and a hand-edited
+      // entitlements file is both of those shapes away from ordinary. The
+      // staged op this replaced got this guarantee for free from the
+      // transaction dispatcher.
+      _writeIosProject(tempDir);
+      File('${tempDir.path}/ios/Runner/Runner.entitlements')
+          .writeAsStringSync('<?xml version="1.0" encoding="UTF-8"?>\n'
+              '<plist version="1.0">\n<array/>\n</plist>\n');
+
+      expect(await installIos(), 0, reason: 'the install itself succeeded');
+    });
+
+    test('leaves a project that already points elsewhere alone', () async {
+      // The state of EVERY project a previous version of this installer
+      // touched, and the population the doctor has been flagging since 0.3.0.
+      // `setEntitlementsPaths` is all-or-nothing across the configurations it
+      // is asked about, so nothing moves and the command has to say so.
+      _writeIosProject(tempDir);
+      final pbxproj =
+          File('${tempDir.path}/ios/Runner.xcodeproj/project.pbxproj');
+      pbxproj.writeAsStringSync(pbxproj.readAsStringSync().replaceAll(
+          'PRODUCT_BUNDLE_IDENTIFIER = com.example.app;',
+          'CODE_SIGN_ENTITLEMENTS = Runner/Custom.entitlements;\n'
+              '\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.example.app;'));
+      final before = pbxproj.readAsStringSync();
+
+      expect(await installIos(), 0);
+
+      expect(pbxproj.readAsStringSync(), before,
+          reason: 'not one build setting moved');
+      expect(
+        File('${tempDir.path}/ios/Runner/RunnerRelease.entitlements')
+            .readAsStringSync(),
+        contains('<string>production</string>'),
+        reason: 'the file is still written, so pointing it is one edit',
+      );
     });
 
     test('an absent ios/ directory is skipped rather than failing', () async {

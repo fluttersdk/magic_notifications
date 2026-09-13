@@ -8,6 +8,7 @@ import 'dart:io';
 // DoctorCommand that collides with this class), so a direct artisan.dart import
 // is redundant here.
 import 'package:magic_notifications/src/cli/cli.dart';
+import 'package:magic_notifications/src/cli/support/xcode_configurations.dart';
 
 /// Diagnostic command for checking Magic Notifications health.
 ///
@@ -364,19 +365,25 @@ class DoctorCommand extends ArtisanCommand {
   /// Warnings about the APNs environment each build configuration signs
   /// against. See [_apsEnvironmentIssues] for what is measured.
   ///
-  /// A warning rather than a failure, and the choice is the class's own rule
-  /// rather than a softening. `notifications:install` writes one entitlements
-  /// file declaring `development` for every configuration, because the
-  /// distribution value is a signing decision it cannot make, so EVERY
-  /// freshly installed project reports this until somebody splits the file by
-  /// hand. A doctor that fails on its own installer's correct output is the
-  /// "always fails" state this class warns about at the top, and the
-  /// remediation footer a failure prints names `notifications:install` and
-  /// `notifications:configure`, neither of which can clear it.
+  /// A warning rather than a failure, and it STAYS one now that
+  /// `notifications:install` writes the split itself. The reason changed with
+  /// it: this used to fire on every freshly installed project, because the
+  /// installer wrote one `development` file for every configuration, and a
+  /// doctor that fails on its own installer's correct output is the "always
+  /// fails" state this class warns about at the top.
+  ///
+  /// That is no longer the case, and it is still not a failure, because the
+  /// projects it fires on now are the ones the installer could not repoint and
+  /// said so about: a project already naming a different entitlements file
+  /// (which includes every project an older version of the installer touched),
+  /// one whose configurations are none of Debug, Profile or Release, and one
+  /// whose pbxproj the editor refuses to rewrite. None of those is cleared by
+  /// re-running a command, so a failure would print a remediation footer
+  /// naming `notifications:install` and `notifications:configure`, neither of
+  /// which can help; the fix is one build setting in Xcode.
   ///
   /// It is still never a tick, and it still stops the summary claiming every
-  /// requirement is met, which is what the warning channel is for. When the
-  /// installer learns to write the split, this becomes a failure honestly.
+  /// requirement is met, which is what the warning channel is for.
   List<String> apsEnvironmentWarnings() {
     if (!FileHelper.directoryExists('$projectRoot/ios')) return const [];
 
@@ -777,75 +784,19 @@ class DoctorCommand extends ArtisanCommand {
   /// Maps each Runner build configuration to the entitlements path it signs
   /// against, as the pbxproj spells it (relative to `ios/`).
   ///
-  /// Walked structurally, target to configuration list to configuration,
-  /// rather than searched: the project holds a second target (`RunnerTests`)
-  /// whose configurations are also called Debug and Release and which signs
-  /// nothing, so a global match reads the wrong ones. Returns empty rather
-  /// than throwing when the shape is not the one this walk knows.
+  /// Configurations naming NO entitlements file are dropped, which is what
+  /// makes an empty result mean "nothing here to judge": this check reads the
+  /// value each configuration carries, and one carrying none has no value to
+  /// be wrong about. `notifications:install` reads the same walk and KEEPS
+  /// those, because a configuration that names no file yet is exactly the one
+  /// it has to address to write the split.
   Map<String, String> _entitlementsByConfiguration() {
-    if (!FileHelper.fileExists(_pbxprojPath)) return const {};
-
-    final String source = FileHelper.readFile(_pbxprojPath);
-
-    // One top-level object: a 24-hex id, an optional /* comment */, then a
-    // brace-delimited body at two tabs of indent. Xcode writes this format.
-    final Map<String, String> objects = {
-      for (final RegExpMatch match in RegExp(
-        r'^\t\t([0-9A-Fa-f]{24})(?: /\* .*? \*/)? = \{(.*?)^\t\t\};$',
-        dotAll: true,
-        multiLine: true,
-      ).allMatches(source))
-        match.group(1)!: match.group(2)!,
+    return {
+      for (final XcodeConfiguration configuration
+          in XcodeConfigurations.read(_pbxprojPath))
+        if (configuration.entitlements != null)
+          configuration.name: configuration.entitlements!,
     };
-
-    String? setting(String body, String key) =>
-        RegExp('^\\s*${RegExp.escape(key)} = (.+?);\$', multiLine: true)
-            .firstMatch(body)
-            ?.group(1)
-            ?.trim()
-            .replaceAll('"', '');
-
-    final Iterable<String> targets = objects.values.where(
-      (String body) =>
-          setting(body, 'isa') == 'PBXNativeTarget' &&
-          setting(body, 'name') == 'Runner',
-    );
-    if (targets.length != 1) return const {};
-
-    // `buildConfigurationList = <id> /* Build configuration list for ... */;`
-    final String? reference = setting(targets.first, 'buildConfigurationList');
-    final String? listId = reference?.split(' ').first;
-    if (listId == null || !objects.containsKey(listId)) return const {};
-
-    // Only the ids inside `buildConfigurations = ( ... );`, because the list
-    // object also carries `defaultConfigurationName` and its own isa.
-    final String? references = RegExp(
-      r'buildConfigurations = \((.*?)\);',
-      dotAll: true,
-    ).firstMatch(objects[listId]!)?.group(1);
-    if (references == null) return const {};
-
-    final Map<String, String> byConfiguration = {};
-    for (final RegExpMatch match
-        in RegExp(r'[0-9A-Fa-f]{24}').allMatches(references)) {
-      final String body = objects[match.group(0)!] ?? '';
-
-      // The name comes from the configuration's OWN `name = ...;`, not from
-      // the `/* Release */` comment beside its id in the list above. The
-      // comment version matched `\w+`, which excludes a hyphen, so every
-      // configuration of a flavoured project (`Release-production` and its
-      // siblings, the shape Flutter's own docs prescribe) failed to match at
-      // all and dropped out of this map. An empty map reads as "pbxproj not
-      // recognised" and is answered with silence, so the APNs check printed a
-      // clean bill of health for every flavoured app. The comment is cosmetic
-      // and Xcode is free to omit it; the `name` is the record.
-      final String? name = setting(body, 'name');
-      final String? path = setting(body, _entitlementsSetting);
-
-      if (name != null && path != null) byConfiguration[name] = path;
-    }
-
-    return byConfiguration;
   }
 
   /// Path to the iOS entitlements file the installer writes.
