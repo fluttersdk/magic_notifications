@@ -303,6 +303,20 @@ class UninstallCommand extends ArtisanCommand {
     ctx.output.info('');
     ctx.output.info('Web (web/OneSignalSDKWorker.js):');
     ctx.output.info('  Delete this file if no longer needed');
+    ctx.output.info('');
+    // Listed rather than reverted for the same reason as everything else here:
+    // an entitlements file is shared ground. `aps-environment` is the only key
+    // install writes, but the files carry whatever else the project has added
+    // since, and the Release build setting may have been pointed by hand.
+    ctx.output.info('iOS (ios/Runner/*.entitlements):');
+    ctx.output.info(
+      '  Remove the aps-environment key from Runner.entitlements and '
+      'RunnerRelease.entitlements',
+    );
+    ctx.output.info(
+      '  Delete RunnerRelease.entitlements and reset the Release '
+      'CODE_SIGN_ENTITLEMENTS if nothing else needs it',
+    );
     ctx.output.writeln('');
   }
 }
