@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-13
+
 ### Fixed
 - **`notifications:install` writes the Release APNs entitlement it has been warning about.** 0.3.0 shipped the diagnosis: `notifications:doctor` reads the `aps-environment` each build configuration signs against and names the ones a provisioning profile cannot use. It reported the installer's own output, because this command wrote one entitlements file declaring `development` and pointed every configuration at it, and Apple makes that value a property of the BUILD CONFIGURATION: a development profile carries only `development`, a distribution one only `production`. So the file was right for two configurations and wrong for the one that ships, which either failed at export or exported an app registering a sandbox APNs token the production app can never deliver to. Neither symptom appears before TestFlight. The command now writes `ios/Runner/RunnerRelease.entitlements` alongside the development file and points Release at it, leaving Debug and Profile where they were. A fresh install now leaves `notifications:doctor` with nothing to say, which is the test that covers it.
 
