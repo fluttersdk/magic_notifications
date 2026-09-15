@@ -276,9 +276,21 @@ touches it in two ways:
   ```dart
   Notify.view.register(
     'notifications.preferences',
-    () => AppPageContainer(child: const NotificationPreferencesView()),
+    () => AppPageContainer(
+      // Your container already carries the app's edge margins, so turn this
+      // screen's own off. Left at the default the two pad the same edge and
+      // this page sits twice as far from the display as its neighbours: on a
+      // phone, 32 logical pixels against everything else's 16.
+      child: const NotificationPreferencesView(contentClassName: ''),
+    ),
   );
   ```
+
+  `contentClassName` defaults to `'p-4 lg:p-6'`, which is right for a screen
+  mounted with nothing around it. It is a className rather than a flag so a host
+  with its own answer can give it, and it is applied on the content column
+  INSIDE the scroll view: the page surface stays full bleed behind the scroll,
+  which is why padding from outside the screen is not the same thing.
 
 - **Register a type icon** so the shipped list and dropdown widgets can draw
   the right leading icon for one of the host's own notification types, without

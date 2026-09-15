@@ -478,4 +478,40 @@ void main() {
 
     expect(find.text('Custom Footer'), findsOneWidget);
   });
+
+  group('content padding', () {
+    /// The left edge of the page title, which is what an eye compares against
+    /// the neighbouring page.
+    double titleLeft(WidgetTester tester) {
+      return tester.getRect(find.text('Notifications')).left;
+    }
+
+    testWidgets('a standalone mount pads its own content', (tester) async {
+      fakeNotifications(const []);
+
+      await tester.pumpWidget(wrap(const NotificationsListView()));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // `p-4` on a 1024-wide box, so the content starts one 16px step in.
+      expect(titleLeft(tester), 16.0);
+    });
+
+    testWidgets('an empty contentClassName pads nothing', (tester) async {
+      // What `magic_starter` passes, because its `MSPageContainer` already
+      // carries the host's edge margins. Left at the default the two pad the
+      // same edge and this page sits twice as far from the display as every
+      // one of its neighbours. This is the screen that host mounts by default,
+      // so it is the one a reader meets first.
+      fakeNotifications(const []);
+
+      await tester.pumpWidget(
+        wrap(const NotificationsListView(contentClassName: '')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(titleLeft(tester), 0.0);
+    });
+  });
 }

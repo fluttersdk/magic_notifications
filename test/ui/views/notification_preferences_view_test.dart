@@ -149,4 +149,41 @@ void main() {
     // reaches the bulk control on the same terms as a built-in one.
     expect(find.text('Carrier pigeon'), findsNWidgets(2));
   });
+
+  group('content padding', () {
+    /// The left edge of the first card, which is what an eye compares against
+    /// the neighbouring page.
+    double firstCardLeft(WidgetTester tester) {
+      return tester
+          .getRect(find.byKey(const ValueKey('notifications.bulk')))
+          .left;
+    }
+
+    testWidgets('a standalone mount pads its own content', (tester) async {
+      fakeMatrix();
+
+      await tester.pumpWidget(wrap(const NotificationPreferencesView()));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // `p-4` on a 1024-wide box, so the card starts one 16px step in.
+      expect(firstCardLeft(tester), 16.0);
+    });
+
+    testWidgets('an empty contentClassName pads nothing', (tester) async {
+      // What `magic_starter` passes, because its `MSPageContainer` already
+      // carries the host's edge margins. Left at the default the two pad the
+      // same edge and this page sits twice as far from the display as every
+      // one of its neighbours.
+      fakeMatrix();
+
+      await tester.pumpWidget(
+        wrap(const NotificationPreferencesView(contentClassName: '')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(firstCardLeft(tester), 0.0);
+    });
+  });
 }
