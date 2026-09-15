@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+- **`contentClassName` on both screens, so a host inside its own page container can turn this package's padding off.** `NotificationsListView` and `NotificationPreferencesView` padded their content column with `p-4 lg:p-6`, which is right for a standalone mount and wrong inside a host that already owns page geometry. `magic_starter` wraps both of them in `MSPageContainer` so they share the app's width cap and edge margins, and the two paddings then applied to the same edge: measured on a phone, these two pages sat 32 logical pixels from the display while every one of their neighbours sat at 16. The parameter defaults to the standalone value, so nothing changes for a host that does not pass it; a host inside its own container passes `''`.
+
+  A className rather than a bool, so a host with a different answer can give it instead of choosing between this package's padding and none. It is applied on the content column INSIDE the scroll view, which is why a wrapper around the screen could not have replaced it: the page surface has to stay full bleed behind the scroll, and padding from outside would have inset the surface token along with the content. (`lib/src/ui/views/notifications_list_view.dart`, `lib/src/ui/views/notification_preferences_view.dart`)
+
 ## [0.3.1] - 2026-09-13
 
 ### Fixed
