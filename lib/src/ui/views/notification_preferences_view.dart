@@ -17,7 +17,11 @@ class NotificationPreferencesView
     super.key,
     this.pushProvisioned,
     this.backRoute,
+    this.contentClassName = defaultContentClassName,
   });
+
+  /// The page padding a standalone mount gets.
+  static const String defaultContentClassName = 'p-4 lg:p-6';
 
   /// Host override for the push-provisioning state, or `null` (the default) to
   /// read it from the backend.
@@ -43,6 +47,23 @@ class NotificationPreferencesView
   /// });
   /// ```
   final String? backRoute;
+
+  /// The page padding this screen applies to its own content column.
+  ///
+  /// Defaults to the standalone value, which is right for a host that mounts
+  /// this screen with nothing around it. Pass `''` when the screen is already
+  /// inside a page container that carries the app's width cap and edge
+  /// margins, because otherwise the two pad the same edge and this page sits
+  /// twice as far from the display as every one of its neighbours. That is
+  /// what `magic_starter` does: it wraps both of this package's screens in
+  /// `MSPageContainer` so they share the host's geometry, and a phone then
+  /// showed 32 logical pixels of margin here against 16 everywhere else.
+  ///
+  /// It is a className rather than a bool so a host with its own answer can
+  /// give it, and it is applied on the content column INSIDE the scroll view,
+  /// which is why a wrapper around the screen cannot replace it: the page
+  /// surface has to stay full bleed behind the scroll.
+  final String contentClassName;
 
   @override
   State<NotificationPreferencesView> createState() =>
@@ -113,7 +134,7 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
           top: false,
           bottom: false,
           child: WDiv(
-            className: 'w-full flex flex-col p-4 lg:p-6',
+            className: 'w-full flex flex-col ${widget.contentClassName}',
             children: [
               _buildHeader(),
               WDiv(
