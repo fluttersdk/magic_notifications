@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-16
+
 ### Added
 - **`contentClassName` on both screens, so a host inside its own page container can turn this package's padding off.** `NotificationsListView` and `NotificationPreferencesView` padded their content column with `p-4 lg:p-6`, which is right for a standalone mount and wrong inside a host that already owns page geometry. `magic_starter` wraps both of them in `MSPageContainer` so they share the app's width cap and edge margins, and the two paddings then applied to the same edge: measured on a phone, these two pages sat 32 logical pixels from the display while every one of their neighbours sat at 16. The parameter defaults to the standalone value, so nothing changes for a host that does not pass it; a host inside its own container passes `''`.
 
