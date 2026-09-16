@@ -41,6 +41,10 @@ Update the version string in ALL of these files:
 | `CLAUDE.md` | `**Version:**` line |
 | `doc/getting-started/installation.md` | Version reference if pinned in install examples |
 | `README.md` | Version numbers in install examples |
+| `lib/src/cli/notifications_artisan_provider.dart` | `magicNotificationsVersion`, which the install banner prints. `test/cli/commands/install_command_test.dart` compares it against `pubspec.yaml`, so a miss here fails the suite rather than shipping quietly |
+| `../magic/skills/magic-framework/references/plugin-notifications.md` | first-line stamp, per Phase 1 item 6. `test/skill_reference_stamp_test.dart` fails on a stale one whenever a sibling checkout exists |
+
+Grep the OLD version string across `*.md`, `*.yaml` and `lib/` before opening the PR rather than trusting this table; a stamp rots in whatever file nobody listed.
 
 ### Phase 3: Changelog Enhancement
 
@@ -48,13 +52,15 @@ Review the `[Unreleased]` section and the git log since the last tag:
 
 1. **Cross-reference** — Ensure every significant commit is reflected in CHANGELOG.md
 2. **Missing entries** — Add any commits that introduced features, fixes, or improvements but were not logged
-3. **Categorize** — Use these emoji categories:
-   - `### ✨ New Features` — new channels, drivers, CLI commands
-   - `### 🐛 Bug Fixes` — bug fixes
-   - `### 🔧 Improvements` — DX, CI/CD, docs, refactors, performance
-   - `### 📚 Documentation` — README, doc/ folder, CHANGELOG
-   - `### ⚠️ Breaking Changes` — only if channel/driver contracts, config structure, or provider API changed
-4. **Entry format** — `- **Short Title**: One-line description`
+3. **Categorize**: Keep a Changelog headings, in this order where they apply:
+   - `### Breaking`: channel/driver contracts, config structure, provider API
+   - `### Added`: new channels, drivers, CLI commands, parameters
+   - `### Changed`
+   - `### Fixed`
+   - `### Improvements`: DX, CI, docs, refactors, performance
+
+   The emoji headings below 0.3.0 are history, not the format. Match the newest section in the file.
+4. **Entry format**: `- **The change, stated as what a reader now gets.** Then why it exists, what it was measured against, and the alternative that was rejected. Close with the files touched in backticks.` A one-line bullet is fine where the change genuinely is one line; do not pad and do not compress a defect nobody would otherwise understand.
 5. **Date** — Use today's date in `YYYY-MM-DD` format
 
 ### Phase 4: Doc Sync
