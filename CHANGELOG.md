@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-21
+
+### Changed
+
+- **Every sibling floor names this batch's release.** `magic` moves `^0.0.6` to `^0.0.15`, `fluttersdk_artisan` `^0.0.15` to `^0.0.16` and `fluttersdk_wind` `^1.2.0` to `^1.6.2`. The old ranges already admitted the new versions, so a fresh `pub get` resolves nothing differently; what changes is that the floors name the releases this package is verified against. magic 0.0.15 is breaking in its database layer (a migration may no longer manage its own transaction, and `DB.transaction` refuses a callback that closes the transaction itself); nothing in this package calls either, so no code here changes, but an app below magic 0.0.15 no longer resolves this release. (`pubspec.yaml`)
+
 ## [0.3.2] - 2026-09-16
 
 ### Added
