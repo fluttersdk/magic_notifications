@@ -1,6 +1,6 @@
 name: magic_notifications
 description: Multi-channel notification system for Magic Framework. Supports database (in-app), push (OneSignal), and mail channels.
-version: 0.3.3
+version: 0.3.4
 homepage: https://magic.fluttersdk.com/notifications
 documentation: https://magic.fluttersdk.com/packages/notifications/getting-started/installation
 repository: https://github.com/fluttersdk/magic_notifications
@@ -27,12 +27,11 @@ dependencies:
   # it a solver may hand this package a magic that lacks the accessor the
   # realtime notification path needs to avoid a second WebSocket on an
   # already-open connection.
-  magic: ^0.0.15
-  # ^0.0.15 is a floor: `XcodeProjectEditor.setEntitlementsPaths`, which the
-  # iOS installer step calls to point Release at its own entitlements file,
-  # does not exist below it. 0.0.15 is published, so an ordinary adopter
-  # resolves this from pub.dev; locally it still resolves through
-  # pubspec_overrides.yaml, which points at ../artisan.
+  magic: ^0.0.16
+  # 0.0.15 is the requirement: `XcodeProjectEditor.setEntitlementsPaths`,
+  # which the iOS installer step calls to point Release at its own
+  # entitlements file, does not exist below it. The floor names 0.0.16, the
+  # newest release when the 2026-09-21 batch re-pinned every sibling.
   fluttersdk_artisan: ^0.0.16
   # ^5.6.6 is a floor: the login/logout identity race was patched across
   # 5.5.3, 5.5.5, 5.6.2 and 5.6.6. `^5.4.6` was resolving 5.6.3 in uptizm,
@@ -45,11 +44,11 @@ dependencies:
   # library-level privacy. `depend_on_referenced_packages` asks for the import
   # to be declared where it is used.
   meta: ^1.15.0
-  # ^1.2.0 matches the floor magic/pubspec.yaml:26 already declares. This
-  # package is about to ship widgets, so wind moves from a transitive
-  # dependency to a direct one; there is no 1.5-only API in use, so the floor
-  # stays at 1.2.0 rather than narrowing every adopter's graph for nothing.
-  fluttersdk_wind: ^1.6.2
+  # Direct rather than transitive: this package ships widgets, so wind is a
+  # dependency of its own. No API newer than 1.2.0 is in use; the floor names
+  # 1.6.3, the newest release when the 2026-09-22 batch re-pinned every
+  # sibling.
+  fluttersdk_wind: ^1.6.3
 
 dev_dependencies:
   flutter_test:
