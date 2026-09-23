@@ -25,6 +25,13 @@ void main() {
       log.assertLoggedCount(1);
     });
 
+    test('info() reports at info level, unchanged', () {
+      NotificationLog.info('[notifications] channel subscribed');
+
+      log.assertLogged('info', '[notifications] channel subscribed');
+      log.assertLoggedCount(1);
+    });
+
     test('debug() reports at debug level, unchanged', () {
       NotificationLog.debug('[notifications] push driver absent');
 
@@ -43,6 +50,13 @@ void main() {
       // `catch`, where a throw turns a handled failure into an unhandled one.
       expect(
           () => NotificationLog.error('nobody is listening'), returnsNormally);
+    });
+
+    test('info() writes nowhere instead of throwing', () {
+      Magic.flush();
+
+      expect(
+          () => NotificationLog.info('nobody is listening'), returnsNormally);
     });
 
     test('debug() writes nowhere instead of throwing', () {

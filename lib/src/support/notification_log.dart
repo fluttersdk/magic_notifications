@@ -48,6 +48,13 @@ class NotificationLog {
     Log.warning(message);
   }
 
+  /// Report [message] at info level, when the host has a log to report to.
+  static void info(String message) {
+    if (!_hasLog) return;
+
+    Log.info(message);
+  }
+
   /// Report [message] at debug level, when the host has a log to report to.
   static void debug(String message) {
     if (!_hasLog) return;
