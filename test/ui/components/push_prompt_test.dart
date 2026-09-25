@@ -269,6 +269,39 @@ class _LivePushDriver extends _RecordingPushDriver {
   }
 }
 
+/// A [_LivePushDriver] whose [permissionState] can be held open, so a test can
+/// control exactly when a read that started earlier answers.
+///
+/// The generation-counter fix this double exercises is about ORDER, not
+/// content: [holdNextPermissionRead] does not change what the platform would
+/// have answered, only when the caller finds out.
+class _RacePushDriver extends _LivePushDriver {
+  Completer<PushPermissionState>? _held;
+
+  /// Makes the NEXT call to [permissionState] wait on [completer] instead of
+  /// resolving immediately.
+  void holdNextPermissionRead(Completer<PushPermissionState> completer) {
+    _held = completer;
+  }
+
+  /// Fires the permission-changed stream without moving [permissionNow], the
+  /// way the widget's own listener has to re-read to find out what changed:
+  /// the announcement carries no payload the widget trusts on its own.
+  void announcePermissionChanged() => _permissions.add(permissionNow);
+
+  @override
+  Future<PushPermissionState> permissionState() async {
+    final Completer<PushPermissionState>? held = _held;
+    if (held != null) {
+      _held = null;
+
+      return held.future;
+    }
+
+    return super.permissionState();
+  }
+}
+
 /// A [MagicVaultService] whose [put] throws, reproducing secure storage being
 /// unavailable (a browser with no storage backend, a locked keychain).
 class _ThrowingPutVaultService extends MagicVaultService {
@@ -485,6 +518,75 @@ void main() {
 
       expect(driver.permissionRequests, 1);
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // A stale read must not undo a decline that landed after it started
+  // ---------------------------------------------------------------------------
+
+  group('a read overtaken by a decline', () {
+    testWidgets(
+      'a read that started before the decline but answers after it does not '
+      'reopen the ask row',
+      (tester) async {
+        final _RacePushDriver driver = _RacePushDriver();
+        usePushDriver(driver);
+
+        await tester.pumpWidget(
+          wrap(const PushPromptHost(declinedVaultKey: _declinedVaultKey)),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text(trans('notifications.push_prompt.ask_title')),
+          findsOneWidget,
+        );
+
+        // 1. Hold the platform read the next `_read()` will make, then fire
+        //    that re-read the way a permission event does. Its vault read
+        //    lands with `declinedAt: null`, because the decline below has
+        //    not written anything yet.
+        final Completer<PushPermissionState> heldRead =
+            Completer<PushPermissionState>();
+        driver.holdNextPermissionRead(heldRead);
+        driver.announcePermissionChanged();
+        await tester.pump();
+
+        // 2. The decline runs to completion while the read above is still
+        //    in flight: it writes the vault, re-reads (its own platform read
+        //    is no longer held), and lands the compact row.
+        await tester.tap(
+          find.text(trans('notifications.push_prompt.not_now')),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text(trans('notifications.push_prompt.enable')),
+          findsOneWidget,
+          reason: 'the decline landed first and must be on screen',
+        );
+        expect(
+          find.text(trans('notifications.push_prompt.not_now')),
+          findsNothing,
+        );
+
+        // 3. The held read now answers, carrying the pre-decline state. A
+        //    generation counter must drop it rather than let it undo the
+        //    decline that finished while it was still in flight.
+        heldRead.complete(PushPermissionState.notDetermined);
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text(trans('notifications.push_prompt.enable')),
+          findsOneWidget,
+          reason: 'the stale read must not reopen the ask row',
+        );
+        expect(
+          find.text(trans('notifications.push_prompt.not_now')),
+          findsNothing,
+        );
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------

@@ -340,6 +340,18 @@ class _PushPromptHostState extends State<PushPromptHost> {
   /// When the reminder was last turned down on this device, or null.
   DateTime? _declinedAt;
 
+  /// Rises by one every time [_read], [_decline], or [_enable] starts a new
+  /// pass through [_apply].
+  ///
+  /// A permission or identity event can fire [_read] while an earlier
+  /// [_read] (or [_decline]) is still waiting on the platform, and the two
+  /// can then land in either order. Without a generation to compare against,
+  /// whichever finishes LAST wins the screen even when it started first, so a
+  /// decline that already landed can be undone by a read that was already
+  /// stale the moment it started. [_apply] drops any call whose generation is
+  /// no longer the latest one issued, rather than trusting arrival order.
+  int _generation = 0;
+
   /// Whether the platform prompt has already been raised in THIS session.
   ///
   /// Not persisted, and separate from [_declinedAt] because it answers a
@@ -469,17 +481,23 @@ class _PushPromptHostState extends State<PushPromptHost> {
 
   /// Reads the decline this device carries, then what the package makes of it.
   Future<void> _read() async {
-    await _apply(await _readDeclinedAt());
+    final int generation = ++_generation;
+    await _apply(generation, await _readDeclinedAt());
   }
 
-  /// Re-derives the advice for [declinedAt] and puts both on screen.
+  /// Re-derives the advice for [declinedAt] and puts both on screen, unless
+  /// [generation] has already been overtaken by a newer [_read], [_decline],
+  /// or [_enable].
   ///
   /// The one place this widget's state moves, so the timestamp it asked with
-  /// and the answer it got can never be a frame apart.
-  Future<void> _apply(DateTime? declinedAt) async {
+  /// and the answer it got can never be a frame apart. The generation check
+  /// is what keeps a call that started earlier but answers later from
+  /// clobbering one that started after it and already landed; see
+  /// [_generation].
+  Future<void> _apply(int generation, DateTime? declinedAt) async {
     final PushPromptAdvice advice = await _readAdvice(declinedAt);
 
-    if (!mounted) return;
+    if (!mounted || generation != _generation) return;
 
     setState(() {
       _declinedAt = declinedAt;
@@ -560,10 +578,11 @@ class _PushPromptHostState extends State<PushPromptHost> {
   /// was taken when it was not; the reminder (decline control and all) stays
   /// on screen instead.
   Future<void> _decline() async {
+    final int generation = ++_generation;
     final DateTime at = DateTime.now().toUtc();
     if (!await _persistDeclinedAt(at)) return;
 
-    await _apply(at);
+    await _apply(generation, at);
   }
 
   /// Raises the platform request, then re-reads what the platform now says.
@@ -597,7 +616,7 @@ class _PushPromptHostState extends State<PushPromptHost> {
       if (mounted) setState(() => _busy = false);
     }
 
-    await _apply(_declinedAt);
+    await _apply(++_generation, _declinedAt);
   }
 
   /// Whether the host app has left the reminder turned on at all.
