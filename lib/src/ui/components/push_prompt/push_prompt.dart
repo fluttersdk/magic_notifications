@@ -577,12 +577,16 @@ class _PushPromptHostState extends State<PushPromptHost> {
   /// as resolved would leave the user looking at a row that says their answer
   /// was taken when it was not; the reminder (decline control and all) stays
   /// on screen instead.
+  ///
+  /// The generation is taken AFTER the write lands, not before: a read that
+  /// starts while the write is still running reads the vault before the
+  /// decline is in it, so it is the stale one and has to lose. A failed write
+  /// takes no generation, so it drops no read that is still in flight.
   Future<void> _decline() async {
-    final int generation = ++_generation;
     final DateTime at = DateTime.now().toUtc();
     if (!await _persistDeclinedAt(at)) return;
 
-    await _apply(generation, at);
+    await _apply(++_generation, at);
   }
 
   /// Raises the platform request, then re-reads what the platform now says.

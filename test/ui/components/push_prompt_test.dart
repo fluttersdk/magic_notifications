@@ -321,6 +321,24 @@ class _ThrowingPutVaultService extends MagicVaultService {
   Future<String?> get(String key) async => null;
 }
 
+/// A [MagicVaultService] whose [put] waits for [release] before storing, so a
+/// test can run a read while a decline's write is still in flight.
+class _HeldPutVaultService extends MagicVaultService {
+  _HeldPutVaultService() : super.forTesting();
+
+  final Completer<void> release = Completer<void>();
+  final Map<String, String> _stored = <String, String>{};
+
+  @override
+  Future<void> put(String key, String value) async {
+    await release.future;
+    _stored[key] = value;
+  }
+
+  @override
+  Future<String?> get(String key) async => _stored[key];
+}
+
 /// Every reading `pushPromptAdvice` can actually produce, as the pair the row
 /// renders from.
 ///
@@ -584,6 +602,49 @@ void main() {
         expect(
           find.text(trans('notifications.push_prompt.not_now')),
           findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
+      'a read that starts while the decline is still writing does not drop '
+      'the decline',
+      (tester) async {
+        final _RacePushDriver driver = _RacePushDriver();
+        usePushDriver(driver);
+        final _HeldPutVaultService heldVault = _HeldPutVaultService();
+        Magic.app.setInstance('vault', heldVault);
+        addTearDown(() => Magic.app.removeInstance('vault'));
+
+        await tester.pumpWidget(
+          wrap(const PushPromptHost(declinedVaultKey: _declinedVaultKey)),
+        );
+        await tester.pumpAndSettle();
+
+        // 1. The decline starts and its vault write is held open.
+        await tester.tap(
+          find.text(trans('notifications.push_prompt.not_now')),
+        );
+        await tester.pump();
+
+        // 2. A permission event re-reads while that write is in flight; the
+        //    vault still holds nothing, so this read sees no decline.
+        driver.announcePermissionChanged();
+        await tester.pumpAndSettle();
+
+        // 3. The write lands. The decline must still win: it is the newer
+        //    fact, and the read that started before it landed is the stale one.
+        heldVault.release.complete();
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text(trans('notifications.push_prompt.enable')),
+          findsOneWidget,
+        );
+        expect(
+          find.text(trans('notifications.push_prompt.not_now')),
+          findsNothing,
+          reason: 'the decline landed after the read and must be on screen',
         );
       },
     );
