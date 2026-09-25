@@ -10,6 +10,7 @@
 - <a name="toc-realtime"></a>[Realtime Delivery](#realtime)
 - <a name="toc-streams"></a>[Stream Management](#streams)
 - <a name="toc-optimistic"></a>[Optimistic Updates with Rollback](#optimistic)
+- <a name="toc-identity-reconciled"></a>[Push Identity Reconcile Outcomes](#identity-reconciled)
 
 ---
 
@@ -387,6 +388,58 @@ Future<void> deleteNotification(String id) async {
 
 > [!TIP]
 > The `Notify` facade exposes all these operations as static methods (`Notify.markAsRead`, `Notify.deleteNotification`, etc.), which simply delegate to the same manager instance.
+
+---
+
+## <a name="identity-reconciled"></a>Push Identity Reconcile Outcomes
+
+`reconcilePushIdentity()` brings the device's subscribed identity in line with
+`pushIntent` (see [Push Driver Setup](#push-driver) for how a driver
+resolves). `onPushIdentityReconciled` is the outcome of every pass that had a
+driver to act on:
+
+```dart
+Notify.manager.onPushIdentityReconciled.listen((PushIdentityReconciled event) {
+  reportDeviceState(intent: event.intent, converged: event.converged);
+});
+```
+
+```dart
+class PushIdentityReconciled {
+  final String? intent;   // captured when the pass started
+  final bool converged;   // whether the device carried it by the end
+  final Object? error;    // non-null only when the SDK call itself failed
+}
+```
+
+This exists for a host that reports device state PER PERSON (who this
+device is subscribed as, posted to the host's own backend), which needs to
+know when a pass RAN, not only when one converges. A converged-only signal
+leaves that host silent until the next auth bump happens to trigger another
+pass, and the first pass after a driver attaches is exactly the one most
+likely to throw or read back a mismatch.
+
+Three things to read `converged` and `error` together for:
+
+| `converged` | `error` | Meaning |
+|---|---|---|
+| `true` | `null` | The device carries `intent`. |
+| `false` | non-null | The SDK call itself failed (network, driver refusal). |
+| `false` | `null` | The call was issued and the read-back simply did not agree. |
+
+`intent` is `null` on a sign-out pass, not only on a driver-less one: a
+listener that treats a `null` intent as "nothing happened" misses every
+sign-out. Nothing fires for a pass that had NO driver to act on at all (a
+build with no push configured has nothing to report convergence about), and a
+pass whose intent moved underneath it (a second login landing mid-pass) does
+not fire either: the mover's OWN pass reports for them, so a joiner never
+double-reports one outcome under two identities.
+
+`onPushDriverAttached` is the companion stream for the same host: a cold boot
+that restores a session normally bumps auth, and with it a login `want()`,
+before `NotificationServiceProvider.boot()` has resolved a driver, so
+anything the host does WITH a driver on that path needs to know when one
+shows up rather than only when auth changes.
 
 ---
 

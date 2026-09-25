@@ -203,6 +203,27 @@ switch (reachability) {
 > while the push reaches nobody. There is no workaround; the app has to tell
 > the person to add the site to their Home Screen first.
 
+### Push Permission Soft Prompt
+
+`PushPrompt`, `PushPromptHost`, and `PushOffNotice` ask for push before the
+platform's own one-shot prompt is spent, and mark a device push cannot reach
+on screens outside the settings page:
+
+```dart
+PushPromptHost(declinedVaultKey: 'my_app.push_prompt_declined')
+
+PushOffNotice(onOpenPreferences: () => MagicRoute.to('/settings/notifications'))
+```
+
+`PushPromptHost` owns the decline timestamp under the vault key you give it;
+the package owns the policy of when to ask again. See the
+[Push Prompt Component](doc/basics/preferences.md#push-prompt) section for the
+four presentations and the translation keys a host has to add.
+
+`NotificationManager.onPushIdentityReconciled` streams the outcome of every
+identity reconcile pass (login, logout, or a driver attaching later): see
+[Push Identity Reconcile Outcomes](doc/architecture/notification-manager.md#identity-reconciled).
+
 ### Clean Up on Logout
 
 ```dart

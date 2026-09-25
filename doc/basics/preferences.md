@@ -8,6 +8,7 @@
 - <a name="toc-global-vs-type"></a>[Global Toggles vs Per-Type Preferences](#global-vs-type)
 - <a name="toc-api"></a>[API Endpoints](#api)
 - <a name="toc-ui"></a>[UI Integration Example](#ui)
+- <a name="toc-push-prompt"></a>[Push Prompt Component](#push-prompt)
 
 ---
 
@@ -299,6 +300,79 @@ class User extends Model with Notifiable {
   }
 }
 ```
+
+---
+
+## <a name="push-prompt"></a>Push Prompt Component
+
+`PushPrompt`, `PushPromptHost` and `PushOffNotice`
+(`lib/src/ui/components/push_prompt/`) are the package's own push-permission
+soft prompt: a row asking for push BEFORE the platform's one-shot prompt is
+spent, built on `NotificationManager.pushPromptAdvice()`.
+
+- **`PushPrompt`** is presentational: given `reachability`, `action`,
+  `declined` and `busy`, it renders one of four presentations and reports
+  `onEnable` / `onDecline`. It touches no platform API itself.
+- **`PushPromptHost`** wires it to the live device. It owns nothing about
+  WHEN to ask (`pushPromptAdvice` does), but it owns the one thing the package
+  refuses to: the moment the user last declined it on this device. That is why
+  it takes a `declinedVaultKey` constructor parameter rather than a fixed key:
+
+  ```dart
+  const PushPromptHost(declinedVaultKey: 'my_app.push_prompt_declined')
+  ```
+
+  It reads that key as an ISO-8601 timestamp and nothing else; a value an
+  older build wrote in some other shape is the host's own migration to make,
+  once, before ever constructing this widget.
+
+- **`PushOffNotice`** is a quiet shell marker (a sidebar row, or a compact
+  glyph for a mobile top bar) that tells a person, on a screen they were
+  already looking at, that this device cannot be reached by push. Tapping it
+  calls the required `onOpenPreferences` callback, which a host wires to
+  wherever `PushPromptHost` and its controls actually live:
+
+  ```dart
+  PushOffNotice(
+    onOpenPreferences: () => MagicRoute.to('/settings/notifications'),
+  )
+  ```
+
+### Translation keys
+
+This package ships no catalogue of its own, and `PushPrompt`/`PushOffNotice`
+resolve every string through `trans('notifications.push_prompt.*')`. A host
+adds all of the following to every locale it ships; a missing key renders as
+itself.
+
+| Key | English reference copy |
+|-----|-------------------------|
+| `notifications.push_prompt.unavailable_body` | This build has no push notifications. |
+| `notifications.push_prompt.on_body` | You're all set to receive push notifications. |
+| `notifications.push_prompt.blocked_title` | Notifications are blocked |
+| `notifications.push_prompt.blocked_body_settings` | Turn notifications back on in your device settings. |
+| `notifications.push_prompt.blocked_body_web` | Open the padlock icon in your browser's address bar to allow notifications. |
+| `notifications.push_prompt.blocked_body_ios` | Open Settings, then Notifications, to allow notifications for this app. |
+| `notifications.push_prompt.blocked_body_android` | Open this app's notification settings to allow notifications. |
+| `notifications.push_prompt.declined_body` | You turned off this reminder. You can still enable push any time. |
+| `notifications.push_prompt.ask_title` | Turn on notifications |
+| `notifications.push_prompt.ask_body` | Get notified the moment something needs your attention. |
+| `notifications.push_prompt.open_settings` | Open settings |
+| `notifications.push_prompt.enable` | Enable |
+| `notifications.push_prompt.not_now` | Not now |
+| `notifications.push_prompt.shell_notice` | Push is off |
+| `notifications.push_prompt.shell_notice_a11y` | Push notifications are off |
+
+### Colour roles
+
+`PushPrompt`'s `blocked` and `on` presentations map to the `warning` and
+`success` roles of the 17-key semantic alias contract (`design:sync`'s
+`_aliasMappings`). Neither role ships a `-container` tint the way
+`destructive` does, so the tile and its glyph go solid (`bg-warning` /
+`bg-success` with a literal `text-white`) rather than inventing one, the same
+pairing `toast.recipe.dart` already uses for these two roles. A host that
+wants a softer treatment restyles by copying the recipe file; the component
+exposes no per-instance className override today.
 
 ---
 
