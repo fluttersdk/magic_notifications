@@ -8,6 +8,7 @@ export 'src/models/database_notification.dart';
 export 'src/models/notification_preference.dart';
 export 'src/models/paginated_notifications.dart';
 export 'src/models/push_delivery_snapshot.dart';
+export 'src/models/push_identity_reconciled.dart';
 export 'src/models/push_message.dart';
 export 'src/models/push_prompt_advice.dart';
 export 'src/models/push_subscription.dart';
@@ -36,6 +37,7 @@ export 'src/ui/notification_view_registry.dart';
 export 'src/ui/views/notifications_list_view.dart';
 export 'src/ui/views/notification_preferences_view.dart';
 export 'src/ui/components/notification_dropdown/index.dart';
+export 'src/ui/components/push_prompt/index.dart';
 export 'src/http/notification_preferences_controller.dart';
 export 'src/http/notifications_list_controller.dart';
 

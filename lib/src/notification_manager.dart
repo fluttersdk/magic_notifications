@@ -10,6 +10,7 @@ import 'exceptions/notification_exception.dart';
 import 'models/database_notification.dart';
 import 'models/paginated_notifications.dart';
 import 'models/push_delivery_snapshot.dart';
+import 'models/push_identity_reconciled.dart';
 import 'models/push_prompt_advice.dart';
 import 'models/push_subscription.dart';
 import 'models/push_user_attributes.dart';
@@ -205,6 +206,12 @@ class NotificationManager {
   /// have at the moment it needed it. See [onPushDriverAttached].
   final StreamController<PushDriver> _pushDriverAttachedController =
       StreamController<PushDriver>.broadcast();
+
+  /// One outcome per reconcile pass that had a driver to act on. See
+  /// [onPushIdentityReconciled].
+  final StreamController<PushIdentityReconciled>
+      _pushIdentityReconciledController =
+      StreamController<PushIdentityReconciled>.broadcast();
 
   /// The end of a session, for anything holding notification state of its own.
   /// See [onSessionCleared].
@@ -865,6 +872,26 @@ class NotificationManager {
   Stream<PushDriver> get onPushDriverAttached =>
       _pushDriverAttachedController.stream;
 
+  /// One outcome per reconcile pass that had a driver to act on.
+  ///
+  /// A host reporting device state per person needs to know when a pass RAN,
+  /// not only when one converges: the first pass after a driver attaches can
+  /// throw, or read back a mismatch, and a converged-only signal would leave
+  /// that host silent until the next auth bump happens to trigger another
+  /// pass. Fires from inside [_runPushIdentityPass], after its try/catch,
+  /// carrying the pass's captured intent, [isPushIdentityConverged] and
+  /// [pushIdentityError] as they stood at the end of that pass.
+  ///
+  /// Nothing fires for the driver-less early return: a build with no push
+  /// configured has nothing to report convergence about.
+  ///
+  /// Guarded on the intent not having moved since the pass captured it: a
+  /// pass whose subject changed underneath it belongs to whoever holds the
+  /// intent now, not to this one, and that mover's own pass is what reports
+  /// for them.
+  Stream<PushIdentityReconciled> get onPushIdentityReconciled =>
+      _pushIdentityReconciledController.stream;
+
   /// The external id this device should be subscribed as, `null` for nobody.
   String? get pushIntent => _pushIntent;
 
@@ -1068,6 +1095,19 @@ class NotificationManager {
       NotificationLog.error(
         'Push identity operation failed for '
         '"${intent ?? 'sign-out'}": $e',
+      );
+    }
+
+    // Only when the intent has not moved since this pass captured it: a
+    // caller that changed it while this pass was in the air owns its own
+    // pass, and reports for it there. See [onPushIdentityReconciled].
+    if (_pushIntent == intent && !_pushIdentityReconciledController.isClosed) {
+      _pushIdentityReconciledController.add(
+        PushIdentityReconciled(
+          intent: intent,
+          converged: _pushIdentityConverged,
+          error: _pushIdentityError,
+        ),
       );
     }
   }
