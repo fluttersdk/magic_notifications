@@ -135,10 +135,39 @@ updating, check the site type before the config.
 
 ---
 
+## Telling your backend whether the device can be paged
+
+Everything above decides whether a push CAN arrive. Whether your backend knows
+it is a separate question: OneSignal accepts a push for a subscription that is
+denied, opted out or gone, and reports nothing back. If your backend escalates
+on push alone, `Notify.pushState` gives it the device's own answer. Configure
+both endpoints (see [Laravel Backend Setup](laravel-backend-setup.md#onesignal-push)
+for the server half), arm the watch once, and release before the token goes:
+
+```dart
+// In a provider's boot(), once auth is registered.
+Notify.pushState.watch();
+
+// On sign-out, BEFORE Auth.logout(): a release after it is a guaranteed 401.
+if (Notify.pushState.isConfigured) await Notify.pushState.release();
+await Auth.logout();
+```
+
+`watch()` reports after every identity reconcile for the signed-in person
+(`<external_id_prefix><Auth.id()>`, `user_` by default), whenever the driver's
+permission or subscription moves, and once as `unavailable` for a build with no
+push driver at all. A memo stops repeats and is forgotten on every
+`AuthLogout`. Skip the release and the server keeps vouching for a handset the
+person has left, under their name, until its own freshness horizon expires.
+
+---
+
 ## Before you submit
 
 - `dart run <app>:artisan notifications:doctor` is clean, including the iOS
   configuration rows.
+- If your backend reads device reachability, a sign-out from the release build
+  posts to `notifications.push_state.release_path` before the token is gone.
 - The `.env` inside the built artifact is the production one. Unzip the `.ipa`
   and read `Payload/*.app/Frameworks/App.framework/flutter_assets/.env`.
 - The signed binary carries the production entitlement:

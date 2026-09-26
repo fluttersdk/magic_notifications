@@ -17,6 +17,7 @@ export 'src/models/push_user_attributes.dart';
 // Core
 export 'src/notification_manager.dart';
 export 'src/notification_poller.dart';
+export 'src/support/push_state_reporter.dart';
 
 // Facade
 export 'src/facades/notify.dart';
