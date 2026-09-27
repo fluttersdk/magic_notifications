@@ -6,6 +6,7 @@ import '../models/database_notification.dart';
 import '../models/paginated_notifications.dart';
 import '../models/push_user_attributes.dart';
 import '../notification_manager.dart';
+import '../support/push_state_reporter.dart';
 import '../ui/notification_view_registry.dart';
 import '../ui/views/notification_preferences_view.dart';
 import '../ui/views/notifications_list_view.dart';
@@ -238,6 +239,21 @@ class Notify {
   static Future<void> logoutPush() async {
     await manager.logoutPush();
   }
+
+  /// Reports whether a push can reach this device to the app's backend, and
+  /// releases the device on sign-out.
+  ///
+  /// Off until `notifications.push_state.report_path` and `release_path` are
+  /// configured. Arm it once from a provider's `boot()`, and release before
+  /// the token is dropped:
+  ///
+  /// ```dart
+  /// Notify.pushState.watch();
+  ///
+  /// if (Notify.pushState.isConfigured) await Notify.pushState.release();
+  /// await Auth.logout();
+  /// ```
+  static PushStateReporter get pushState => manager.pushState;
 
   /// Registers how this app describes whoever signs in, once, for every later
   /// login and account switch.

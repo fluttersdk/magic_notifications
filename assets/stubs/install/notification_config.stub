@@ -107,6 +107,18 @@ Map<String, dynamic> get notificationConfig => {
       // API, from the system that already owns the fact.
       'share_user_attributes': false,
     },
+    // Optional. Where `Notify.pushState` tells your backend whether a push can
+    // reach this device, and where a sign-out releases it. Both are relative
+    // to the HTTP base url, and both are null (off) until your backend has
+    // the endpoints: there is no default path, so an app without them sends
+    // nothing. See doc/basics/laravel-backend-setup.md for the contract.
+    'push_state': {
+      'report_path': null, // e.g. '/devices/push-state'
+      'release_path': null, // e.g. '/devices/push-state/release'
+      // Optional. The prefix your declared external id carries, 'user_' when
+      // absent. Must match what you pass to Notify.initializePush.
+      'external_id_prefix': null,
+    },
     'database': {
       'enabled': true,
       'polling_interval': 30, // seconds

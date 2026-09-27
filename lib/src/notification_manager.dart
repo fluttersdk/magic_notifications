@@ -16,6 +16,7 @@ import 'models/push_subscription.dart';
 import 'models/push_user_attributes.dart';
 import 'notification_poller.dart';
 import 'support/notification_log.dart';
+import 'support/push_state_reporter.dart';
 
 /// Core notification manager.
 ///
@@ -218,6 +219,11 @@ class NotificationManager {
   final StreamController<void> _sessionClearedController =
       StreamController<void>.broadcast();
 
+  /// Reports this device's push reachability to the host's backend, and
+  /// releases it on sign-out. Off until the app configures its endpoints; see
+  /// [PushStateReporter].
+  late final PushStateReporter pushState = PushStateReporter(this);
+
   /// Notification poller for periodic fetching
   NotificationPoller? _poller;
 
@@ -366,7 +372,12 @@ class NotificationManager {
   /// test would otherwise describe the person in the next. What it wrote is
   /// forgotten rather than taken back, because this seam does not touch a
   /// device; a driver it just dropped is not one to issue removals through.
+  ///
+  /// [pushState] is reset with them: its watch lives on this manager's
+  /// streams, and a subscription surviving here would report inside the next
+  /// test.
   void forgetDrivers() {
+    pushState.reset();
     _channels.clear();
     _pushFactories.clear();
     _pushDriver = null;

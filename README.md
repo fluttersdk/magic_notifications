@@ -224,12 +224,37 @@ four presentations and the translation keys a host has to add.
 identity reconcile pass (login, logout, or a driver attaching later): see
 [Push Identity Reconcile Outcomes](doc/architecture/notification-manager.md#identity-reconciled).
 
+### Tell Your Backend Whether the Device Can Be Paged
+
+OneSignal accepts a push for a subscription that is denied, opted out or gone,
+and reports nothing back. `Notify.pushState` posts the device's own
+reachability to your backend whenever it changes, and withdraws it on
+sign-out. It stays off until both endpoints are configured (there is no
+default path):
+
+```dart
+// config: 'push_state': {
+//   'report_path': '/devices/push-state',
+//   'release_path': '/devices/push-state/release',
+// },
+
+// In a provider's boot(), once auth is registered.
+Notify.pushState.watch();
+```
+
+The release has to run before `Auth.logout()` drops the token (see below). The
+server half is in
+[Laravel Backend Setup](doc/basics/laravel-backend-setup.md#onesignal-push);
+[Shipping Push](doc/basics/shipping-push.md#telling-your-backend-whether-the-device-can-be-paged)
+covers when a report is sent.
+
 ### Clean Up on Logout
 
 ```dart
 Future<void> onLogout() async {
   Notify.stopRealtime();
   Notify.stopPolling();
+  if (Notify.pushState.isConfigured) await Notify.pushState.release();
   await Notify.logoutPush();
 }
 ```

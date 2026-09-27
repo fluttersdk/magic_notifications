@@ -490,6 +490,45 @@ public function routeNotificationForOneSignal(): array
 > [!TIP]
 > The `user_` prefix is required to avoid OneSignal's blocked external_id values. Both Flutter and Laravel must use the same format: `user_{id}`.
 
+### Device Reachability (Optional)
+
+OneSignal accepts a push for a subscription that cannot be woken, so only the
+device knows whether a page will arrive. `Notify.pushState` reports that to
+your backend and withdraws it on sign-out. It stays off until the client names
+both endpoints (there is no default path):
+
+```dart
+'push_state': {
+  'report_path': '/devices/push-state',
+  'release_path': '/devices/push-state/release',
+},
+```
+
+Both routes sit behind `auth:sanctum`. The user is always the session's; no
+body field names a person beyond the device's own alias.
+
+**`POST {report_path}`** carries `PushDeliverySnapshot.toMap()` unchanged:
+
+| Key | Rule |
+|---|---|
+| `external_id` | present, nullable string; must equal the caller's own alias (`user_{id}`) when set |
+| `subscription_id` | present, nullable string |
+| `reachability` | one of `on`, `off`, `blocked`, `unavailable` (the `PushReachability` names) |
+| `captured_at` | ISO-8601 UTC, the device's own clock |
+
+Store it per `(user, subscription_id)` with `updateOrCreate`, stamp your own
+`reported_at`, and answer `204`. A null key is a fact ("this device holds no
+subscription id"), so validate with `present`, not `sometimes`.
+
+**`POST {release_path}`** carries `{"subscription_id": "..."}` only. Delete that
+one row for the session's user and answer `204`. The client calls it before
+`Auth.logout()` drops the token, and only for the device being signed out of:
+the person's other devices keep paging them.
+
+The client reports on change (sign-in, permission, subscription swap), never on
+a timer, and re-posts only after a refusal. A refused release is logged and the
+sign-out proceeds, so size your freshness horizon for a stale row.
+
 ---
 
 ## <a name="broadcast"></a>Socket Delivery (Broadcast)
