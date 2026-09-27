@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-09-27
+
 ### Added
 - **`PushStateReporter`, reached as `Notify.pushState`: the device tells its backend whether a push can reach it, and withdraws that on sign-out.** Moved here from the one app that had written it, so every adopter gets the same answer to "who keeps receiving pages after sign-out". `watch()` reports `PushDeliverySnapshot.toMap()` verbatim after every `onPushIdentityReconciled` pass towards the signed-in person, whenever the attached driver's permission or subscription stream moves (attached late through `onPushDriverAttached`), and once as `unavailable` off `Auth.stateNotifier` for a build with no driver at all, since no pass is emitted there. A memo of the last ACCEPTED state stops repeats, a refused post is retried on the next event, and the memo is forgotten on every `AuthLogout`. `release()` posts `{subscription_id}` alone for this device (the live read, falling back to the last accepted report's id), must run before `Auth.logout()` drops the token, joins a release already in flight and does not post a subscription it already released, so calling it twice is safe. `isConfigured` reads true only when both endpoints are named, and lets a starter kit's sign-out path skip the release; a report path without a release path keeps the whole reporter off and logs why, since a device no sign-out can withdraw would keep vouching for whoever left it last. `forget()` clears the memo.
 
@@ -16,6 +18,7 @@
   Ships no translation catalogue of its own, matching every other `notifications.*` string in this package: the full `notifications.push_prompt.*` key list with English reference copy is now in `doc/basics/preferences.md`. The two colour roles it needs beyond the 17-key semantic alias contract (`up`/`on` and `degraded`/`blocked`) map onto `success` and `warning`, the two roles the contract ships with no `-container` tint of their own; the tile and its glyph go solid (`bg-success` / `bg-warning` with a literal `text-white`) rather than inventing one, following the pairing `toast.recipe.dart` already established for those roles. (`lib/src/ui/components/push_prompt/`, `lib/magic_notifications.dart`, `lib/src/notification_manager.dart`, `test/ui/components/push_prompt_test.dart`, `doc/basics/preferences.md`, `doc/architecture/notification-manager.md`)
 
 ### Changed
+- **The `fluttersdk_wind` floor moves `^1.6.3` to `^1.7.0`**, and `fluttersdk_artisan` stays at `^0.0.16`, still the newest. The old range already admitted 1.7.0, so a fresh `pub get` resolves nothing differently; what changes is that the floor names the release this package is verified against. (`pubspec.yaml`)
 - **`magic` floor moves `^0.0.16` to `^0.0.22`.** `PushStateReporter` calls `Event.listenAny`, which magic 0.0.22 introduces, so an adopter on an older magic now gets a version-solve error instead of a compile error inside this package. (`pubspec.yaml`)
 
 ## [0.3.4] - 2026-09-22

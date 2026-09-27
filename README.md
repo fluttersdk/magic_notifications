@@ -69,7 +69,7 @@ Managing notifications in Flutter means juggling multiple channels — database 
 
 ```yaml
 dependencies:
-  magic_notifications: ^0.3.4
+  magic_notifications: ^0.3.5
 ```
 
 ### 2. Install configuration
