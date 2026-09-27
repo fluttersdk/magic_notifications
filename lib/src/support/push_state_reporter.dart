@@ -109,11 +109,15 @@ class PushStateReporter {
   /// Stops the `AuthLogout` listener [watch] installs.
   void Function()? _stopForgettingOnLogout;
 
-  /// Whether this app names a report endpoint at all.
+  /// Whether this app names both endpoints.
+  ///
+  /// Both or neither: a device reported with no release path configured could
+  /// never be withdrawn at sign-out, and would keep vouching for whoever
+  /// signed out of it last. [watch] logs an app that names only one.
   ///
   /// A starter kit asks this before calling [release] from its sign-out path,
   /// so an app without the backend half pays nothing on the way out.
-  bool get isConfigured => _reportPath != null;
+  bool get isConfigured => _reportPath != null && _releasePath != null;
 
   /// Starts keeping the backend's picture of this device current.
   ///
@@ -142,7 +146,17 @@ class PushStateReporter {
   /// registered, from a provider's `boot()`.
   void watch() {
     _stopWatching();
-    if (!isConfigured) return;
+    if (!isConfigured) {
+      if (_reportPath != null || _releasePath != null) {
+        NotificationLog.error(
+          'Push state reporting stays off: set both '
+          'notifications.push_state.report_path and '
+          'notifications.push_state.release_path, or neither',
+        );
+      }
+
+      return;
+    }
 
     _reconciledPasses = _manager.onPushIdentityReconciled.listen(
       _reportIfReconciledForCurrentUser,

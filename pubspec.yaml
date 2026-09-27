@@ -26,8 +26,9 @@ dependencies:
   # matters because `Echo.connection` does not exist below 0.0.6, and without
   # it a solver may hand this package a magic that lacks the accessor the
   # realtime notification path needs to avoid a second WebSocket on an
-  # already-open connection.
-  magic: ^0.0.16
+  # already-open connection. It sits at 0.0.22 because `PushStateReporter`
+  # calls `Event.listenAny`, which does not exist below it.
+  magic: ^0.0.22
   # 0.0.15 is the requirement: `XcodeProjectEditor.setEntitlementsPaths`,
   # which the iOS installer step calls to point Release at its own
   # entitlements file, does not exist below it. The floor names 0.0.16, the

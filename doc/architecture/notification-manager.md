@@ -229,7 +229,7 @@ failure:
 2. **Connects only if nothing is connected.** `Echo.connect()` is not idempotent
    in magic's Reverb driver: it assigns a fresh channel without closing the
    previous one, so a redundant call opens a second WebSocket and leaks the first.
-   This is why `magic ^0.0.6` is the floor; `Echo.connection` is the accessor that
+   This is why the `magic` floor cannot sit below 0.0.6; `Echo.connection` is the accessor that
    makes the check possible.
 3. **Listens for `notification.created` exactly once.** A second `listen()` for
    one event name REPLACES the earlier handler rather than adding to it, so

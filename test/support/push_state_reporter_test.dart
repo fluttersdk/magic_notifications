@@ -236,18 +236,34 @@ void main() {
       );
     });
 
-    test('an absent release path releases nothing', () async {
+    test('an absent release path reads as not configured', () {
       Config.set('notifications.push_state.release_path', null);
+
+      expect(Notify.pushState.isConfigured, isFalse);
+    });
+
+    test('a report path without a release path reports nothing, and says so',
+        () async {
+      // Reporting a device that no sign-out can withdraw would leave it
+      // vouching for whoever signed out last, which is worse than silence.
+      Config.set('notifications.push_state.release_path', null);
+      final FakeLogManager log = Log.fake();
+      addTearDown(Log.unfake);
       final FakeNetworkDriver network = Http.fake();
       useDriver();
       await declareIdentity();
 
       await Notify.pushState.release();
 
-      expect(reports(network), hasLength(1));
       expect(
-        network.recorded.where((entry) => entry.$1.url.endsWith('release')),
+        network.recorded.where((entry) => entry.$1.url.contains('push-state')),
         isEmpty,
+      );
+      expect(
+        log.entries.where(
+          (FakeLogEntry entry) => entry.message.contains('release_path'),
+        ),
+        hasLength(1),
       );
     });
 
