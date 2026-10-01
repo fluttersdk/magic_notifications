@@ -589,12 +589,13 @@ class _PushPromptHostState extends State<PushPromptHost> {
     await _apply(++_generation, at);
   }
 
-  /// Raises the platform request, then re-reads what the platform now says.
+  /// Takes the row's live action, then re-reads what the platform now says.
   ///
-  /// One handler for both live actions, because both are the same call: on a
-  /// device that has never been asked it raises the dialog, and on a denied
-  /// one the driver's `fallbackToSettings` turns it into the app's settings
-  /// page.
+  /// One handler for both live actions, and they are two different calls: the
+  /// enable control raises the permission request, and the open-settings
+  /// control opens the app's settings page directly, rather than through the
+  /// request, whose denied-device fallback puts the SDK's untranslated dialog
+  /// in front of the page.
   ///
   /// The request is guarded the same way the vault reads are: a throw is
   /// logged rather than left to escape as an unhandled async error, and
@@ -611,7 +612,11 @@ class _PushPromptHostState extends State<PushPromptHost> {
     });
 
     try {
-      await Notify.requestPushPermission();
+      if (_advice?.action == PushPromptAction.openSettings) {
+        await Notify.openPushSettings();
+      } else {
+        await Notify.requestPushPermission();
+      }
     } catch (error) {
       NotificationLog.warning(
         '[PushPromptHost] push permission request failed: $error',

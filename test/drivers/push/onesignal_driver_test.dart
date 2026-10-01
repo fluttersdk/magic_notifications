@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magic/magic.dart' show Config;
 import 'package:magic_notifications/magic_notifications.dart';
@@ -6,6 +7,9 @@ import '../../test_helper.dart';
 
 void main() {
   setUpAll(() async {
+    // The test binding first, so `initMagicForTests` finds one already in
+    // place and a platform channel can be answered by a mock.
+    TestWidgetsFlutterBinding.ensureInitialized();
     await initMagicForTests();
   });
 
@@ -128,6 +132,29 @@ void main() {
         // Reading a configuration mistake as OFF would quietly remove the only
         // route a denied operator has back to notifications.
         expect(OneSignalDriver().canOpenPlatformSettings, isTrue);
+      });
+
+      test('opens the app notification settings directly', () async {
+        final calls = <MethodCall>[];
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        const channel = MethodChannel('com.spencerccf.app_settings/methods');
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
+          return null;
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+        await OneSignalDriver().openPlatformSettings();
+
+        // `notification` is the app's own notification page (Android 8+,
+        // iOS 16+), not the SDK's fallback dialog in front of it.
+        expect(calls, hasLength(1));
+        expect(calls.single.method, 'openSettings');
+        expect(calls.single.arguments, {
+          'asAnotherTask': false,
+          'type': 'notification',
+        });
       });
     });
 

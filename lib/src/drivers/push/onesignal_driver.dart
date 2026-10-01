@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:app_settings/app_settings.dart';
 import 'package:magic/magic.dart' show Config;
 import 'package:onesignal_flutter/onesignal_flutter.dart';
 
@@ -244,6 +245,17 @@ class OneSignalDriver extends PushDriver {
     return await OneSignal.Notifications.requestPermission(
       canOpenPlatformSettings,
     );
+  }
+
+  /// Opens this app's own notification settings page.
+  ///
+  /// `app_settings` rather than the SDK, because the SDK only reaches that
+  /// page through its `fallbackToSettings` dialog, which is English whatever
+  /// the app's locale and repeats what the app's own row already said. Needs
+  /// no initialized SDK: the page belongs to the OS.
+  @override
+  Future<void> openPlatformSettings() async {
+    await AppSettings.openAppSettings(type: AppSettingsType.notification);
   }
 
   @override

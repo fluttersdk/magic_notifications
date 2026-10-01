@@ -74,7 +74,7 @@ Controls the push notification channel and its driver.
 | `notify_button_enabled` | `bool` | `false` | Whether to show the floating OneSignal notification bell widget on web. |
 | `auto_request_on_login` | `bool` | `false` | Whether the package may raise the OS permission prompt by itself, once, after an identity is declared through `Notify.initializePush(userId)`. Ships off, and an absent key is off: an app that upgrades without touching its config keeps asking on its own terms. See [Asking for permission](#permission) below for when it actually fires and why web needs care. |
 | `reprompt_after_hours` | `int` | `0` | How long before the app's OWN reminder may be shown again to somebody who turned it down. `0` (and an absent key) means never. Read by `NotificationManager.pushPromptAdvice()`; this package never stores the decline timestamp. |
-| `fallback_to_settings` | `bool` | `true` | Mobile only. Whether `requestPermission()` on an already-denied device opens the app's settings page instead of resolving silently. On by default, which is what the OneSignal driver always did; turn it off for an app that would rather ask once and drop it. Inert on web, which has no such API. |
+| `fallback_to_settings` | `bool` | `true` | Mobile only. Whether a denied device keeps a route back: the reminder's "Open settings" button (`Notify.openPushSettings()`) opens the app's own notification settings page directly, and `requestPermission()` on a denied device falls back to the SDK's settings prompt instead of resolving silently. On by default; turn it off for an app that would rather ask once and drop it. Inert on web, which has no such API. |
 | `share_user_attributes` | `bool` | `false` | Whether the attributes this app describes its users with (an email address, and whatever it puts in a tag) are sent to the push platform at all. Ships off, and an absent key is off: this is personal data leaving for a third party, so an adopter opts in deliberately. See [Describing the user](#attributes) below. |
 | `self_test_enabled` | `bool` | `false` | Gates `PushChannel.send()`, the client-triggered surface that asks the backend to push a test notification to the caller's own devices. Ships off: it is a new authenticated capability whose only effect is making the platform emit a real push, and that is worth switching on deliberately once an app actually calls for it, not something worth having live from day one. Turning it on takes both halves: the backend carries the matching `magic-starter.onesignal.self_test_enabled` switch, also off by default, and answers `501` while it is off, so setting only this key changes which side refuses. |
 
@@ -100,8 +100,8 @@ shot, on a device that has never been asked.
 
 **The app's own reminder is not a one-shot.** It is your UI, and it may appear
 on whatever cadence you configure, including on a device whose OS permission
-is denied: on mobile its button opens the app's settings page (see
-`fallback_to_settings`), which is a real route back.
+is denied: on mobile its button opens the app's own notification settings
+page directly (see `fallback_to_settings`), which is a real route back.
 
 ### The automatic request
 

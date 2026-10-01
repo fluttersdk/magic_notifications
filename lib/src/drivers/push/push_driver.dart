@@ -1,3 +1,4 @@
+import '../../exceptions/notification_exception.dart';
 import '../../models/push_subscription.dart';
 import '../../support/notification_log.dart';
 
@@ -155,6 +156,19 @@ abstract class PushDriver {
   /// `false` by default, because a capability a driver has not declared cannot
   /// be assumed, and the cost of being wrong is a dead control.
   bool get canOpenPlatformSettings => false;
+
+  /// Opens the platform page where this app's notification permission lives.
+  ///
+  /// The route back for a device whose OS prompt is spent, taken directly
+  /// rather than through [requestPermission], which on a denied device hands
+  /// the request to the SDK's own fallback and its untranslated dialog. Only
+  /// called where [canOpenPlatformSettings] is true; any other driver throws
+  /// [UnsupportedPlatformException], since a silent no-op is a dead control.
+  Future<void> openPlatformSettings() async {
+    throw UnsupportedPlatformException(
+      'The $name push driver cannot open the platform settings.',
+    );
+  }
 
   /// Opts the user in to push notifications.
   Future<void> optIn();

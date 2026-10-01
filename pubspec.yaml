@@ -52,6 +52,11 @@ dependencies:
   # 1.8.0, the newest release when the 2026-09-29 batch re-pinned every
   # sibling.
   fluttersdk_wind: ^1.8.0
+  # Opens the app's own notification settings page for
+  # `PushDriver.openPlatformSettings`, which OneSignal reaches only through its
+  # untranslated fallback dialog. 9.0.0 is the release that path was verified
+  # against (Android 8+ and iOS 16+ land on the notification page).
+  app_settings: ^9.0.0
 
 dev_dependencies:
   flutter_test:

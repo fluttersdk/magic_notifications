@@ -86,6 +86,9 @@ class _RecordingPushDriver extends PushDriver {
   /// How many times [requestPermission] was called.
   int permissionRequests = 0;
 
+  /// How many times [openPlatformSettings] was called.
+  int settingsOpens = 0;
+
   final StreamController<PushNotificationEvent> _received =
       StreamController<PushNotificationEvent>.broadcast();
   final StreamController<PushNotificationEvent> _clicked =
@@ -126,6 +129,11 @@ class _RecordingPushDriver extends PushDriver {
     permissionRequests++;
 
     return true;
+  }
+
+  @override
+  Future<void> openPlatformSettings() async {
+    settingsOpens++;
   }
 
   @override
@@ -445,10 +453,11 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        // The same call the enable control makes: the driver hands it
-        // `canOpenPlatformSettings`, and the SDK turns it into the settings
-        // page.
-        expect(driver.permissionRequests, 1);
+        // Straight to the platform setting. Routed through the permission
+        // request instead, the SDK put its own untranslated "Notifications Not
+        // Available" dialog between this tap and the settings page.
+        expect(driver.settingsOpens, 1);
+        expect(driver.permissionRequests, 0);
       },
     );
 

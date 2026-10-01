@@ -165,6 +165,16 @@ void main() {
       // saying where the switch lives.
       expect(TestPushDriver().canOpenPlatformSettings, isFalse);
     });
+
+    test('a driver without the capability refuses to open settings', () async {
+      // Loud rather than a silent no-op: a host only calls this when the
+      // driver declared `canOpenPlatformSettings`, so reaching it here is a
+      // driver that claimed a route it did not build.
+      await expectLater(
+        TestPushDriver().openPlatformSettings(),
+        throwsA(isA<UnsupportedPlatformException>()),
+      );
+    });
   });
 }
 
