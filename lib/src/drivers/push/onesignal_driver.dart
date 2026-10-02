@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:app_settings/app_settings.dart';
 import 'package:magic/magic.dart' show Config;
 import 'package:onesignal_flutter/onesignal_flutter.dart';
 
@@ -217,9 +218,9 @@ class OneSignalDriver extends PushDriver {
   /// bouncing somebody into Settings they did not ask for.
   ///
   /// It doubles as this driver's [canOpenPlatformSettings], because the two
-  /// are the same fact: with the fallback off, a request on a denied device
-  /// goes nowhere and a reminder offering to "turn it on" would be a control
-  /// that does nothing.
+  /// are the same fact: with the fallback off, a denied device is offered no
+  /// route back at all, neither the reminder's open-settings control nor the
+  /// SDK's fallback on a request.
   ///
   /// A value that is not a boolean reads as the default rather than as off,
   /// since a configuration mistake should not quietly remove the only route a
@@ -244,6 +245,17 @@ class OneSignalDriver extends PushDriver {
     return await OneSignal.Notifications.requestPermission(
       canOpenPlatformSettings,
     );
+  }
+
+  /// Opens this app's own notification settings page.
+  ///
+  /// `app_settings` rather than the SDK, because the SDK only reaches that
+  /// page through its `fallbackToSettings` dialog, which is English whatever
+  /// the app's locale and repeats what the app's own row already said. Needs
+  /// no initialized SDK: the page belongs to the OS.
+  @override
+  Future<void> openPlatformSettings() async {
+    await AppSettings.openAppSettings(type: AppSettingsType.notification);
   }
 
   @override

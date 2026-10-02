@@ -52,6 +52,14 @@ dependencies:
   # 1.8.0, the newest release when the 2026-09-29 batch re-pinned every
   # sibling.
   fluttersdk_wind: ^1.8.0
+  # Opens the app's own notification settings page for
+  # `PushDriver.openPlatformSettings`, which OneSignal reaches only through its
+  # untranslated fallback dialog. Held on 7.x on purpose: 8.0.0 dropped
+  # CocoaPods on iOS and macOS, and an adopter who still builds with a Podfile
+  # would fail to build on a patch release of this package. 7.0.0 ships both a
+  # podspec and a Package.swift, the same channel contract, and the same pages
+  # (the notification page on Android 8+ and iOS 15.4+).
+  app_settings: ^7.0.0
 
 dev_dependencies:
   flutter_test:

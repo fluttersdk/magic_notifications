@@ -1552,6 +1552,15 @@ class NotificationManager {
     return await pushDriver.requestPermission();
   }
 
+  /// Open the platform page where this app's push permission is switched on.
+  ///
+  /// The action behind [PushPromptAction.openSettings]; see
+  /// [PushDriver.openPlatformSettings] for why it does not go through
+  /// [requestPushPermission].
+  Future<void> openPushSettings() async {
+    await pushDriver.openPlatformSettings();
+  }
+
   // ========================================
   // Permission Policy
   // ========================================

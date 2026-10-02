@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magic/magic.dart';
 import 'package:magic_notifications/src/drivers/push/push_driver.dart';
+import 'package:magic_notifications/src/exceptions/notification_exception.dart';
 import 'package:magic_notifications/src/facades/notify.dart';
 import 'package:magic_notifications/src/models/push_prompt_advice.dart';
 import 'package:magic_notifications/src/models/push_subscription.dart';
@@ -86,6 +87,9 @@ class _RecordingPushDriver extends PushDriver {
   /// How many times [requestPermission] was called.
   int permissionRequests = 0;
 
+  /// How many times [openPlatformSettings] was called.
+  int settingsOpens = 0;
+
   final StreamController<PushNotificationEvent> _received =
       StreamController<PushNotificationEvent>.broadcast();
   final StreamController<PushNotificationEvent> _clicked =
@@ -126,6 +130,11 @@ class _RecordingPushDriver extends PushDriver {
     permissionRequests++;
 
     return true;
+  }
+
+  @override
+  Future<void> openPlatformSettings() async {
+    settingsOpens++;
   }
 
   @override
@@ -183,6 +192,32 @@ class _ThrowingRequestPushDriver extends _RecordingPushDriver {
     permissionRequests++;
 
     throw StateError('push permission request failed');
+  }
+}
+
+/// A blocked [_RecordingPushDriver] that declares the settings route without
+/// building it, so [openPlatformSettings] throws as the base contract does.
+class _UnbuiltSettingsPushDriver extends _RecordingPushDriver {
+  _UnbuiltSettingsPushDriver()
+      : super(
+          permission: PushPermissionState.denied,
+          opensPlatformSettings: true,
+        );
+
+  /// How many times [permissionState] was read; proves the row re-read the
+  /// platform after the throw instead of sticking on the spinner.
+  int permissionStateReads = 0;
+
+  @override
+  Future<PushPermissionState> permissionState() async {
+    permissionStateReads++;
+
+    return super.permissionState();
+  }
+
+  @override
+  Future<void> openPlatformSettings() async {
+    throw UnsupportedPlatformException('settings route not built');
   }
 }
 
@@ -445,10 +480,11 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        // The same call the enable control makes: the driver hands it
-        // `canOpenPlatformSettings`, and the SDK turns it into the settings
-        // page.
-        expect(driver.permissionRequests, 1);
+        // Straight to the platform setting. Routed through the permission
+        // request instead, the SDK put its own untranslated "Notifications Not
+        // Available" dialog between this tap and the settings page.
+        expect(driver.settingsOpens, 1);
+        expect(driver.permissionRequests, 0);
       },
     );
 
@@ -535,6 +571,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(driver.permissionRequests, 1);
+      expect(driver.settingsOpens, 0);
     });
   });
 
@@ -851,6 +888,33 @@ void main() {
       // The row must have re-read the platform after the throw, proving it
       // did not get stuck on the spinner.
       expect(driver.permissionStateReads, greaterThan(readsBeforeTap));
+    });
+  });
+
+  group('a failing openPushSettings on a blocked device', () {
+    testWidgets('is handled and the row still refreshes', (tester) async {
+      final _UnbuiltSettingsPushDriver driver = _UnbuiltSettingsPushDriver();
+      usePushDriver(driver);
+
+      await tester.pumpWidget(
+        wrap(const PushPromptHost(declinedVaultKey: _declinedVaultKey)),
+      );
+      await tester.pumpAndSettle();
+
+      final int readsBeforeTap = driver.permissionStateReads;
+
+      await tester.tap(
+        find.text(trans('notifications.push_prompt.open_settings')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(driver.permissionRequests, 0);
+      expect(driver.permissionStateReads, greaterThan(readsBeforeTap));
+      expect(
+        find.text(trans('notifications.push_prompt.open_settings')),
+        findsOneWidget,
+      );
     });
   });
 

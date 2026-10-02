@@ -223,6 +223,15 @@ class Notify {
     return await manager.requestPushPermission();
   }
 
+  /// Open this app's notification settings page on a device that denied push.
+  ///
+  /// The action behind `PushPromptAction.openSettings`. A driver without the
+  /// capability throws `UnsupportedPlatformException`; with no driver at all
+  /// the manager raises the same error every push call does.
+  static Future<void> openPushSettings() async {
+    await manager.openPushSettings();
+  }
+
   /// Logout from push notifications.
   ///
   /// Removes the external user ID from the push subscription.
