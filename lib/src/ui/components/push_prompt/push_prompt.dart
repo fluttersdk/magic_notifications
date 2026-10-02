@@ -26,8 +26,8 @@ import 'push_prompt.recipe.dart';
 /// ### Why it takes an [action] as well as a [reachability]
 ///
 /// Reachability alone cannot name a presentation. A `blocked` device on mobile
-/// still has a route back (the SDK's `fallbackToSettings` lands a request on
-/// the app's settings page), and a `blocked` browser has none, because no web
+/// still has a route back (`Notify.openPushSettings()` opens the app's own
+/// notification settings page), and a `blocked` browser has none, because no web
 /// API opens the site settings panel from a page. That split is a property of
 /// the PLATFORM, not of the reading, and the package answers it in
 /// [PushPromptAction] rather than leaving each consumer to guess.
@@ -55,7 +55,11 @@ import 'push_prompt.recipe.dart';
 /// PushPrompt(
 ///   reachability: advice.reachability,
 ///   action: advice.action,
-///   onEnable: () => Notify.requestPushPermission(),
+///   // Two different calls: the request raises the dialog, the other opens
+///   // the settings page directly.
+///   onEnable: advice.action == PushPromptAction.openSettings
+///       ? () => Notify.openPushSettings()
+///       : () => Notify.requestPushPermission(),
 ///   onDecline: () => myVault.recordDecline(),
 /// )
 /// ```
@@ -193,8 +197,8 @@ class PushPrompt extends StatelessWidget {
       PushPromptAction.none => [
           _buildLine(trans('notifications.push_prompt.unavailable_body')),
         ],
-      // The OS prompt is spent, but this platform routes the same request to
-      // the app's settings page, so the row is a control again.
+      // The OS prompt is spent, but this platform can open the app's own
+      // notification settings page, so the row is a control again.
       PushPromptAction.openSettings => [
           _buildTitle(trans('notifications.push_prompt.blocked_title')),
           _buildLine(trans('notifications.push_prompt.blocked_body_settings')),
@@ -242,11 +246,11 @@ class PushPrompt extends StatelessWidget {
 
   /// The primary action, labelled for what the tap will actually do.
   ///
-  /// One control and one callback for both arms, because the platform call is
-  /// the same one: `requestPermission()` raises the dialog on a device that has
-  /// never been asked, and opens the app's settings page on one that has. Only
-  /// the promise made to the user changes, and promising "turn on push" where
-  /// the tap opens Settings is the kind of small lie that costs the next tap.
+  /// One control and one callback for both arms; the host decides which call
+  /// the callback makes (the permission request, or opening the settings
+  /// page). Only the promise made to the user changes here, and promising
+  /// "turn on push" where the tap opens Settings is the kind of small lie that
+  /// costs the next tap.
   Widget _buildEnable() {
     final String label = action == PushPromptAction.openSettings
         ? trans('notifications.push_prompt.open_settings')
@@ -368,9 +372,9 @@ class _PushPromptHostState extends State<PushPromptHost> {
   /// The same pair, and for the same reason, as [PushOffNotice]: either stream
   /// can end the state this prompt is about. It matters MORE here, because
   /// this is the surface a user is sent to in order to fix push, and the fix
-  /// almost always lands out of band. `requestPermission` on an
-  /// already-denied device opens the platform settings page rather than a
-  /// dialog, so the grant arrives while this widget is backgrounded and
+  /// almost always lands out of band. On an already-denied device the control
+  /// opens the platform settings page rather than a dialog, so the grant
+  /// arrives while this widget is backgrounded and
   /// unchanged; and a granted request whose subscription has not landed yet
   /// reads as `off` until the identity stream carries it (see [_asked]).
   /// Without these two, the one screen that exists to turn push on is the
@@ -618,9 +622,18 @@ class _PushPromptHostState extends State<PushPromptHost> {
         await Notify.requestPushPermission();
       }
     } catch (error) {
-      NotificationLog.warning(
-        '[PushPromptHost] push permission request failed: $error',
-      );
+      // Opening settings only throws for a driver that declared the
+      // capability without implementing it, a programmer error, so it is an
+      // error rather than a warning, and the line names which call failed.
+      if (_advice?.action == PushPromptAction.openSettings) {
+        NotificationLog.error(
+          '[PushPromptHost] opening the push settings page failed: $error',
+        );
+      } else {
+        NotificationLog.warning(
+          '[PushPromptHost] push permission request failed: $error',
+        );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }

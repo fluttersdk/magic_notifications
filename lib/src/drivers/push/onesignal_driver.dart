@@ -218,9 +218,9 @@ class OneSignalDriver extends PushDriver {
   /// bouncing somebody into Settings they did not ask for.
   ///
   /// It doubles as this driver's [canOpenPlatformSettings], because the two
-  /// are the same fact: with the fallback off, a request on a denied device
-  /// goes nowhere and a reminder offering to "turn it on" would be a control
-  /// that does nothing.
+  /// are the same fact: with the fallback off, a denied device is offered no
+  /// route back at all, neither the reminder's open-settings control nor the
+  /// SDK's fallback on a request.
   ///
   /// A value that is not a boolean reads as the default rather than as off,
   /// since a configuration mistake should not quietly remove the only route a

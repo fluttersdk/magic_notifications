@@ -136,7 +136,8 @@ if (!advice.show) return const SizedBox.shrink();
 return switch (advice.action) {
   // A real dialog will appear: Notify.requestPushPermission().
   PushPromptAction.request => MyEnableRow(),
-  // The prompt is spent, but this platform routes the same call to Settings.
+  // The prompt is spent, but this platform can open the app's own
+  // notification settings page: Notify.openPushSettings().
   PushPromptAction.openSettings => MyOpenSettingsRow(),
   // Nowhere to send the tap. Say where the switch lives instead.
   PushPromptAction.instructions => MyBlockedInstructionsRow(),

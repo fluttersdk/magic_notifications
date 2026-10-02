@@ -144,14 +144,15 @@ abstract class PushDriver {
     return await permissionState() == PushPermissionState.notDetermined;
   }
 
-  /// Whether a permission request on a DENIED device still routes the user to
-  /// the platform setting.
+  /// Whether a DENIED device still has a route back to the platform setting:
+  /// [openPlatformSettings] is implemented, and [requestPermission] on such a
+  /// device falls back to the settings page too.
   ///
   /// This is the one thing that keeps a reminder honest on a device the OS
-  /// prompt is spent on. The mobile SDK can open the app's own settings page
-  /// (`fallbackToSettings`), so a reminder there has somewhere to send the
-  /// tap; the browser has no such API at all, and a control that opened
-  /// nothing would be worse than a sentence saying where the switch lives.
+  /// prompt is spent on. A mobile app can open its own settings page, so a
+  /// reminder there has somewhere to send the tap; the browser has no such API
+  /// at all, and a control that opened nothing would be worse than a sentence
+  /// saying where the switch lives.
   ///
   /// `false` by default, because a capability a driver has not declared cannot
   /// be assumed, and the cost of being wrong is a dead control.

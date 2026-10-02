@@ -2,8 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+- **"Open settings" on a denied device opens the app's notification settings page directly.** The reminder's button went through `requestPermission()`, whose denied-device `fallbackToSettings` made the OneSignal SDK show its own "Notifications Not Available" dialog first: English whatever the app's locale, unthemed, and a second step repeating what the row had just said. `PushPromptHost` now calls `Notify.openPushSettings()` for `PushPromptAction.openSettings` and keeps `requestPushPermission()` for the enable button. The notification page opens on Android 8+ and iOS 15.4+, the app's settings page on older versions. A failure to open it is logged at error level and names the call. (`lib/src/ui/components/push_prompt/push_prompt.dart`)
+
+### Added
+- **`PushDriver.openPlatformSettings()`, `NotificationManager.openPushSettings()` and `Notify.openPushSettings()`**, the route a custom row should take for `PushPromptAction.openSettings`. `OneSignalDriver` implements it with `app_settings`, a new dependency held on `^7.0.0` because 8.0.0 dropped CocoaPods on iOS and macOS. The web driver does not declare the capability. (`lib/src/drivers/push/push_driver.dart`, `lib/src/drivers/push/onesignal_driver.dart`, `lib/src/notification_manager.dart`, `lib/src/facades/notify.dart`, `pubspec.yaml`)
+
 ### Changed
-- **"Open settings" on a denied device opens the app's notification settings page directly.** The reminder's button went through `requestPermission()`, whose denied-device `fallbackToSettings` made the OneSignal SDK show its own "Notifications Not Available" dialog first: English whatever the app's locale, unthemed, and a second step repeating what the row had just said. `PushDriver.openPlatformSettings()` is the route now, exposed as `Notify.openPushSettings()` and `NotificationManager.openPushSettings()`, and `PushPromptHost` takes it for `PushPromptAction.openSettings`; the enable button still raises the permission request. `OneSignalDriver` opens the page through `app_settings` (a new dependency), Android 8+ and iOS 16+ land on the notification page, older versions on the app's settings page. The base driver throws `UnsupportedPlatformException`, so a driver that declares `canOpenPlatformSettings` must override it; the web driver does not declare it. (`lib/src/drivers/push/push_driver.dart`, `lib/src/drivers/push/onesignal_driver.dart`, `lib/src/notification_manager.dart`, `lib/src/facades/notify.dart`, `lib/src/ui/components/push_prompt/push_prompt.dart`, `pubspec.yaml`)
+- **A custom driver that declares `canOpenPlatformSettings` has to implement `openPlatformSettings()`.** The base implementation throws `UnsupportedPlatformException`, because a declared route that opens nothing is a dead control; `canOpenPlatformSettings` now means that method works, as well as the permission request's settings fallback. `requestPermission()` itself is unchanged, so a direct caller on a denied device still gets the SDK's fallback. (`lib/src/drivers/push/push_driver.dart`)
 
 ## [0.3.6] - 2026-09-29
 

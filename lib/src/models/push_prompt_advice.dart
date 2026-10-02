@@ -16,10 +16,11 @@ enum PushPromptAction {
   /// of the user.
   request,
 
-  /// The platform request is spent, but a request raised here still routes the
-  /// user to the app's own settings page, where the permission can be turned
-  /// back on. This is the mobile `fallbackToSettings` capability, which a
-  /// driver declares through `PushDriver.canOpenPlatformSettings`.
+  /// The platform request is spent, but this platform can open the app's own
+  /// notification settings page, where the permission can be turned back on.
+  /// The action is `Notify.openPushSettings()`, NOT a permission request, whose
+  /// denied-device fallback puts the SDK's untranslated dialog first. A driver
+  /// declares the capability through `PushDriver.canOpenPlatformSettings`.
   openSettings,
 
   /// The platform request is spent and this platform offers no route back, so
