@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-10-02
+
 ### Fixed
 - **"Open settings" on a denied device opens the app's notification settings page directly.** The reminder's button went through `requestPermission()`, whose denied-device `fallbackToSettings` made the OneSignal SDK show its own "Notifications Not Available" dialog first: English whatever the app's locale, unthemed, and a second step repeating what the row had just said. `PushPromptHost` now calls `Notify.openPushSettings()` for `PushPromptAction.openSettings` and keeps `requestPushPermission()` for the enable button. The notification page opens on Android 8+ and iOS 15.4+, the app's settings page on older versions. A failure to open it is logged at error level and names the call. (`lib/src/ui/components/push_prompt/push_prompt.dart`)
 
