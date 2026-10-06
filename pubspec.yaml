@@ -59,7 +59,7 @@ dependencies:
   # would fail to build on a patch release of this package. 7.0.0 ships both a
   # podspec and a Package.swift, the same channel contract, and the same pages
   # (the notification page on Android 8+ and iOS 15.4+).
-  app_settings: ^7.0.0
+  app_settings: ">=7.0.0 <10.0.0"
 
 dev_dependencies:
   flutter_test:
