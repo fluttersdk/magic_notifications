@@ -1,6 +1,6 @@
 name: magic_notifications
 description: Multi-channel notification system for Magic Framework. Supports database (in-app), push (OneSignal), and mail channels.
-version: 0.3.7
+version: 0.3.8
 homepage: https://magic.fluttersdk.com/notifications
 documentation: https://magic.fluttersdk.com/packages/notifications/getting-started/installation
 repository: https://github.com/fluttersdk/magic_notifications
@@ -28,14 +28,14 @@ dependencies:
   # realtime notification path needs to avoid a second WebSocket on an
   # already-open connection. It sits at 0.0.22 because `PushStateReporter`
   # calls `Event.listenAny`, which does not exist below it; the floor names
-  # 0.0.24, the newest release when the 2026-09-29 batch re-pinned every
+  # 0.0.27, the newest release when the 2026-10-09 batch re-pinned every
   # sibling.
-  magic: ^0.0.24
+  magic: ^0.0.27
   # 0.0.15 is the requirement: `XcodeProjectEditor.setEntitlementsPaths`,
   # which the iOS installer step calls to point Release at its own
-  # entitlements file, does not exist below it. The floor names 0.0.17, the
-  # newest release when the 2026-09-29 batch re-pinned every sibling.
-  fluttersdk_artisan: ^0.0.17
+  # entitlements file, does not exist below it. The floor names 0.0.19, the
+  # newest release when the 2026-10-09 batch re-pinned every sibling.
+  fluttersdk_artisan: ^0.0.19
   # ^5.6.6 is a floor: the login/logout identity race was patched across
   # 5.5.3, 5.5.5, 5.6.2 and 5.6.6. `^5.4.6` was resolving 5.6.3 in uptizm,
   # which carries some of those fixes but not the last one.
@@ -49,9 +49,9 @@ dependencies:
   meta: ^1.15.0
   # Direct rather than transitive: this package ships widgets, so wind is a
   # dependency of its own. No API newer than 1.2.0 is in use; the floor names
-  # 1.8.0, the newest release when the 2026-09-29 batch re-pinned every
+  # 1.8.1, the newest release when the 2026-10-09 batch re-pinned every
   # sibling.
-  fluttersdk_wind: ^1.8.0
+  fluttersdk_wind: ^1.8.1
   # Opens the app's own notification settings page for
   # `PushDriver.openPlatformSettings`, which OneSignal reaches only through its
   # untranslated fallback dialog. Held on 7.x on purpose: 8.0.0 dropped
