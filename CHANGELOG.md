@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-10-13
+
+### Changed
+- **Every sibling floor names this batch's release.** `magic` moves `^0.0.27` to `^0.0.28`, `fluttersdk_artisan` `^0.0.19` to `^0.0.20` and `fluttersdk_wind` `^1.8.1` to `^1.8.4`. The old ranges already admitted the new versions, so a fresh `pub get` resolves nothing differently; what changes is that the floors name the releases this package is verified against. None of magic 0.0.28, artisan 0.0.20 or wind 1.8.2 to 1.8.4 is breaking. This package registers no connected command, so artisan 0.0.20's retry line for an unregistered extension does not reach it; its notification dropdown and push prompt style rows with `hover:`, so wind 1.8.2 gives them the click cursor back, and it builds no `WInput` or `WFormInput`, so the `autofillHints` change in 1.8.3 and 1.8.4 does not touch it. (`pubspec.yaml`)
+
 ## [0.3.8] - 2026-10-09
 
 ### Changed
