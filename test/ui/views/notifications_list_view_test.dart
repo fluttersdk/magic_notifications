@@ -146,6 +146,31 @@ void main() {
     expect(find.text('Nothing here yet'), findsOneWidget);
   });
 
+  testWidgets('centres the empty state in the width of its card', (
+    tester,
+  ) async {
+    fakeNotifications(const []);
+
+    await tester.pumpWidget(
+      wrap(const NotificationsListView(contentClassName: '')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // With no padding the card spans the view, so the two share a centre. The
+    // icon used to sit near the card's left edge: the inner column shrank to
+    // its content and `items-center` centred within that alone.
+    final double cardCentre =
+        tester.getCenter(find.byType(NotificationsListView)).dx;
+    final double iconCentre =
+        tester.getCenter(find.byIcon(Icons.notifications_off_outlined)).dx;
+    final double messageCentre =
+        tester.getCenter(find.text('Nothing here yet')).dx;
+
+    expect(iconCentre, closeTo(cardCentre, 1));
+    expect(messageCentre, closeTo(cardCentre, 1));
+  });
+
   testWidgets('renders the error state, not the empty state, on a failure', (
     tester,
   ) async {
