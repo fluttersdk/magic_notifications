@@ -104,6 +104,15 @@ class NotificationDropdown extends StatelessWidget {
   /// `w-9 h-9` trigger).
   final String? triggerHitClassName;
 
+  /// Where the panel sits relative to the trigger's bottom-right corner, the
+  /// popover's own `offset`; `Offset(0, 4)` by default, a 4px gap below.
+  ///
+  /// The panel anchors to the whole trigger, which is the [triggerHitClassName]
+  /// box when there is one. Pull it back by that box's inset so the panel
+  /// lines up with the drawn trigger: `Offset(-4, 0)` for a 36px trigger
+  /// centred in a 44px box.
+  final Offset panelOffset;
+
   /// className of the unread badge pill, replacing
   /// [kNotificationDropdownBadgeClassName].
   ///
@@ -130,6 +139,7 @@ class NotificationDropdown extends StatelessWidget {
     this.triggerClassName = kNotificationDropdownTriggerClassName,
     this.triggerIconClassName = kNotificationDropdownTriggerIconClassName,
     this.triggerHitClassName,
+    this.panelOffset = const Offset(0, 4),
     this.badgeClassName = kNotificationDropdownBadgeClassName,
     this.badgeTextClassName = kNotificationDropdownBadgeTextClassName,
   });
@@ -162,6 +172,7 @@ class NotificationDropdown extends StatelessWidget {
   ) {
     return WPopover(
       alignment: PopoverAlignment.bottomRight,
+      offset: panelOffset,
       className: panelClassName,
       maxHeight: 400,
       triggerBuilder: (context, isOpen, isHovering) =>
@@ -418,6 +429,7 @@ class NotificationDropdown extends StatelessWidget {
   Widget _buildLoadingDropdown() {
     return WPopover(
       alignment: PopoverAlignment.bottomRight,
+      offset: panelOffset,
       className: panelClassName,
       maxHeight: 400,
       triggerBuilder: (context, isOpen, isHovering) =>
@@ -432,6 +444,7 @@ class NotificationDropdown extends StatelessWidget {
   Widget _buildErrorDropdown() {
     return WPopover(
       alignment: PopoverAlignment.bottomRight,
+      offset: panelOffset,
       className: panelClassName,
       maxHeight: 400,
       triggerBuilder: (context, isOpen, isHovering) =>
