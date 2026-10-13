@@ -74,6 +74,19 @@ void main() {
       expect(await driver.reachability(), PushReachability.unavailable);
     });
 
+    test('is unavailable while the driver was never initialized', () async {
+      // Every other reading would be granted, opted in and subscribed: the
+      // SDK that would deliver to it is simply not running.
+      expect(
+        await _UninitializedPushDriver().reachability(),
+        PushReachability.unavailable,
+      );
+    });
+
+    test('counts a driver with no setup step as initialized', () {
+      expect(TestPushDriver().isInitialized, isTrue);
+    });
+
     test('is blocked when permission was denied', () async {
       final driver = TestPushDriver(
         permission: PushPermissionState.denied,
@@ -176,6 +189,20 @@ void main() {
       );
     });
   });
+}
+
+/// A driver whose SDK was never started: a build with a blank app id, or one
+/// whose initialisation threw.
+class _UninitializedPushDriver extends TestPushDriver {
+  _UninitializedPushDriver()
+      : super(
+          permission: PushPermissionState.authorized,
+          optedIn: true,
+          subscriptionId: 'sub-1',
+        );
+
+  @override
+  bool get isInitialized => false;
 }
 
 class TestPushDriver extends PushDriver {
