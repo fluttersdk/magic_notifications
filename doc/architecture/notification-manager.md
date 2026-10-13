@@ -230,7 +230,13 @@ failure:
    in magic's Reverb driver: it assigns a fresh channel without closing the
    previous one, so a redundant call opens a second WebSocket and leaks the first.
    This is why the `magic` floor cannot sit below 0.0.6; `Echo.connection` is the accessor that
-   makes the check possible.
+   makes the check possible. A connect that fails (the realtime server is down)
+   does not stop it: the next steps run anyway, the driver sends the queued
+   subscription once its retry connects, and polling stands in until then (step
+   4 starts the fallback poller instead of stopping it, and step 5 is that
+   poller's first read). Giving up here left realtime off for the whole session
+   when the server was down at launch. It still returns `true`, since realtime
+   is armed; only a failure to subscribe returns `false`.
 3. **Listens for `notification.created` exactly once.** A second `listen()` for
    one event name REPLACES the earlier handler rather than adding to it, so
    registering the same event anywhere else would silently drop this one.

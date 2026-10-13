@@ -2147,6 +2147,11 @@ class NotificationManager {
   ///  5. watches the connection so a drop falls back to polling and a reconnect
   ///     lifts the fallback and closes the replay gap.
   ///
+  /// A socket that cannot connect yet (the realtime server is down) does not
+  /// stop it: the subscription is made anyway, the driver sends it once its
+  /// retry connects, and polling stands in until then, exactly as after a
+  /// drop. It still returns true, since realtime is armed.
+  ///
   /// Idempotent per channel and safe to call on every auth-state change: the same
   /// channel is a no-op, a different one moves the subscription.
   Future<bool> startRealtime({
@@ -2172,10 +2177,25 @@ class NotificationManager {
     // a marker pointing at a channel nothing is listening on.
     if (_realtimeChannel != null) stopRealtime();
 
+    // A socket that cannot connect yet is not a reason to give up on realtime.
+    // The driver keeps retrying and queues the subscription below until it is
+    // up; giving up here left realtime off for the whole session when the
+    // server was down at launch, and every note then waited for the poller.
+    // Polling stands in until the connection watcher sees `connected`.
+    bool connected = true;
     try {
       if (!Echo.connection.isConnected) {
         await Echo.connect();
       }
+    } catch (e) {
+      NotificationLog.warning(
+        'Realtime notifications wait for the socket ($e); polling until it '
+        'connects',
+      );
+      connected = false;
+    }
+
+    try {
       final BroadcastChannel subscribed = Echo.private(channel);
       subscribed.listen(event, _applyRealtimeFrame);
       _realtimeChannel = subscribed;
@@ -2189,6 +2209,16 @@ class NotificationManager {
       stopRealtime();
 
       return false;
+    }
+
+    if (!connected) {
+      // The same fallback a dropped connection gets; `startPolling()` would
+      // no-op now that realtime is the intent. Its first tick reads the list.
+      _poller ??=
+          NotificationPoller(this, interval: _pollingIntervalForPoller());
+      _poller!.start();
+
+      return true;
     }
 
     stopPolling();

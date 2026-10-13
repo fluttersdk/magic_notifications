@@ -52,6 +52,16 @@ class _RecordingChannel implements BroadcastChannel {
 /// A driver whose private channels are inspectable and whose connection state is
 /// drivable, so the fallback path can be tested at all.
 class _RecordingDriver extends FakeBroadcastDriver {
+  /// When set, [connect] fails with it, as a socket the server refused does.
+  Object? connectError;
+
+  @override
+  Future<void> connect() async {
+    final Object? error = connectError;
+    if (error != null) throw error;
+    await super.connect();
+  }
+
   final Map<String, _RecordingChannel> channels = <String, _RecordingChannel>{};
   final List<String> left = <String>[];
   final StreamController<BroadcastConnectionState> states =
@@ -344,6 +354,33 @@ void main() {
       // comes back means a bell that never updates again.
       expect(manager.isPolling, isTrue);
       expect(manager.isRealtime, isTrue);
+    });
+
+    test(
+        'a socket that is down at start subscribes anyway and polls until it '
+        'connects', () async {
+      // The realtime server was down when the app launched. Giving up here
+      // left realtime off for the whole session: the driver connected later,
+      // but nothing was subscribed, so every note waited for the poller.
+      final FakeNetworkDriver driver = Http.fake(<String, MagicResponse>{
+        'notifications': Http.response(<String, dynamic>{'data': <dynamic>[]}),
+      });
+      echo.spy.connectError = StateError('Connection refused');
+
+      final bool armed =
+          await manager.startRealtime(channel: 'App.Models.User.u1');
+
+      expect(armed, isTrue);
+      expect(manager.isRealtime, isTrue);
+      expect(echo.spy.channels.keys, contains('private-App.Models.User.u1'));
+      expect(manager.isPolling, isTrue);
+
+      final int beforeConnect = driver.recorded.length;
+      echo.spy.states.add(BroadcastConnectionState.connected);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(manager.isPolling, isFalse);
+      expect(driver.recorded.length, greaterThan(beforeConnect));
     });
 
     test('reconnecting stops the fallback and closes the replay gap', () async {
