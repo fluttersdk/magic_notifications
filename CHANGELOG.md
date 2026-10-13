@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **`NotificationDropdown.triggerHitClassName`, a tap box around a trigger drawn smaller than a finger needs.** A host app draws its phone bell at 36px to match its design, under the roughly 44px both platforms recommend for a tap. The box sits inside the popover's tap handling and outside the drawn trigger, so a tap on its empty edge opens the panel while the trigger, its focus ring and the badge keep their drawn size. Null by default, which builds the trigger exactly as before. (`lib/src/ui/components/notification_dropdown/notification_dropdown.dart`)
+
 ### Fixed
 - **The bell's panel shows where keyboard focus is.** Tab reached a row, "Mark all as read" and "View all", and none of them drew anything, so a keyboard user could not see which control Enter would act on (found in a host app's walk). A focused row and the footer take a fill one step stronger than their hover, and the mark-all link underlines. (`lib/src/ui/components/notification_dropdown/notification_dropdown.dart`)
 - **The bell no longer goes deaf when a different person is declared without a sign-out between.** A guest signing in, a registration from a guest session and an account switch all reach `want()` with a previous intent, and its clear bumps the read session after the host's delivery listener, running off the same `Auth.stateNotifier` bump, has already subscribed the new person's channel and issued its first read. Every frame on that channel and the read's answer were then dropped as belonging to an ended session, and with polling off under realtime the bell stayed empty until a reconnect. The realtime subscription now records the auth generation it was made under, and `want()` re-adopts a channel armed under the generation now in effect and reads the list again. A channel armed under an earlier generation is the previous person's and stays dropped until the host re-arms it. (`lib/src/notification_manager.dart`)
