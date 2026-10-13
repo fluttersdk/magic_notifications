@@ -297,8 +297,12 @@ class _NotificationsListViewState extends MagicStatefulViewState<
     return WDiv(
       className: 'w-full bg-surface-container border border-color-border '
           'rounded-2xl p-6 flex flex-col gap-4',
+      // `w-full` is what centres it: the card is a column, which hands a child
+      // its width only as a maximum, so without it this column shrank to its
+      // content and `items-center` centred within that, at the card's left.
       child: WDiv(
-        className: 'flex flex-col items-center justify-center py-20 gap-4',
+        className:
+            'w-full flex flex-col items-center justify-center py-20 gap-4',
         children: [
           WIcon(icon, className: 'text-6xl text-fg-disabled'),
           WText(message, className: 'text-fg-muted'),
