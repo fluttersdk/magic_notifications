@@ -66,6 +66,7 @@ class OneSignalWebDriver extends PushDriver {
   bool get isSupported => kIsWeb;
 
   /// Whether [initialize] saw the SDK's own init callback run.
+  @override
   bool get isInitialized => _initialized;
 
   @override
