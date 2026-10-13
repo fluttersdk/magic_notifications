@@ -753,6 +753,12 @@ class _RecordingChannel implements BroadcastChannel {
   Stream<BroadcastEvent> get events => const Stream<BroadcastEvent>.empty();
 
   @override
+  bool get isSubscribed => false;
+
+  @override
+  Stream<bool> get onSubscriptionChanged => const Stream<bool>.empty();
+
+  @override
   BroadcastChannel listen(
     String event,
     void Function(BroadcastEvent) callback,

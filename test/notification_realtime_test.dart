@@ -23,6 +23,26 @@ class _RecordingChannel implements BroadcastChannel {
   @override
   Stream<BroadcastEvent> get events => const Stream<BroadcastEvent>.empty();
 
+  bool _subscribed = false;
+  final StreamController<bool> _subscriptionChanges =
+      StreamController<bool>.broadcast();
+
+  @override
+  bool get isSubscribed => _subscribed;
+
+  @override
+  Stream<bool> get onSubscriptionChanged => _subscriptionChanges.stream;
+
+  /// Stands in for the server's `subscription_succeeded` (`true`) and for a
+  /// dropped socket or a failed auth (`false`), emitting only on a change the
+  /// way the driver does.
+  void setSubscribed(bool value) {
+    if (_subscribed == value) return;
+
+    _subscribed = value;
+    _subscriptionChanges.add(value);
+  }
+
   @override
   BroadcastChannel listen(
     String event,
@@ -117,6 +137,16 @@ void main() {
         'read_at': null,
       };
 
+  /// Starts realtime on a channel the server has already confirmed, so the one
+  /// read [NotificationManager.startRealtime] does is awaited rather than left to
+  /// the fallback poller's first tick.
+  Future<bool> startRealtimeSubscribed(String name) {
+    echo.spy.channels['private-$name'] = _RecordingChannel('private-$name')
+      ..setSubscribed(true);
+
+    return manager.startRealtime(channel: name);
+  }
+
   setUpAll(() async {
     await initMagicForTests();
   });
@@ -178,7 +208,7 @@ void main() {
         }),
       });
 
-      await manager.startRealtime(channel: 'App.Models.User.u1');
+      await startRealtimeSubscribed('App.Models.User.u1');
 
       // The socket only ever carries what happens NEXT, so the list that already
       // exists has to be read once. This is the only HTTP the realtime path does
@@ -200,7 +230,7 @@ void main() {
           'data': <dynamic>[row(id: 'old')],
         }),
       });
-      await manager.startRealtime(channel: 'App.Models.User.u1');
+      await startRealtimeSubscribed('App.Models.User.u1');
       final int afterStart = driver.recorded.length;
 
       echo.spy.channels['private-App.Models.User.u1']!.emit(
@@ -237,7 +267,7 @@ void main() {
     });
 
     test('a redelivered id replaces rather than duplicates', () async {
-      await manager.startRealtime(channel: 'App.Models.User.u1');
+      await startRealtimeSubscribed('App.Models.User.u1');
       final _RecordingChannel channel =
           echo.spy.channels['private-App.Models.User.u1']!;
 
@@ -322,9 +352,22 @@ void main() {
   });
 
   group('NotificationManager polling under realtime', () {
+    const String channelName = 'private-App.Models.User.u1';
+
+    /// Starts realtime and has the server confirm the subscription, the state
+    /// every test below that wants "the socket is covering the bell" starts from.
+    Future<_RecordingChannel> startSubscribed() async {
+      await manager.startRealtime(channel: 'App.Models.User.u1');
+      final _RecordingChannel channel = echo.spy.channels[channelName]!;
+      channel.setSubscribed(true);
+      await Future<void>.delayed(Duration.zero);
+
+      return channel;
+    }
+
     test('startPolling does not arm the timer while realtime is live',
         () async {
-      await manager.startRealtime(channel: 'App.Models.User.u1');
+      await startSubscribed();
 
       manager.startPolling();
 
@@ -333,17 +376,92 @@ void main() {
       expect(manager.isPolling, isFalse);
     });
 
-    test('startRealtime stops a poller that was already running', () async {
+    test('startRealtime keeps polling until the channel is subscribed',
+        () async {
+      await manager.startRealtime(channel: 'App.Models.User.u1');
+
+      // `connected` and a subscribed channel are not the same thing: a private
+      // channel still waits on its auth call, so stopping the poller before the
+      // server confirms leaves a bell that nothing feeds.
+      expect(manager.isRealtime, isTrue);
+      expect(manager.isPolling, isTrue);
+    });
+
+    test('a channel already subscribed at start needs no poller', () async {
+      final FakeNetworkDriver driver = Http.fake(<String, MagicResponse>{
+        'notifications': Http.response(<String, dynamic>{'data': <dynamic>[]}),
+      });
+      await startRealtimeSubscribed('App.Models.User.u1');
+
+      expect(manager.isPolling, isFalse);
+      expect(
+        driver.recorded
+            .where((entry) => entry.$1.url.contains('notifications'))
+            .length,
+        1,
+      );
+    });
+
+    test('startRealtime hands a running poller over once subscribed', () async {
       manager.startPolling();
       expect(manager.isPolling, isTrue);
 
+      await startSubscribed();
+
+      expect(manager.isPolling, isFalse);
+    });
+
+    test('connected alone keeps the poller running', () async {
       await manager.startRealtime(channel: 'App.Models.User.u1');
+
+      // `connected` is emitted before the private channel is authorised, so a
+      // connected but unsubscribed socket delivers nothing.
+      echo.spy.states.add(BroadcastConnectionState.connected);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(manager.isPolling, isTrue);
+    });
+
+    test('a subscription stops the poller and refetches once', () async {
+      final FakeNetworkDriver driver = Http.fake(<String, MagicResponse>{
+        'notifications': Http.response(<String, dynamic>{'data': <dynamic>[]}),
+      });
+      await manager.startRealtime(channel: 'App.Models.User.u1');
+      await Future<void>.delayed(Duration.zero);
+      final int beforeSubscribed = driver.recorded.length;
+
+      echo.spy.channels[channelName]!.setSubscribed(true);
+      await Future<void>.delayed(Duration.zero);
+
+      // Reverb has no replay, so what was published before the channel came up
+      // is only recoverable by a read, and one is enough.
+      expect(manager.isPolling, isFalse);
+      expect(driver.recorded.length, beforeSubscribed + 1);
+    });
+
+    test('losing the subscription restarts the poller', () async {
+      final _RecordingChannel channel = await startSubscribed();
+      expect(manager.isPolling, isFalse);
+
+      channel.setSubscribed(false);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(manager.isPolling, isTrue);
+      expect(manager.isRealtime, isTrue);
+    });
+
+    test('stopRealtime stops listening for the subscription', () async {
+      final _RecordingChannel channel = await startSubscribed();
+
+      manager.stopRealtime();
+      channel.setSubscribed(false);
+      await Future<void>.delayed(Duration.zero);
 
       expect(manager.isPolling, isFalse);
     });
 
     test('a lost connection falls back to polling', () async {
-      await manager.startRealtime(channel: 'App.Models.User.u1');
+      await startSubscribed();
       expect(manager.isPolling, isFalse);
 
       echo.spy.states.add(BroadcastConnectionState.reconnecting);
@@ -378,27 +496,36 @@ void main() {
       final int beforeConnect = driver.recorded.length;
       echo.spy.states.add(BroadcastConnectionState.connected);
       await Future<void>.delayed(Duration.zero);
+      expect(manager.isPolling, isTrue);
+
+      echo.spy.channels['private-App.Models.User.u1']!.setSubscribed(true);
+      await Future<void>.delayed(Duration.zero);
 
       expect(manager.isPolling, isFalse);
       expect(driver.recorded.length, greaterThan(beforeConnect));
     });
 
-    test('reconnecting stops the fallback and closes the replay gap', () async {
+    test('resubscribing stops the fallback and closes the replay gap',
+        () async {
       final FakeNetworkDriver driver = Http.fake(<String, MagicResponse>{
         'notifications': Http.response(<String, dynamic>{'data': <dynamic>[]}),
       });
-      await manager.startRealtime(channel: 'App.Models.User.u1');
+      final _RecordingChannel channel = await startSubscribed();
       echo.spy.states.add(BroadcastConnectionState.reconnecting);
+      channel.setSubscribed(false);
       await Future<void>.delayed(Duration.zero);
-      final int beforeReconnect = driver.recorded.length;
-
       echo.spy.states.add(BroadcastConnectionState.connected);
+      await Future<void>.delayed(Duration.zero);
+      final int beforeResubscribed = driver.recorded.length;
+
+      channel.setSubscribed(true);
       await Future<void>.delayed(Duration.zero);
 
       // Reverb has no replay, so anything published while the socket was down is
-      // gone from the stream and only a fetch can recover it.
+      // gone from the stream and only a fetch can recover it. The fetch waits for
+      // the subscription, not for `connected`, which precedes the channel auth.
       expect(manager.isPolling, isFalse);
-      expect(driver.recorded.length, greaterThan(beforeReconnect));
+      expect(driver.recorded.length, greaterThan(beforeResubscribed));
     });
 
     test('stopRealtime leaves the channel and lets polling resume', () async {

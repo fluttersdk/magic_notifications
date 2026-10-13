@@ -238,6 +238,10 @@ class NotificationManager {
   /// The connection-state subscription that drives the polling fallback.
   StreamSubscription<BroadcastConnectionState>? _realtimeConnection;
 
+  /// The channel's own subscription-state subscription, which decides when the
+  /// poller may stop.
+  StreamSubscription<bool>? _realtimeSubscription;
+
   /// The event name realtime was started for, part of the idempotence key so a
   /// caller that changes the event for the same channel is not silently ignored.
   String? _realtimeEventName;
@@ -2141,16 +2145,19 @@ class NotificationManager {
   ///  2. subscribes and listens for [realtimeEvent] exactly once. A second
   ///     `listen()` for one event REPLACES the earlier handler rather than adding
   ///     to it, so registering anywhere else would silently drop this one;
-  ///  3. stops the poller, because the socket now covers it;
-  ///  4. fetches the existing list ONCE. A socket carries only what happens next,
-  ///     so the rows that already exist have to be read;
-  ///  5. watches the connection so a drop falls back to polling and a reconnect
-  ///     lifts the fallback and closes the replay gap.
+  ///  3. watches the channel's own subscription state, and the connection so a
+  ///     drop falls back to polling;
+  ///  4. keeps the poller running until the server confirms the subscription,
+  ///     then stops it and fetches the existing list ONCE. A socket carries
+  ///     only what happens next, so the rows that already exist have to be
+  ///     read, and so does whatever was published before the channel came up.
+  ///     The poller is not stopped on `connected`, which precedes the private
+  ///     channel's auth: a connected but unsubscribed socket delivers nothing.
   ///
   /// A socket that cannot connect yet (the realtime server is down) does not
   /// stop it: the subscription is made anyway, the driver sends it once its
-  /// retry connects, and polling stands in until then, exactly as after a
-  /// drop. It still returns true, since realtime is armed.
+  /// retry connects, and polling stands in until the channel is subscribed. It
+  /// still returns true, since realtime is armed.
   ///
   /// Idempotent per channel and safe to call on every auth-state change: the same
   /// channel is a no-op, a different one moves the subscription.
@@ -2181,8 +2188,7 @@ class NotificationManager {
     // The driver keeps retrying and queues the subscription below until it is
     // up; giving up here left realtime off for the whole session when the
     // server was down at launch, and every note then waited for the poller.
-    // Polling stands in until the connection watcher sees `connected`.
-    bool connected = true;
+    // Polling stands in until the channel reports subscribed.
     try {
       if (!Echo.connection.isConnected) {
         await Echo.connect();
@@ -2192,11 +2198,11 @@ class NotificationManager {
         'Realtime notifications wait for the socket ($e); polling until it '
         'connects',
       );
-      connected = false;
     }
 
+    final BroadcastChannel subscribed;
     try {
-      final BroadcastChannel subscribed = Echo.private(channel);
+      subscribed = Echo.private(channel);
       subscribed.listen(event, _applyRealtimeFrame);
       _realtimeChannel = subscribed;
       _realtimeChannelName = channel;
@@ -2204,6 +2210,7 @@ class NotificationManager {
       _realtimeSession = _session;
       _realtimeAuthState = _currentAuthState();
       _watchRealtimeConnection();
+      _watchRealtimeSubscription(subscribed);
     } catch (e) {
       NotificationLog.error('Failed to start realtime notifications: $e');
       stopRealtime();
@@ -2211,12 +2218,11 @@ class NotificationManager {
       return false;
     }
 
-    if (!connected) {
+    if (!subscribed.isSubscribed) {
       // The same fallback a dropped connection gets; `startPolling()` would
-      // no-op now that realtime is the intent. Its first tick reads the list.
-      _poller ??=
-          NotificationPoller(this, interval: _pollingIntervalForPoller());
-      _poller!.start();
+      // no-op now that realtime is the intent. Its first tick reads the list,
+      // and the subscription watcher hands over once the server confirms.
+      _startFallbackPoller();
 
       return true;
     }
@@ -2245,6 +2251,8 @@ class NotificationManager {
     _realtimeAuthState = null;
     _realtimeConnection?.cancel();
     _realtimeConnection = null;
+    _realtimeSubscription?.cancel();
+    _realtimeSubscription = null;
   }
 
   /// True when the app has a broadcast driver that can actually deliver a frame.
@@ -2259,39 +2267,60 @@ class NotificationManager {
     return driver != null && driver.isNotEmpty && driver != 'null';
   }
 
-  /// Falls back to polling while the socket is away, and lifts the fallback with
-  /// a refetch when it returns.
+  /// Falls back to polling while the socket is away.
   ///
-  /// Only `connectionState` is watched, not `onReconnect` as well: a reconnect
-  /// necessarily transitions the state to `connected`, so listening to both would
-  /// fetch the same list twice for one event.
+  /// Lifting the fallback is not this watcher's job: `connected` is emitted
+  /// before a private channel is authorised, so a connected but unsubscribed
+  /// socket delivers nothing, and only [_watchRealtimeSubscription] knows when
+  /// frames can actually arrive.
   void _watchRealtimeConnection() {
     _realtimeConnection?.cancel();
     _realtimeConnection = Echo.connectionState.listen((
       BroadcastConnectionState state,
     ) {
-      if (state == BroadcastConnectionState.connected) {
-        // The socket is back. Reverb has no replay, so anything published while
-        // it was down is gone from the stream and only a fetch recovers it.
-        _poller?.stop();
-        _poller = null;
-        fetchNotifications();
-
-        return;
-      }
+      if (state == BroadcastConnectionState.connected) return;
 
       // Anything else (reconnecting, disconnected) means frames are not arriving.
       // The subscription stays: realtime is still the intent, polling is the
       // stand-in. Without it a socket that never comes back is a bell that never
       // updates again.
-      //
-      // Same configured interval as `startPolling()`: this is the same fallback
-      // timer reached by a different route, and two routes onto one timer must
-      // not disagree about how often it fires.
-      _poller ??=
-          NotificationPoller(this, interval: _pollingIntervalForPoller());
-      _poller!.start();
+      _startFallbackPoller();
     });
+  }
+
+  /// Stops the fallback once the server confirms the channel, and restores it
+  /// when the channel is lost.
+  ///
+  /// Reverb has no replay, so anything published before the channel came up (or
+  /// while it was down) is gone from the stream and only a fetch recovers it:
+  /// the confirmation stops the poller and reads the list once. A `false` covers
+  /// a dropped socket, a leave and a failed auth alike, and the poller carries
+  /// the bell until the next confirmation.
+  void _watchRealtimeSubscription(BroadcastChannel channel) {
+    _realtimeSubscription?.cancel();
+    _realtimeSubscription = channel.onSubscriptionChanged.listen((
+      bool subscribed,
+    ) {
+      if (!subscribed) {
+        _startFallbackPoller();
+
+        return;
+      }
+
+      stopPolling();
+      unawaited(fetchNotifications());
+    });
+  }
+
+  /// Arms the poller that stands in while the socket cannot deliver.
+  ///
+  /// Same configured interval as `startPolling()`: this is the same fallback
+  /// timer reached by a different route, and two routes onto one timer must not
+  /// disagree about how often it fires. Not `startPolling()` itself, which
+  /// no-ops while realtime is the intent.
+  void _startFallbackPoller() {
+    _poller ??= NotificationPoller(this, interval: _pollingIntervalForPoller());
+    _poller!.start();
   }
 
   /// Applies one `notification.created` frame to the cached list and the stream.
