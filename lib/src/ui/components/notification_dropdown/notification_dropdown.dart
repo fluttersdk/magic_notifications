@@ -256,7 +256,8 @@ class NotificationDropdown extends StatelessWidget {
               // Brand-relative on both ends: `text-primary` resolves to the
               // ADOPTER's brand, so a hover jumping to a fixed palette green
               // reads as deliberate only while that brand happens to be green.
-              className: 'text-xs text-primary hover:text-primary/80 truncate',
+              className: 'text-xs text-primary hover:text-primary/80 '
+                  'focus:underline truncate',
             ),
           ),
       ],
@@ -328,6 +329,7 @@ class NotificationDropdown extends StatelessWidget {
           border-b border-gray-100 dark:border-gray-700
           hover:bg-gray-50 dark:hover:bg-gray-700
           unread:bg-primary/5 dark:unread:bg-primary/10
+          focus:bg-gray-100 dark:focus:bg-gray-700
         ''',
         children: [
           WDiv(
@@ -382,6 +384,7 @@ class NotificationDropdown extends StatelessWidget {
           px-4 py-3 w-full
           border-t border-gray-200 dark:border-gray-700
           hover:bg-gray-50 dark:hover:bg-gray-700
+          focus:bg-gray-100 dark:focus:bg-gray-700
           flex items-center justify-center
         ''',
         child: WText(
