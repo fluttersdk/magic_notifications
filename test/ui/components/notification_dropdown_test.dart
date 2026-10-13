@@ -181,6 +181,73 @@ void main() {
     },
   );
 
+  testWidgets('panelOffset moves the panel off the trigger it anchors to', (
+    tester,
+  ) async {
+    // With a hit box the panel anchors to the box, not the drawn trigger; an
+    // adopter pulls it back by the box's inset so it lines up as drawn.
+    Future<Rect> panelFor(Offset? offset) async {
+      await tester.pumpWidget(
+        wrap(
+          Align(
+            alignment: Alignment.topRight,
+            child: NotificationDropdown(
+              notificationStream: streamController.stream,
+              panelClassName: 'w-80 bg-white',
+              panelOffset: offset ?? const Offset(0, 4),
+            ),
+          ),
+        ),
+      );
+      streamController.add([makeNotification()]);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.byIcon(Icons.notifications_outlined));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final Rect panel = tester.getRect(
+        find.byWidgetPredicate(
+          (w) => w is WDiv && w.className == 'w-80 bg-white',
+        ),
+      );
+      await tester.tapAt(Offset.zero);
+      await tester.pump();
+
+      return panel;
+    }
+
+    final Rect atDefault = await panelFor(null);
+    final Rect pulledIn = await panelFor(const Offset(-4, 0));
+
+    expect(pulledIn.right, atDefault.right - 4);
+    expect(pulledIn.top, atDefault.top - 4);
+  });
+
+  testWidgets('panelOffset reaches the loading and the failure popovers', (
+    tester,
+  ) async {
+    const Offset offset = Offset(-4, 0);
+
+    // Loading: the stream has not answered yet.
+    await tester.pumpWidget(
+      wrap(
+        NotificationDropdown(
+          notificationStream: streamController.stream,
+          panelOffset: offset,
+        ),
+      ),
+    );
+    expect(tester.widget<WPopover>(find.byType(WPopover)).offset, offset);
+
+    // Failure: the stream answered with an error.
+    streamController.addError(StateError('load failed'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(tester.widget<WPopover>(find.byType(WPopover)).offset, offset);
+  });
+
   testWidgets('a hit box wider than the trigger takes a tap at its edge', (
     tester,
   ) async {
