@@ -290,6 +290,59 @@ void main() {
     expect(weights, contains(FontWeight.w600));
   });
 
+  testWidgets('a row and the footer show where keyboard focus is', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(
+        NotificationDropdown(
+          notificationStream: streamController.stream,
+          onViewAll: () {},
+        ),
+      ),
+    );
+
+    // A read row, so no unread tint stands in for the focus fill.
+    streamController.add([makeNotification(isRead: true)]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.byIcon(Icons.notifications_outlined));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    /// The fill painted around [text], or null when it paints none.
+    Color? fillAround(Finder text) => tester
+        .widgetList<DecoratedBox>(
+          find.ancestor(of: text, matching: find.byType(DecoratedBox)),
+        )
+        .map((box) => (box.decoration as BoxDecoration).color)
+        .firstWhere((color) => color != null, orElse: () => null);
+
+    /// Focuses the anchor that carries [text], as Tab would.
+    Future<void> focus(Finder text) async {
+      tester
+          .widgetList<Focus>(
+            find.ancestor(of: text, matching: find.byType(Focus)),
+          )
+          .firstWhere((f) => f.focusNode?.canRequestFocus ?? false)
+          .focusNode!
+          .requestFocus();
+      await tester.pumpAndSettle();
+    }
+
+    final Finder row = find.text('Test Notification');
+    final Finder footer = find.text('View all');
+    final Color? rowAtRest = fillAround(row);
+    final Color? footerAtRest = fillAround(footer);
+
+    await focus(row);
+    expect(fillAround(row), isNot(rowAtRest));
+
+    await focus(footer);
+    expect(fillAround(footer), isNot(footerAtRest));
+  });
+
   testWidgets('the unread row tint carries its dark peer', (tester) async {
     await tester.pumpWidget(
       wrap(NotificationDropdown(notificationStream: streamController.stream)),
