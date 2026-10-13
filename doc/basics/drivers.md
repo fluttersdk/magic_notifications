@@ -23,6 +23,7 @@ A push driver wraps a platform-specific push SDK. The `PushChannel` delegates al
 abstract class PushDriver {
   String get name;
   bool get isSupported;
+  bool get isInitialized; // true by default in the base class
   Future<PushPermissionState> permissionState();
   bool get isOptedIn;
 
@@ -52,6 +53,7 @@ abstract class PushDriver {
 |--------|-------------|
 | `name` | Driver identifier string (e.g., `'onesignal'`) |
 | `isSupported` | Synchronous platform check; `PushChannel.isAvailable` delegates here |
+| `isInitialized` | Whether `initialize` brought the SDK up. `true` by default; both OneSignal drivers answer `false` for a build with a blank app id (the provider never starts them) and after a failed initialisation. A driver with a setup step overrides it. |
 | `permissionState()` | Reads the current `PushPermissionState`. Asynchronous on both platforms: mobile reads the native permission over a platform channel, web reads the browser's own `Notification.permission`. |
 | `isOptedIn` | Whether the user is actively subscribed to push |
 | `initialize(config)` | One-time SDK init; must be called before all other methods |
@@ -99,7 +101,7 @@ declaring one, so every driver answers the same way:
 
 | State | Meaning |
 |-------|---------|
-| `PushReachability.unavailable` | No platform driver here at all (`isSupported == false`). |
+| `PushReachability.unavailable` | No platform driver here at all (`isSupported == false`), or one whose SDK never started (`isInitialized == false`), so a request would only be refused. |
 | `PushReachability.blocked` | Permission was denied and the platform will not re-prompt. The app has to point the person at the OS/browser setting; calling `requestPermission()` again silently no-ops. |
 | `PushReachability.off` | Never asked, or asked and not opted in. Safe to call `requestPermission()`. |
 | `PushReachability.on` | Permitted, opted in, and holding a subscription id — the only state a push can actually reach. |

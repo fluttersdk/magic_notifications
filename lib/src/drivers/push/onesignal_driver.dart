@@ -39,6 +39,7 @@ class OneSignalDriver extends PushDriver {
   String get name => 'onesignal';
 
   /// Whether [initialize] completed against the OneSignal SDK.
+  @override
   bool get isInitialized => _initialized;
 
   @override

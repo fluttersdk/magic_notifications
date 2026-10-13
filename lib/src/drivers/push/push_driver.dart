@@ -65,6 +65,18 @@ abstract class PushDriver {
   /// Whether push notifications are supported on this platform.
   bool get isSupported;
 
+  /// Whether [initialize] has brought the driver's SDK up.
+  ///
+  /// False for a build that resolved the driver and never started it (a blank
+  /// app id, which `NotificationServiceProvider` treats as push switched off)
+  /// and for one whose initialisation threw. [reachability] reads such a
+  /// device as [PushReachability.unavailable]: its permission may look
+  /// promptable, but a request goes to an SDK that refuses it, so a soft
+  /// prompt offering one would offer a control that cannot work.
+  ///
+  /// True by default, for a driver with no setup step to wait on.
+  bool get isInitialized => true;
+
   /// Reads the current push permission from the platform.
   ///
   /// Asynchronous because both platforms answer asynchronously: mobile reads
@@ -249,12 +261,13 @@ abstract class PushDriver {
   /// Whether push can actually reach this device right now.
   ///
   /// Derived rather than declared, so every driver answers it the same way:
-  /// no platform driver is [PushReachability.unavailable]; a denied permission
+  /// no platform driver, or one whose SDK never started ([isInitialized]), is
+  /// [PushReachability.unavailable]; a denied permission
   /// the platform will not re-prompt is [PushReachability.blocked]; permitted
   /// but not yet subscribed is [PushReachability.off]; and only a permitted,
   /// opted-in device holding a subscription id is [PushReachability.on].
   Future<PushReachability> reachability() async {
-    if (!isSupported) return PushReachability.unavailable;
+    if (!isSupported || !isInitialized) return PushReachability.unavailable;
 
     // 1. A denied permission is the only unreachable-and-unpromptable state;
     //    each driver resolves "never asked" out of it before answering.

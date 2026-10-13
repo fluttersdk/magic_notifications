@@ -68,7 +68,12 @@ class _RecordingPushDriver extends PushDriver {
     this.optedIn = false,
     this.subscriptionId,
     this.opensPlatformSettings = false,
+    this.initialized = true,
   });
+
+  /// Whether the SDK behind this fake was started; false is a build with a
+  /// blank app id.
+  final bool initialized;
 
   /// The permission the platform reports.
   final PushPermissionState permission;
@@ -97,6 +102,9 @@ class _RecordingPushDriver extends PushDriver {
 
   @override
   bool get canOpenPlatformSettings => opensPlatformSettings;
+
+  @override
+  bool get isInitialized => initialized;
 
   @override
   String get name => 'test';
@@ -1071,6 +1079,35 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets(
+      'renders the unavailable row, not an Enable button, for a driver whose '
+      'SDK never started',
+      (tester) async {
+        // A build with a blank app id resolves the driver and skips its
+        // initialisation. Offering Enable there sent a request the SDK
+        // refused with NOT_INITIALIZED, and the row never changed.
+        final _RecordingPushDriver driver = _RecordingPushDriver(
+          initialized: false,
+        );
+        usePushDriver(driver);
+
+        await tester.pumpWidget(
+          wrap(const PushPromptHost(declinedVaultKey: _declinedVaultKey)),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text(trans('notifications.push_prompt.unavailable_body')),
+          findsOneWidget,
+        );
+        expect(
+          find.text(trans('notifications.push_prompt.enable')),
+          findsNothing,
+        );
+        expect(driver.permissionRequests, 0);
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------
