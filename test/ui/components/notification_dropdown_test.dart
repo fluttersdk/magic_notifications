@@ -181,6 +181,40 @@ void main() {
     },
   );
 
+  testWidgets('a hit box wider than the trigger takes a tap at its edge', (
+    tester,
+  ) async {
+    // A 36px control drawn to a design, inside the 44px a finger needs: the
+    // tap lands 3px outside the drawn box and still opens the panel.
+    await tester.pumpWidget(
+      wrap(
+        Center(
+          child: NotificationDropdown(
+            notificationStream: streamController.stream,
+            triggerClassName: 'w-9 h-9 flex items-center justify-center',
+            triggerHitClassName: 'w-11 h-11 flex items-center justify-center',
+          ),
+        ),
+      ),
+    );
+    streamController.add([makeNotification()]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final Rect drawn = tester.getRect(
+      find.byWidgetPredicate(
+        (w) => w is WDiv && (w.className?.contains('w-9') ?? false),
+      ),
+    );
+    expect(drawn.width, 36);
+
+    await tester.tapAt(drawn.centerLeft - const Offset(3, 0));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('Notifications'), findsOneWidget);
+  });
+
   testWidgets('the styling seam reaches the trigger, badge and panel', (
     tester,
   ) async {
@@ -288,6 +322,59 @@ void main() {
     expect(weights, hasLength(2));
     expect(weights.toSet(), hasLength(2));
     expect(weights, contains(FontWeight.w600));
+  });
+
+  testWidgets('a row and the footer show where keyboard focus is', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(
+        NotificationDropdown(
+          notificationStream: streamController.stream,
+          onViewAll: () {},
+        ),
+      ),
+    );
+
+    // A read row, so no unread tint stands in for the focus fill.
+    streamController.add([makeNotification(isRead: true)]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.byIcon(Icons.notifications_outlined));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    /// The fill painted around [text], or null when it paints none.
+    Color? fillAround(Finder text) => tester
+        .widgetList<DecoratedBox>(
+          find.ancestor(of: text, matching: find.byType(DecoratedBox)),
+        )
+        .map((box) => (box.decoration as BoxDecoration).color)
+        .firstWhere((color) => color != null, orElse: () => null);
+
+    /// Focuses the anchor that carries [text], as Tab would.
+    Future<void> focus(Finder text) async {
+      tester
+          .widgetList<Focus>(
+            find.ancestor(of: text, matching: find.byType(Focus)),
+          )
+          .firstWhere((f) => f.focusNode?.canRequestFocus ?? false)
+          .focusNode!
+          .requestFocus();
+      await tester.pumpAndSettle();
+    }
+
+    final Finder row = find.text('Test Notification');
+    final Finder footer = find.text('View all');
+    final Color? rowAtRest = fillAround(row);
+    final Color? footerAtRest = fillAround(footer);
+
+    await focus(row);
+    expect(fillAround(row), isNot(rowAtRest));
+
+    await focus(footer);
+    expect(fillAround(footer), isNot(footerAtRest));
   });
 
   testWidgets('the unread row tint carries its dark peer', (tester) async {

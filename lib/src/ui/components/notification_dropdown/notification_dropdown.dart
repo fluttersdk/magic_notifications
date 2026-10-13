@@ -29,7 +29,8 @@ import 'notification_dropdown.recipe.dart';
 /// controls are written in that app's semantic aliases. Four surfaces take an
 /// override so an adopter can answer in its own vocabulary without forking the
 /// widget: [triggerClassName], [triggerIconClassName], [badgeClassName] with
-/// [badgeTextClassName], and [panelClassName].
+/// [badgeTextClassName], and [panelClassName]. [triggerHitClassName] adds a
+/// tap box around a trigger drawn smaller than a finger needs.
 ///
 /// Each override REPLACES its default outright, layout tokens included, rather
 /// than appending to it, so a value that changes one token still has to carry
@@ -92,6 +93,17 @@ class NotificationDropdown extends StatelessWidget {
   /// [triggerClassName].
   final String triggerIconClassName;
 
+  /// className of an invisible box around the trigger that takes taps, or
+  /// null for none, the default.
+  ///
+  /// For a trigger drawn smaller than a finger needs: a 36px control in a
+  /// design still wants about 44px to tap. The box sits inside the popover's
+  /// tap handling and outside the drawn trigger, so a tap anywhere in it
+  /// toggles the panel while the trigger, its focus ring and the badge keep
+  /// their drawn size (`w-11 h-11 flex items-center justify-center` around a
+  /// `w-9 h-9` trigger).
+  final String? triggerHitClassName;
+
   /// className of the unread badge pill, replacing
   /// [kNotificationDropdownBadgeClassName].
   ///
@@ -117,6 +129,7 @@ class NotificationDropdown extends StatelessWidget {
     this.panelClassName = kNotificationDropdownPanelClassName,
     this.triggerClassName = kNotificationDropdownTriggerClassName,
     this.triggerIconClassName = kNotificationDropdownTriggerIconClassName,
+    this.triggerHitClassName,
     this.badgeClassName = kNotificationDropdownBadgeClassName,
     this.badgeTextClassName = kNotificationDropdownBadgeTextClassName,
   });
@@ -164,7 +177,7 @@ class NotificationDropdown extends StatelessWidget {
     bool isHovering, {
     required int unreadCount,
   }) {
-    return Stack(
+    final Widget trigger = Stack(
       clipBehavior: Clip.none,
       children: [
         WDiv(
@@ -198,6 +211,13 @@ class NotificationDropdown extends StatelessWidget {
           ),
       ],
     );
+
+    final String? hitClassName = triggerHitClassName;
+    if (hitClassName == null) return trigger;
+
+    // Inside the popover's pointer listener, so a tap on the box's empty edge
+    // still toggles the panel; it adds no gesture of its own.
+    return WDiv(className: hitClassName, child: trigger);
   }
 
   Widget _buildContent(
@@ -256,7 +276,8 @@ class NotificationDropdown extends StatelessWidget {
               // Brand-relative on both ends: `text-primary` resolves to the
               // ADOPTER's brand, so a hover jumping to a fixed palette green
               // reads as deliberate only while that brand happens to be green.
-              className: 'text-xs text-primary hover:text-primary/80 truncate',
+              className: 'text-xs text-primary hover:text-primary/80 '
+                  'focus:underline truncate',
             ),
           ),
       ],
@@ -328,6 +349,7 @@ class NotificationDropdown extends StatelessWidget {
           border-b border-gray-100 dark:border-gray-700
           hover:bg-gray-50 dark:hover:bg-gray-700
           unread:bg-primary/5 dark:unread:bg-primary/10
+          focus:bg-gray-100 dark:focus:bg-gray-700
         ''',
         children: [
           WDiv(
@@ -382,6 +404,7 @@ class NotificationDropdown extends StatelessWidget {
           px-4 py-3 w-full
           border-t border-gray-200 dark:border-gray-700
           hover:bg-gray-50 dark:hover:bg-gray-700
+          focus:bg-gray-100 dark:focus:bg-gray-700
           flex items-center justify-center
         ''',
         child: WText(
