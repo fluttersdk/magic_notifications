@@ -273,6 +273,15 @@ class NotificationManager {
   /// previous person's incident title back onto the bell.
   int? _realtimeSession;
 
+  /// The `Auth.stateNotifier` generation the realtime subscription was made
+  /// under, or `null` with no subscription or no auth bound.
+  ///
+  /// [want] reads it to tell the two channels apart that can be subscribed
+  /// when a new person is declared: one the same auth change just armed, which
+  /// is theirs, and one armed under an earlier generation, which is the
+  /// previous person's.
+  int? _realtimeAuthState;
+
   factory NotificationManager() {
     return _instance;
   }
@@ -976,9 +985,47 @@ class NotificationManager {
     // after. A sign-out reaches this too and clears a second time, which is
     // harmless, because [logoutPush] clears unconditionally in front of a
     // `want(null)` that returns early on a device whose intent is already null.
-    if (previous != null) _clearCachedNotifications();
+    if (previous != null) {
+      _clearCachedNotifications();
+      if (wanted != null) _readoptRealtimeArmedForThisAuthChange();
+    }
 
     await _persistPushIntent(wanted);
+  }
+
+  /// Hands the person [want] just declared the realtime channel the same auth
+  /// change already subscribed for them, and reads their list again.
+  ///
+  /// A host's delivery listener and its identity declaration run off one
+  /// `Auth.stateNotifier` bump, and the clear in [want] lands after its vault
+  /// await, so after the listener has subscribed the NEW person's channel and
+  /// issued that subscription's first read. The clear's session bump drops both:
+  /// every frame on the channel and the read's answer. With polling off while a
+  /// socket is up, the bell then stays empty until a reconnect, on every guest
+  /// that signs in and every account switch.
+  ///
+  /// A channel subscribed under an earlier auth generation was made for the
+  /// previous person and stays dropped until the host re-arms it, which is the
+  /// guarantee the clear exists for. A poller's dropped first read is left to
+  /// its next tick.
+  void _readoptRealtimeArmedForThisAuthChange() {
+    final int? authState = _currentAuthState();
+    if (_realtimeChannel == null ||
+        authState == null ||
+        _realtimeAuthState != authState) {
+      return;
+    }
+
+    _realtimeSession = _session;
+    unawaited(fetchNotifications());
+  }
+
+  /// The `Auth.stateNotifier` generation now in effect, or `null` when the
+  /// host binds no auth, where nothing declares a person to switch between.
+  int? _currentAuthState() {
+    if (!Magic.bound('auth')) return null;
+
+    return Auth.stateNotifier.value;
   }
 
   /// Brings the device's subscribed identity in line with [pushIntent].
@@ -2115,6 +2162,7 @@ class NotificationManager {
       // session would leave the bell permanently deaf on a channel the manager
       // believes it is subscribed to.
       _realtimeSession = _session;
+      _realtimeAuthState = _currentAuthState();
 
       return true;
     }
@@ -2134,6 +2182,7 @@ class NotificationManager {
       _realtimeChannelName = channel;
       _realtimeEventName = event;
       _realtimeSession = _session;
+      _realtimeAuthState = _currentAuthState();
       _watchRealtimeConnection();
     } catch (e) {
       NotificationLog.error('Failed to start realtime notifications: $e');
@@ -2163,6 +2212,7 @@ class NotificationManager {
     _realtimeChannelName = null;
     _realtimeEventName = null;
     _realtimeSession = null;
+    _realtimeAuthState = null;
     _realtimeConnection?.cancel();
     _realtimeConnection = null;
   }

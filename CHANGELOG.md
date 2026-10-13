@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **The bell no longer goes deaf when a different person is declared without a sign-out between.** A guest signing in, a registration from a guest session and an account switch all reach `want()` with a previous intent, and its clear bumps the read session after the host's delivery listener, running off the same `Auth.stateNotifier` bump, has already subscribed the new person's channel and issued its first read. Every frame on that channel and the read's answer were then dropped as belonging to an ended session, and with polling off under realtime the bell stayed empty until a reconnect. The realtime subscription now records the auth generation it was made under, and `want()` re-adopts a channel armed under the generation now in effect and reads the list again. A channel armed under an earlier generation is the previous person's and stays dropped until the host re-arms it. (`lib/src/notification_manager.dart`)
+
 ## [0.3.9] - 2026-10-13
 
 ### Changed
