@@ -181,6 +181,40 @@ void main() {
     },
   );
 
+  testWidgets('a hit box wider than the trigger takes a tap at its edge', (
+    tester,
+  ) async {
+    // A 36px control drawn to a design, inside the 44px a finger needs: the
+    // tap lands 3px outside the drawn box and still opens the panel.
+    await tester.pumpWidget(
+      wrap(
+        Center(
+          child: NotificationDropdown(
+            notificationStream: streamController.stream,
+            triggerClassName: 'w-9 h-9 flex items-center justify-center',
+            triggerHitClassName: 'w-11 h-11 flex items-center justify-center',
+          ),
+        ),
+      ),
+    );
+    streamController.add([makeNotification()]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final Rect drawn = tester.getRect(
+      find.byWidgetPredicate(
+        (w) => w is WDiv && (w.className?.contains('w-9') ?? false),
+      ),
+    );
+    expect(drawn.width, 36);
+
+    await tester.tapAt(drawn.centerLeft - const Offset(3, 0));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('Notifications'), findsOneWidget);
+  });
+
   testWidgets('the styling seam reaches the trigger, badge and panel', (
     tester,
   ) async {
