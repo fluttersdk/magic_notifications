@@ -224,6 +224,30 @@ void main() {
     expect(pulledIn.top, atDefault.top - 4);
   });
 
+  testWidgets('panelOffset reaches the loading and the failure popovers', (
+    tester,
+  ) async {
+    const Offset offset = Offset(-4, 0);
+
+    // Loading: the stream has not answered yet.
+    await tester.pumpWidget(
+      wrap(
+        NotificationDropdown(
+          notificationStream: streamController.stream,
+          panelOffset: offset,
+        ),
+      ),
+    );
+    expect(tester.widget<WPopover>(find.byType(WPopover)).offset, offset);
+
+    // Failure: the stream answered with an error.
+    streamController.addError(StateError('load failed'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(tester.widget<WPopover>(find.byType(WPopover)).offset, offset);
+  });
+
   testWidgets('a hit box wider than the trigger takes a tap at its edge', (
     tester,
   ) async {
