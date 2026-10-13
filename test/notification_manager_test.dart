@@ -271,6 +271,134 @@ void main() {
     });
   });
 
+  group('NotificationManager on an account switch', () {
+    late _GatedNetworkDriver network;
+    late _RecordingBroadcastManager echo;
+
+    setUp(() async {
+      network = _GatedNetworkDriver();
+      Magic.app.setInstance('network', network);
+      echo = _RecordingBroadcastManager();
+      Magic.app.setInstance('broadcasting', echo);
+      Config.set('broadcasting.default', 'reverb');
+      Auth.fake();
+      // Connected before anyone signs in, as magic's BroadcastServiceProvider
+      // leaves it at boot: `startRealtime` then reaches its subscription with
+      // no await, which is the shape that loses the race. Unconnected, the
+      // connect await would push the subscription past the clear and pass.
+      await Echo.connect();
+    });
+
+    tearDown(() {
+      manager.stopRealtime();
+      manager.stopPolling();
+      Config.forget('broadcasting.default');
+      echo.spy.states.close();
+      Http.unfake();
+      Auth.unfake();
+    });
+
+    /// The order a host's two `Auth.stateNotifier` listeners run in when the
+    /// person changes with no sign-out between (a guest signing in, an account
+    /// switcher): the delivery listener arms the NEW person's channel first,
+    /// then the identity declaration reaches [NotificationManager.want], whose
+    /// clear for the previous person lands after the arming.
+    Future<_RecordingChannel> armThenDeclare() async {
+      await manager.want('user_guest');
+
+      final Future<bool> starting = manager.startRealtime(
+        channel: 'App.Models.User.u2',
+      );
+      await pumpEventQueue();
+      final Future<void> declaring = manager.want('user_u2');
+      await pumpEventQueue();
+      // The read the arming issued, answered after the clear.
+      network.answer(<Map<String, dynamic>>[_row(id: 'mine')]);
+      expect(await starting, isTrue);
+      await declaring;
+      await pumpEventQueue();
+
+      return echo.spy.channels['private-App.Models.User.u2']!;
+    }
+
+    test('the channel armed for the new person keeps its frames', () async {
+      final _RecordingChannel channel = await armThenDeclare();
+      // Whatever the read-again path fetched, answer it so it is not left open.
+      while (network.hasPending) {
+        network.answer(<Map<String, dynamic>>[_row(id: 'mine')]);
+        await pumpEventQueue();
+      }
+
+      channel.emit('notification.created', _row(id: 'welcome'));
+      await pumpEventQueue();
+
+      expect(
+        (await manager.notifications().first)
+            .map((DatabaseNotification n) => n.id),
+        contains('welcome'),
+      );
+    });
+
+    test('the new person\'s rows are read again after the clear', () async {
+      await armThenDeclare();
+
+      // The read the arming issued was dropped by the clear, so with a socket
+      // up and no poller nothing would fill the bell until a reconnect.
+      expect(network.hasPending, isTrue);
+      network.answer(<Map<String, dynamic>>[_row(id: 'mine')]);
+      await pumpEventQueue();
+
+      expect(
+        (await manager.notifications().first)
+            .map((DatabaseNotification n) => n.id),
+        <String>['mine'],
+      );
+    });
+  });
+
+  group('NotificationManager on an account switch, previous channel', () {
+    late _RecordingBroadcastManager echo;
+
+    setUp(() async {
+      Http.fake(<String, MagicResponse>{
+        'notifications': Http.response(<String, dynamic>{'data': <dynamic>[]}),
+      });
+      echo = _RecordingBroadcastManager();
+      Magic.app.setInstance('broadcasting', echo);
+      Config.set('broadcasting.default', 'reverb');
+      Auth.fake();
+      await Echo.connect();
+    });
+
+    tearDown(() {
+      manager.stopRealtime();
+      manager.stopPolling();
+      Config.forget('broadcasting.default');
+      echo.spy.states.close();
+      Http.unfake();
+      Auth.unfake();
+    });
+
+    test('a channel armed before the auth change stays deaf after it',
+        () async {
+      // The previous person's channel, armed under their auth generation.
+      await manager.want('user_ada');
+      await manager.startRealtime(channel: 'App.Models.User.ada');
+      final _RecordingChannel theirs =
+          echo.spy.channels['private-App.Models.User.ada']!;
+
+      // The person changes, and a host that has not moved its delivery yet
+      // still holds Ada's channel when Grace is declared.
+      Auth.stateNotifier.value++;
+      await manager.want('user_grace');
+
+      theirs.emit('notification.created', _row(id: 'theirs'));
+      await pumpEventQueue();
+
+      expect(await manager.notifications().first, isEmpty);
+    });
+  });
+
   group('NotificationManager on sign-out', () {
     setUp(() {
       Http.fake(<String, MagicResponse>{
@@ -595,6 +723,9 @@ class _GatedNetworkDriver extends FakeNetworkDriver {
 
     return completer.future;
   }
+
+  /// Whether a read is still waiting for an answer.
+  bool get hasPending => _pending.isNotEmpty;
 
   /// Answers the oldest read still waiting with [rows].
   void answer(List<Map<String, dynamic>> rows) {
