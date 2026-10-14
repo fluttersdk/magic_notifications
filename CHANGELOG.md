@@ -2,11 +2,14 @@
 
 ## [Unreleased]
 
+## [0.3.10] - 2026-10-14
+
 ### Added
 - **`NotificationDropdown.panelOffset`, where the panel sits against its trigger.** With a `triggerHitClassName` the panel anchors to the tap box rather than the drawn trigger, so a host app's phone bell opened its panel 4px right and 4px lower than before, its right edge overhanging the bell (measured in a host app's walk). An adopter passes the box's inset back, `Offset(-4, 0)` for a 36px trigger in a 44px box. Defaults to the popover's own `Offset(0, 4)`, so nothing moves for anyone who does not set it. (`lib/src/ui/components/notification_dropdown/notification_dropdown.dart`)
 - **`NotificationDropdown.triggerHitClassName`, a tap box around a trigger drawn smaller than a finger needs.** A host app draws its phone bell at 36px to match its design, under the roughly 44px both platforms recommend for a tap. The box sits inside the popover's tap handling and outside the drawn trigger, so a tap on its empty edge opens the panel while the trigger, its focus ring and the badge keep their drawn size. Null by default, which builds the trigger exactly as before. (`lib/src/ui/components/notification_dropdown/notification_dropdown.dart`)
 
 ### Changed
+- **Every sibling floor names this batch's release.** `fluttersdk_wind` moves `^1.8.4` to `^1.9.0`, and `fluttersdk_artisan` stays at `^0.0.20`, still the newest. The old range already admitted 1.9.0, so a fresh `pub get` resolves nothing differently; what changes is that the floor names the release this package is verified against. wind 1.9.0 makes `tracking-*` em, scaled by the rendered font size, and this package writes no `tracking-*` class. magic 0.0.29 adds two abstract members to `BroadcastChannel`; the two test doubles here implement both, and no class in `lib/` implements it. (`pubspec.yaml`)
 - **`magic` floor moves `^0.0.28` to `^0.0.29`.** The poller follows `BroadcastChannel.isSubscribed` and `onSubscriptionChanged`, which magic 0.0.29 introduces, so an adopter on an older magic now gets a version-solve error instead of a compile error inside this package. (`pubspec.yaml`)
 
 ### Fixed

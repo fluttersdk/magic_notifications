@@ -1,6 +1,6 @@
 name: magic_notifications
 description: Multi-channel notification system for Magic Framework. Supports database (in-app), push (OneSignal), and mail channels.
-version: 0.3.9
+version: 0.3.10
 homepage: https://magic.fluttersdk.com/notifications
 documentation: https://magic.fluttersdk.com/packages/notifications/getting-started/installation
 repository: https://github.com/fluttersdk/magic_notifications
@@ -49,9 +49,9 @@ dependencies:
   meta: ^1.15.0
   # Direct rather than transitive: this package ships widgets, so wind is a
   # dependency of its own. No API newer than 1.2.0 is in use; the floor names
-  # 1.8.4, the newest release when the 2026-10-13 batch re-pinned every
+  # 1.9.0, the newest release when the 2026-10-14 batch re-pinned every
   # sibling.
-  fluttersdk_wind: ^1.8.4
+  fluttersdk_wind: ^1.9.0
   # Opens the app's own notification settings page for
   # `PushDriver.openPlatformSettings`, which OneSignal reaches only through its
   # untranslated fallback dialog. Held on 7.x on purpose: 8.0.0 dropped
