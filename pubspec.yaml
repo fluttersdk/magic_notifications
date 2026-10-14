@@ -27,10 +27,10 @@ dependencies:
   # it a solver may hand this package a magic that lacks the accessor the
   # realtime notification path needs to avoid a second WebSocket on an
   # already-open connection. It sits at 0.0.22 because `PushStateReporter`
-  # calls `Event.listenAny`, which does not exist below it; the floor names
-  # 0.0.28, the newest release when the 2026-10-13 batch re-pinned every
-  # sibling.
-  magic: ^0.0.28
+  # calls `Event.listenAny`, which does not exist below it; the floor is
+  # 0.0.29 because the realtime poller follows `BroadcastChannel.isSubscribed`
+  # and `onSubscriptionChanged`, which first ship there.
+  magic: ^0.0.29
   # 0.0.15 is the requirement: `XcodeProjectEditor.setEntitlementsPaths`,
   # which the iOS installer step calls to point Release at its own
   # entitlements file, does not exist below it. The floor names 0.0.20, the
