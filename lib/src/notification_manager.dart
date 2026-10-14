@@ -2184,9 +2184,9 @@ class NotificationManager {
 
     // A socket that cannot connect yet is not a reason to give up on realtime.
     // The driver keeps retrying, records the channel below, and subscribes it
-    // on its next handshake; giving up here left realtime off for the whole session when the
-    // server was down at launch, and every note then waited for the poller.
-    // Polling stands in until the channel reports subscribed.
+    // on its next handshake; giving up here left realtime off for the whole
+    // session when the server was down at launch, and every note then waited
+    // for the poller. Polling stands in until the channel reports subscribed.
     try {
       if (!Echo.connection.isConnected) {
         await Echo.connect();

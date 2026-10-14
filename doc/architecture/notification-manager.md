@@ -228,13 +228,13 @@ failure:
    bell permanently empty.
 2. **Connects only if nothing is connected.** The check saves a round trip;
    magic's Reverb driver joins an attempt in flight or reuses a live connection
-   on its own. `Echo.connection` is the accessor that makes the check possible. A
-   connect that fails (the realtime server is down) does not stop it: the next
-   steps run anyway, the driver records the channel and subscribes it on its next
-   handshake, and polling stands in until the server confirms it (the poller
-   keeps running until the channel reports subscribed). Giving up here left realtime off for the whole session
-   when the server was down at launch. It still returns `true`, since realtime
-   is armed; only a failure to subscribe returns `false`.
+   on its own. `Echo.connection` is the accessor that makes the check possible.
+   A connect that fails (the realtime server is down) does not stop it: the next
+   steps run anyway, the driver records the channel and subscribes it on its
+   next handshake, and the poller keeps running until the server confirms the
+   channel. Giving up here left realtime off for the whole session when the
+   server was down at launch. It still returns `true`, since realtime is armed;
+   only a failure to subscribe returns `false`.
 3. **Listens for `notification.created` exactly once.** A second `listen()` for
    one event name REPLACES the earlier handler rather than adding to it, so
    registering the same event anywhere else would silently drop this one.
