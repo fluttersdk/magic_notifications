@@ -226,22 +226,25 @@ failure:
    and silently delivers nothing, so an attempt-based probe would report success
    on the one configuration that cannot work, silence the poller, and leave the
    bell permanently empty.
-2. **Connects only if nothing is connected.** `Echo.connect()` is not idempotent
-   in magic's Reverb driver: it assigns a fresh channel without closing the
-   previous one, so a redundant call opens a second WebSocket and leaks the first.
-   This is why the `magic` floor cannot sit below 0.0.6; `Echo.connection` is the accessor that
-   makes the check possible. A connect that fails (the realtime server is down)
-   does not stop it: the next steps run anyway, the driver sends the queued
-   subscription once its retry connects, and polling stands in until then (step
-   4 starts the fallback poller instead of stopping it, and step 5 is that
-   poller's first read). Giving up here left realtime off for the whole session
-   when the server was down at launch. It still returns `true`, since realtime
-   is armed; only a failure to subscribe returns `false`.
+2. **Connects only if nothing is connected.** The check saves a round trip;
+   magic's Reverb driver joins an attempt in flight or reuses a live connection
+   on its own. `Echo.connection` is the accessor that makes the check possible.
+   A connect that fails (the realtime server is down) does not stop it: the next
+   steps run anyway, the driver records the channel and subscribes it on its
+   next handshake, and the poller keeps running until the server confirms the
+   channel. Giving up here left realtime off for the whole session when the
+   server was down at launch. It still returns `true`, since realtime is armed;
+   only a failure to subscribe returns `false`.
 3. **Listens for `notification.created` exactly once.** A second `listen()` for
    one event name REPLACES the earlier handler rather than adding to it, so
    registering the same event anywhere else would silently drop this one.
-4. **Stops the poller.** The socket now covers it.
-5. **Fetches the existing list once.** A socket carries only what happens next.
+4. **Keeps the poller until the channel is subscribed.** `connected` is emitted
+   before a private channel is authorised, so a connected but unsubscribed socket
+   delivers nothing. The poller stops only when the channel's own
+   `onSubscriptionChanged` reports `true`.
+5. **Fetches the existing list once** when that confirmation arrives (at once if
+   the channel is already subscribed). A socket carries only what happens next,
+   and Reverb has no replay.
 
 ### The frame is the state
 
@@ -268,17 +271,18 @@ reason to miss one row and not to empty the list.
 
 ### Both directions of degradation
 
-`connectionState` is watched (and `onReconnect` deliberately is not, since a
-reconnect necessarily transitions the state to `connected` and listening to both
-would fetch the same list twice for one event):
+The poller follows the channel's subscription, with `connectionState` watched
+only to arm it on a drop:
 
-| Transition | What happens |
-|------------|--------------|
-| anything but `connected` | the poller is armed as a stand-in; the subscription stays, because realtime is still the intent |
-| `connected` | the poller is dropped and the list is refetched once, because Reverb has no replay |
+| Signal | What happens |
+|--------|--------------|
+| `connectionState` anything but `connected` | the poller is armed as a stand-in; the subscription stays, because realtime is still the intent |
+| `connectionState` `connected` | nothing: the channel is not authorised yet |
+| `onSubscriptionChanged` `true` | the poller is dropped and the list is refetched once, because Reverb has no replay |
+| `onSubscriptionChanged` `false` (drop, leave or failed auth) | the poller is armed again |
 
-Without the first row, a socket that never comes back is a bell that never
-updates again.
+Without the poller rows, a socket that never comes back (or a channel whose auth
+fails) is a bell that never updates again.
 
 ### Lifecycle hooks
 
