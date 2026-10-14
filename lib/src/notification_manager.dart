@@ -2138,10 +2138,8 @@ class NotificationManager {
   ///
   /// On success it:
   ///
-  ///  1. connects only if no connection exists. `connect()` is not idempotent in
-  ///     magic's Reverb driver (it assigns a fresh channel without closing the
-  ///     previous one), so a second call opens a second WebSocket and leaks the
-  ///     first;
+  ///  1. connects only if no connection exists, which saves the round trip
+  ///     (magic's Reverb driver joins or reuses a connection on its own);
   ///  2. subscribes and listens for [realtimeEvent] exactly once. A second
   ///     `listen()` for one event REPLACES the earlier handler rather than adding
   ///     to it, so registering anywhere else would silently drop this one;
@@ -2185,8 +2183,8 @@ class NotificationManager {
     if (_realtimeChannel != null) stopRealtime();
 
     // A socket that cannot connect yet is not a reason to give up on realtime.
-    // The driver keeps retrying and queues the subscription below until it is
-    // up; giving up here left realtime off for the whole session when the
+    // The driver keeps retrying, records the channel below, and subscribes it
+    // on its next handshake; giving up here left realtime off for the whole session when the
     // server was down at launch, and every note then waited for the poller.
     // Polling stands in until the channel reports subscribed.
     try {
