@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import '../../exceptions/notification_exception.dart';
 import '../../models/push_subscription.dart';
 import '../../support/notification_log.dart';
+import 'onesignal_click_behavior.dart';
 import 'onesignal_js_interop.dart';
 import 'push_driver.dart';
 
@@ -452,6 +453,8 @@ class OneSignalWebDriver extends PushDriver {
   OneSignalDeferred.push(async function(OneSignal) {
     await OneSignal.init({
       appId: "$appId",$safariLine$workerPathLine$workerScopeLine
+      notificationClickHandlerMatch: "$oneSignalClickMatch",
+      notificationClickHandlerAction: "$oneSignalClickAction",
       notifyButton: {
         enable: $notifyButtonEnabled,
       },
