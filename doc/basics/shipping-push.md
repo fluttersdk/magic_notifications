@@ -133,6 +133,17 @@ and `flutter_service_worker.js` registers second wins.
 If web push works intermittently, or the app's own service worker stops
 updating, check the site type before the config.
 
+The same split decides what a click does with a tab that is already open. On
+Custom Code the driver initialises the SDK with
+`notificationClickHandlerMatch: 'origin'` and
+`notificationClickHandlerAction: 'focus'`: a click focuses any open tab of the
+app and hands it the click, so `Notify.onPushClicked` fires there and your
+deep link handler routes the push. With no tab open, the browser opens the
+push's `web_url`. The SDK's defaults (`exact`, `navigate`) would ignore every
+open tab whose url is not the launch url exactly and open a second tab, where
+no Dart is running yet to receive the click. A Typical Site app reads this
+from the dashboard's web settings instead; set the same pair there.
+
 ---
 
 ## Telling your backend whether the device can be paged

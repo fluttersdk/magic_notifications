@@ -4,6 +4,8 @@ import 'dart:async';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 
+import 'onesignal_click_behavior.dart';
+
 /// Web implementation of OneSignal JavaScript SDK interop.
 ///
 /// Uses dart:js_interop to communicate with the OneSignal Web SDK v16.
@@ -49,6 +51,11 @@ Future<bool> init({
     serviceWorkerParam['scope'] = serviceWorkerScope.toJS;
     initConfig['serviceWorkerParam'] = serviceWorkerParam;
   }
+
+  // Hand a push click to an open tab of the app, so its in-page listener
+  // routes it; see onesignal_click_behavior.dart for why not the defaults.
+  initConfig['notificationClickHandlerMatch'] = oneSignalClickMatch.toJS;
+  initConfig['notificationClickHandlerAction'] = oneSignalClickAction.toJS;
 
   // NotifyButton config
   final notifyButton = JSObject();

@@ -450,6 +450,15 @@ void main() {
         expect(script, contains('enable: false'));
       });
 
+      test('generates script that focuses an open tab on a click', () {
+        final script = OneSignalWebDriver.getWebInitScript(
+          appId: 'test-app-id',
+        );
+
+        expect(script, contains('notificationClickHandlerMatch: "origin"'));
+        expect(script, contains('notificationClickHandlerAction: "focus"'));
+      });
+
       test('generates script with a scoped service worker', () {
         final script = OneSignalWebDriver.getWebInitScript(
           appId: 'test-app-id',
