@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.11] - 2026-10-27
+
 ### Fixed
 - **A web push click reaches the tab that is already open.** The web driver left OneSignal on its click defaults, `exact` and `navigate`, under which an open tab is reused only when its url is the push's launch url exactly. Any other open tab was ignored and the browser opened a second tab, a cold page load where no Dart was running yet to receive the click, so `Notify.onPushClicked` never fired and the deep link handler that switches to the push's team never ran (reported in a host app, where a page that needed a team switch first could only get it through that handler). The driver now initialises the SDK with `notificationClickHandlerMatch: 'origin'` and `notificationClickHandlerAction: 'focus'`, so a click focuses any open tab of the app and hands it the click. With no tab open, the browser still opens the push's `web_url`. `navigate` is avoided because it needs a tab the OneSignal worker controls, and the worker is registered under its own scope. A Typical Site integration reads this from the OneSignal dashboard instead. (`lib/src/drivers/push/onesignal_click_behavior.dart`, `lib/src/drivers/push/onesignal_js_interop_web.dart`, `lib/src/drivers/push/onesignal_web_driver.dart`, `doc/basics/shipping-push.md`)
 
