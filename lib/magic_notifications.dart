@@ -35,6 +35,7 @@ export 'src/drivers/push/onesignal_driver.dart';
 
 // UI
 export 'src/ui/notification_view_registry.dart';
+export 'src/ui/notifications_page_header.dart';
 export 'src/ui/views/notifications_list_view.dart';
 export 'src/ui/views/notification_preferences_view.dart';
 export 'src/ui/components/notification_dropdown/index.dart';

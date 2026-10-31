@@ -6,6 +6,7 @@ import '../../facades/notify.dart';
 import '../../http/notifications_list_controller.dart';
 import '../../models/database_notification.dart';
 import '../../support/notification_log.dart';
+import '../notifications_page_header.dart';
 
 /// The full notification list screen.
 ///
@@ -61,6 +62,19 @@ class NotificationsListView
   /// surface has to stay full bleed behind the scroll.
   final String contentClassName;
 
+  /// Draws the page header in place of the screen's own, or `null` (the
+  /// default) for the screen's own title, subtitle and mark-all-as-read
+  /// button.
+  ///
+  /// The builder gets the translated title and subtitle and the
+  /// mark-all-as-read button, already wired, in
+  /// [NotificationsPageHeader.actions] while something is unread (empty
+  /// otherwise), and the screen then draws none of them. Its widget sits where
+  /// the header did, inside the scroll view and [contentClassName], so only
+  /// the header changes. `magic_starter` passes its page header here, which is
+  /// how a host bar that owns the page title shows it once.
+  final NotificationsPageHeaderBuilder? headerBuilder;
+
   /// Creates a [NotificationsListView].
   const NotificationsListView({
     super.key,
@@ -70,6 +84,7 @@ class NotificationsListView
     this.onNavigate,
     this.perPage = 15,
     this.contentClassName = defaultContentClassName,
+    this.headerBuilder,
   });
 
   /// The page padding a standalone mount gets.
@@ -179,7 +194,7 @@ class _NotificationsListViewState extends MagicStatefulViewState<
           child: WDiv(
             className: 'w-full flex flex-col ${widget.contentClassName}',
             children: [
-              _buildHeader(hasUnread: hasUnread),
+              _buildHeader(context, hasUnread: hasUnread),
               WDiv(
                 className: 'mt-6 flex flex-col gap-6',
                 children: [
@@ -200,7 +215,28 @@ class _NotificationsListViewState extends MagicStatefulViewState<
   /// The action rides in the page header rather than a bar the list builds for
   /// itself: a page that owns its own action bar ends up owning its geometry
   /// too, which is how this surface drifted off the app's page rhythm.
-  Widget _buildHeader({required bool hasUnread}) {
+  ///
+  /// With a [NotificationsListView.headerBuilder] the host draws it instead,
+  /// from the same title, subtitle and actions.
+  Widget _buildHeader(BuildContext context, {required bool hasUnread}) {
+    final String title = trans('notifications.title');
+    final String subtitle = trans('notifications.list_subtitle');
+    final List<Widget> actions = [
+      if (hasUnread) _buildMarkAllReadButton(),
+    ];
+
+    final NotificationsPageHeaderBuilder? headerBuilder = widget.headerBuilder;
+    if (headerBuilder != null) {
+      return headerBuilder(
+        context,
+        NotificationsPageHeader(
+          title: title,
+          subtitle: subtitle,
+          actions: actions,
+        ),
+      );
+    }
+
     return WDiv(
       className: 'w-full flex flex-row items-center justify-between gap-3',
       children: [
@@ -208,34 +244,39 @@ class _NotificationsListViewState extends MagicStatefulViewState<
           className: 'flex flex-col gap-1 flex-initial min-w-0',
           children: [
             WText(
-              trans('notifications.title'),
+              title,
               className: 'text-2xl font-semibold text-fg',
             ),
             WText(
-              trans('notifications.list_subtitle'),
+              subtitle,
               className: 'text-sm text-fg-muted',
             ),
           ],
         ),
-        if (hasUnread)
-          WButton(
-            onTap: () async {
-              final markAllAsRead = widget.onMarkAllAsRead;
-              if (markAllAsRead != null) {
-                await markAllAsRead();
-              } else {
-                await Notify.markAllAsRead();
-              }
-              controller.refresh();
-            },
-            className: 'px-4 py-2 rounded-lg bg-primary hover:bg-primary/80 '
-                'text-white font-medium text-sm',
-            child: WText(
-              trans('notifications.mark_all_read'),
-              className: 'text-white font-medium text-sm',
-            ),
-          ),
+        ...actions,
       ],
+    );
+  }
+
+  /// The mark-all-as-read button, which reloads the page once the marking is
+  /// done.
+  Widget _buildMarkAllReadButton() {
+    return WButton(
+      onTap: () async {
+        final markAllAsRead = widget.onMarkAllAsRead;
+        if (markAllAsRead != null) {
+          await markAllAsRead();
+        } else {
+          await Notify.markAllAsRead();
+        }
+        controller.refresh();
+      },
+      className: 'px-4 py-2 rounded-lg bg-primary hover:bg-primary/80 '
+          'text-white font-medium text-sm',
+      child: WText(
+        trans('notifications.mark_all_read'),
+        className: 'text-white font-medium text-sm',
+      ),
     );
   }
 
