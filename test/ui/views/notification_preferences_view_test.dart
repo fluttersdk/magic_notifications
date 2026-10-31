@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magic/magic.dart';
 import 'package:magic_notifications/src/http/notification_preferences_controller.dart';
+import 'package:magic_notifications/src/ui/notifications_page_header.dart';
 import 'package:magic_notifications/src/ui/views/notification_preferences_view.dart';
 
 import '../../test_helper.dart';
@@ -184,6 +185,67 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(firstCardLeft(tester), 0.0);
+    });
+  });
+
+  group('headerBuilder', () {
+    testWidgets(
+        'hands its title, subtitle and back target over and draws '
+        'none of them', (tester) async {
+      fakeMatrix();
+      NotificationsPageHeader? received;
+
+      await tester.pumpWidget(
+        wrap(
+          NotificationPreferencesView(
+            backRoute: '/settings',
+            headerBuilder: (context, header) {
+              received = header;
+
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(received, isNotNull);
+      expect(received!.title, 'Notification Preferences');
+      expect(received!.subtitle, 'Manage your notifications');
+      expect(received!.backLabel, 'Back');
+      expect(received!.backRoute, '/settings');
+      expect(received!.actions, isEmpty);
+      expect(find.text('Notification Preferences'), findsNothing);
+      expect(find.text('Manage your notifications'), findsNothing);
+      expect(find.byIcon(Icons.chevron_left), findsNothing);
+      // The matrix still renders below the host's header.
+      expect(find.byKey(const ValueKey('notifications.bulk')), findsOneWidget);
+    });
+
+    testWidgets('hands over no back control without a back route', (
+      tester,
+    ) async {
+      fakeMatrix();
+      NotificationsPageHeader? received;
+
+      await tester.pumpWidget(
+        wrap(
+          NotificationPreferencesView(
+            headerBuilder: (context, header) {
+              received = header;
+
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(received, isNotNull);
+      expect(received!.backLabel, isNull);
+      expect(received!.backRoute, isNull);
     });
   });
 }

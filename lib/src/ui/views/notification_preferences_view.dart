@@ -4,6 +4,7 @@ import 'package:magic/magic.dart';
 
 import '../../facades/notify.dart';
 import '../../http/notification_preferences_controller.dart';
+import '../notifications_page_header.dart';
 
 /// The notification preference screen.
 ///
@@ -18,6 +19,7 @@ class NotificationPreferencesView
     this.pushProvisioned,
     this.backRoute,
     this.contentClassName = defaultContentClassName,
+    this.headerBuilder,
   });
 
   /// The page padding a standalone mount gets.
@@ -64,6 +66,18 @@ class NotificationPreferencesView
   /// which is why a wrapper around the screen cannot replace it: the page
   /// surface has to stay full bleed behind the scroll.
   final String contentClassName;
+
+  /// Draws the page header in place of the screen's own, or `null` (the
+  /// default) for the screen's own back control, title and subtitle.
+  ///
+  /// The builder gets the translated title and subtitle, no actions, and the
+  /// back control as [backRoute] with `common.back` as its accessible name
+  /// (both `null` when [backRoute] is), and the screen then draws none of
+  /// them. Its widget sits where the header did, inside the scroll view and
+  /// [contentClassName], so only the header changes. `magic_starter` passes
+  /// its page header here, which is how a host bar that owns the page title
+  /// and back control shows them once.
+  final NotificationsPageHeaderBuilder? headerBuilder;
 
   @override
   State<NotificationPreferencesView> createState() =>
@@ -136,7 +150,7 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
           child: WDiv(
             className: 'w-full flex flex-col ${widget.contentClassName}',
             children: [
-              _buildHeader(),
+              _buildHeader(context),
               WDiv(
                 className: 'mt-6 flex flex-col gap-6',
                 children: [
@@ -153,8 +167,24 @@ class _NotificationPreferencesViewState extends MagicStatefulViewState<
   }
 
   /// Builds the page header: an optional back control, the title and subtitle.
-  Widget _buildHeader() {
+  ///
+  /// With a [NotificationPreferencesView.headerBuilder] the host draws it
+  /// instead, from the same strings and back route.
+  Widget _buildHeader(BuildContext context) {
     final backRoute = widget.backRoute;
+
+    final NotificationsPageHeaderBuilder? headerBuilder = widget.headerBuilder;
+    if (headerBuilder != null) {
+      return headerBuilder(
+        context,
+        NotificationsPageHeader(
+          title: trans('notifications.preferences_title'),
+          subtitle: trans('notifications.preferences_description'),
+          backLabel: backRoute != null ? trans('common.back') : null,
+          backRoute: backRoute,
+        ),
+      );
+    }
 
     return WDiv(
       className: 'w-full flex flex-row items-center gap-3',

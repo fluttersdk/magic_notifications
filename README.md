@@ -338,6 +338,23 @@ touches it in two ways:
   INSIDE the scroll view: the page surface stays full bleed behind the scroll,
   which is why padding from outside the screen is not the same thing.
 
+  `headerBuilder` hands the page header to the host. Both screens take a
+  `NotificationsPageHeaderBuilder`, called with a `NotificationsPageHeader`
+  (translated `title` and `subtitle`, the wired `actions`, and `backLabel` with
+  `backRoute` for the preferences back control), and then draw none of those
+  themselves. The inbox's `actions` hold the mark-all-as-read button only while
+  something is unread. Left null, each screen draws its own header:
+
+  ```dart
+  NotificationsListView(
+    headerBuilder: (context, header) => AppPageHeader(
+      title: header.title,
+      subtitle: header.subtitle,
+      actions: header.actions,
+    ),
+  )
+  ```
+
 - **Register a type icon** so the shipped list and dropdown widgets can draw
   the right leading icon for one of the host's own notification types, without
   this package carrying a vocabulary that belongs to one product:

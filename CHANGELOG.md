@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **`headerBuilder` on `NotificationsListView` and `NotificationPreferencesView`, so a host draws the page header.** Both screens drew their own title, subtitle and (preferences) back chevron, so a host whose app bar already shows the page title and back control showed them twice on a phone. A `NotificationsPageHeaderBuilder` is called with a `NotificationsPageHeader` (translated `title` and `subtitle`, the wired `actions`, and `backLabel` with `backRoute`) and its widget takes the header's place inside the screen's scroll view and content column. The inbox hands over its mark-all-as-read button only while something is unread; the preferences screen hands over no actions, and its back target is `backRoute` named by `common.back`, both null without a `backRoute`. Null by default, which draws each header exactly as before. (`lib/src/ui/notifications_page_header.dart`, `lib/src/ui/views/notifications_list_view.dart`, `lib/src/ui/views/notification_preferences_view.dart`, `README.md`)
+
 ## [0.3.11] - 2026-10-27
 
 ### Fixed

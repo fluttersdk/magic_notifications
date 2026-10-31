@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:magic/magic.dart';
 import 'package:magic_notifications/src/facades/notify.dart';
 import 'package:magic_notifications/src/http/notifications_list_controller.dart';
+import 'package:magic_notifications/src/ui/notifications_page_header.dart';
 import 'package:magic_notifications/src/ui/views/notifications_list_view.dart';
 
 import '../../test_helper.dart';
@@ -537,6 +538,108 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(titleLeft(tester), 0.0);
+    });
+  });
+
+  group('headerBuilder', () {
+    const Key hostHeaderKey = Key('host-header');
+
+    /// A host header that draws the actions it is handed and nothing else, so
+    /// any title text on screen can only have come from the view itself.
+    Widget hostHeader(
+      NotificationsPageHeader header,
+      void Function(NotificationsPageHeader header) onBuild,
+    ) {
+      onBuild(header);
+
+      return Column(key: hostHeaderKey, children: header.actions);
+    }
+
+    testWidgets('hands its title and subtitle over and draws neither', (
+      tester,
+    ) async {
+      fakeNotifications([
+        makeNotificationMap(id: '1', title: 'Unread', body: 'Body'),
+      ]);
+      NotificationsPageHeader? received;
+
+      await tester.pumpWidget(
+        wrap(
+          NotificationsListView(
+            onMarkAllAsRead: () async {},
+            headerBuilder: (context, header) =>
+                hostHeader(header, (h) => received = h),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(received, isNotNull);
+      expect(received!.title, 'Notifications');
+      expect(received!.subtitle, 'Everything we sent you');
+      expect(received!.backLabel, isNull);
+      expect(received!.backRoute, isNull);
+      expect(find.text('Notifications'), findsNothing);
+      expect(find.text('Everything we sent you'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byKey(hostHeaderKey),
+          matching: find.text('Mark all as read'),
+        ),
+        findsOneWidget,
+      );
+      // The rows still render below the host's header.
+      expect(find.text('Unread'), findsOneWidget);
+    });
+
+    testWidgets('hands over no action when nothing is unread', (tester) async {
+      fakeNotifications([
+        makeNotificationMap(id: '1', title: 'Read', body: 'Body', isRead: true),
+      ]);
+      NotificationsPageHeader? received;
+
+      await tester.pumpWidget(
+        wrap(
+          NotificationsListView(
+            onMarkAllAsRead: () async {},
+            headerBuilder: (context, header) =>
+                hostHeader(header, (h) => received = h),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(received, isNotNull);
+      expect(received!.actions, isEmpty);
+      expect(find.text('Mark all as read'), findsNothing);
+    });
+
+    testWidgets('the action it hands over still marks everything read', (
+      tester,
+    ) async {
+      fakeNotifications([
+        makeNotificationMap(id: '1', title: 'Unread', body: 'Body'),
+      ]);
+      var markAllCalls = 0;
+
+      await tester.pumpWidget(
+        wrap(
+          NotificationsListView(
+            onMarkAllAsRead: () async => markAllCalls++,
+            headerBuilder: (context, header) => hostHeader(header, (_) {}),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      await tester.tap(find.text('Mark all as read'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(markAllCalls, 1);
     });
   });
 }
